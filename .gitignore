@@ -5,6 +5,9 @@ db/
 # Backup files
 *.bak
 
+# AI prompt files (not part of the application)
+prompt
+
 # Python artifacts
 __pycache__/
 *.py[cod]

@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QFont, QFontDatabase, QPainter
+from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import load_settings, save_settings, DIR_DB
