@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QColor, QBrush, QPen, QPainterPath
+from PyQt6.QtGui import QColor, QBrush, QPen, QPainterPath, QIcon
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -156,7 +156,8 @@ class FlashCardItem(QGraphicsRectItem):
         font_sz = self.app_ref.settings.get("font_size", 14)
         dyn_pad = max(10, int(font_sz * 0.6))
 
-        self.tts_btn = QPushButton("🔊 Listen")
+        self.tts_btn = QPushButton(" Listen")
+        self.tts_btn.setIcon(QIcon.fromTheme("audio-volume-high"))
         self.tts_btn.setStyleSheet(
             f"background-color: #9C27B0; color: white; padding: {dyn_pad}px; "
             f"font-family: '{font_fam}'; font-size: {font_sz}px; "
@@ -165,7 +166,7 @@ class FlashCardItem(QGraphicsRectItem):
         self.tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tts_btn.clicked.connect(self.trigger_tts)
 
-        self.flip_btn = QPushButton("💡 Reveal Answer")
+        self.flip_btn = QPushButton(" Reveal Answer")
         self.flip_btn.setStyleSheet(
             f"background-color: #2196F3; color: white; padding: {dyn_pad}px; "
             f"font-family: '{font_fam}'; font-size: {font_sz}px; "

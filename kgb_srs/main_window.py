@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QApplication,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush
+from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush, QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import load_settings, save_settings, DIR_DB
@@ -43,6 +43,13 @@ from .markdown_utils import markdown_to_plain_text
 
 class BarskyApp(QMainWindow):
     """Main application window for the KGB 5-Box SRS System."""
+
+    @staticmethod
+    def _icon(name, fallback=""):
+        """Return a QIcon from the system theme, or an empty icon.
+        Fallback is a text string for button labels when no icon exists."""
+        icon = QIcon.fromTheme(name)
+        return icon if not icon.isNull() else QIcon()
 
     def __init__(self):
         super().__init__()
@@ -232,6 +239,7 @@ class BarskyApp(QMainWindow):
         top_layout.addWidget(QLabel("Database:"))
 
         self.db_btn = QPushButton("📂 Select Database")
+        self.db_btn.setIcon(self._icon("drive-harddisk"))
         self.db_btn.setStyleSheet(
             "QPushButton {"
             "  text-align: left; padding: 6px 14px; font-weight: bold;"
@@ -243,7 +251,8 @@ class BarskyApp(QMainWindow):
         self.db_btn.clicked.connect(self.show_db_menu)
         top_layout.addWidget(self.db_btn)
 
-        self.new_db_btn = QPushButton("＋ New")
+        self.new_db_btn = QPushButton(" New")
+        self.new_db_btn.setIcon(self._icon("folder-new"))
         self.new_db_btn.setStyleSheet(
             "QPushButton {"
             "  background-color: #43A047; color: white; padding: 6px 14px;"
@@ -264,8 +273,9 @@ class BarskyApp(QMainWindow):
 
         top_layout.addStretch()
 
-        def action_btn(text, handler):
+        def action_btn(text, icon_name, handler):
             btn = QPushButton(text)
+            btn.setIcon(self._icon(icon_name))
             btn.setStyleSheet(
                 "QPushButton {"
                 "  background-color: transparent; color: #37474F;"
@@ -279,9 +289,9 @@ class BarskyApp(QMainWindow):
             btn.clicked.connect(handler)
             return btn
 
-        top_layout.addWidget(action_btn("Add Word", self.add_word))
-        top_layout.addWidget(action_btn("Browse", self.browse_cards))
-        top_layout.addWidget(action_btn("Settings", self.open_settings_window))
+        top_layout.addWidget(action_btn("Add", "list-add", self.add_word))
+        top_layout.addWidget(action_btn("Browse", "edit-find", self.browse_cards))
+        top_layout.addWidget(action_btn("Settings", "preferences-system", self.open_settings_window))
         main_layout.addWidget(top_frame)
 
         # --- Canvas ---
@@ -297,7 +307,8 @@ class BarskyApp(QMainWindow):
         main_layout.addWidget(self.view)
 
         # --- Review buttons ---
-        self.start_btn = QPushButton("▶ Start Daily Review")
+        self.start_btn = QPushButton(" Start Daily Review")
+        self.start_btn.setIcon(self._icon("media-playback-start"))
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.clicked.connect(self.start_review)
         main_layout.addWidget(self.start_btn)
@@ -305,17 +316,20 @@ class BarskyApp(QMainWindow):
         forced_review_layout = QHBoxLayout()
         forced_review_layout.setSpacing(6)
 
-        self.force_seq_btn = QPushButton("→ Next Item")
+        self.force_seq_btn = QPushButton(" Next")
+        self.force_seq_btn.setIcon(self._icon("go-next"))
         self.force_seq_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.force_seq_btn.clicked.connect(
             lambda: self.start_forced_review(direction="ASC")
         )
 
-        self.restart_review_btn = QPushButton("↺ Restart Review")
+        self.restart_review_btn = QPushButton(" Restart")
+        self.restart_review_btn.setIcon(self._icon("view-refresh"))
         self.restart_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.restart_review_btn.clicked.connect(self.restart_current_review)
 
-        self.force_rev_btn = QPushButton("← Prev Item")
+        self.force_rev_btn = QPushButton(" Previous")
+        self.force_rev_btn.setIcon(self._icon("go-previous"))
         self.force_rev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.force_rev_btn.clicked.connect(
             lambda: self.start_forced_review(direction="DESC")
@@ -327,7 +341,8 @@ class BarskyApp(QMainWindow):
         main_layout.addLayout(forced_review_layout)
 
         # --- Delete current item ---
-        self.delete_current_btn = QPushButton("🗑 Delete Current Item")
+        self.delete_current_btn = QPushButton(" Delete Current Item")
+        self.delete_current_btn.setIcon(self._icon("edit-delete"))
         self.delete_current_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_current_btn.clicked.connect(self.delete_current_card)
         self.delete_current_btn.hide()  # hidden until a card is shown
@@ -1147,7 +1162,25 @@ class BarskyApp(QMainWindow):
         size_input.setValue(self.settings["font_size"])
 
         lang_input = QLineEdit(self.settings.get("default_database", ""))
-        lang_input.setPlaceholderText("Database path (set by selecting a database)")
+        lang_input.setPlaceholderText("No default database selected")
+        lang_input.setReadOnly(True)
+
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setStyleSheet("padding: 4px 12px;")
+
+        db_row = QHBoxLayout()
+        db_row.addWidget(lang_input)
+        db_row.addWidget(browse_btn)
+
+        def browse_db():
+            path, _ = QFileDialog.getOpenFileName(
+                dialog, "Select Default Database", DIR_DB,
+                f"Barsky DB (*{DB_SUFFIX});;All Files (*)"
+            )
+            if path:
+                lang_input.setText(path)
+
+        browse_btn.clicked.connect(browse_db)
 
         tts_input = QLineEdit(
             self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
@@ -1158,7 +1191,7 @@ class BarskyApp(QMainWindow):
         layout.addRow("Window Height:", h_input)
         layout.addRow("Font Family:", font_combo)
         layout.addRow("Font Size:", size_input)
-        layout.addRow("Default Database:", lang_input)
+        layout.addRow("Default Database:", db_row)
         layout.addRow("TTS Voice (Edge-TTS):", tts_input)
 
         save_btn = QPushButton("Save & Apply")
