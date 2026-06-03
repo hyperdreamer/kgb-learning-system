@@ -970,6 +970,8 @@ class BarskyApp(QMainWindow):
         if not self.current_card:
             return
 
+        card_id, front, back, box = self.current_card
+
         zone_y = getattr(self, "_zone_y", self.scene.height() - 100)
 
         w = max(400, self.scene.width())
