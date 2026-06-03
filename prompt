@@ -1,5 +1,8 @@
 DIR=/data/home/henry-arch/Dropbox/005.Study/00.KGB_Learning_System/
 DIR_DB=$DIR/db/
 
+New Functionality:
+ommit: prompt under $DIR since it's for AI.
+
 Bug:
 NameError: name 'QPen' is not defined. Did you mean: 'open'?

@@ -1,6 +1,4 @@
-"""Dialog windows: DynamicInputDialog, NewDatabaseDialog."""
-
-import os
+"""Dialog windows: DynamicInputDialog."""
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -11,11 +9,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QTextEdit,
-    QMessageBox,
 )
-
-from .config import DIR_DB
-from .db import make_db_path
 
 
 class DynamicInputDialog(QDialog):
@@ -100,102 +94,3 @@ class DynamicInputDialog(QDialog):
         self.text_value = self.text_edit.toPlainText().strip()
         self.accept()
 
-
-class NewDatabaseDialog(QDialog):
-    """Dialog to create a new database with optional subdirectory."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Create New Database")
-        self.result_path = None
-        self.result_display = None
-
-        layout = QVBoxLayout(self)
-
-        # Database name
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Database Name:"))
-        self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("e.g. English, Linear_Algebra, CN2EN")
-        name_layout.addWidget(self.name_input)
-        layout.addLayout(name_layout)
-
-        # Subdirectory (optional)
-        dir_layout = QHBoxLayout()
-        dir_layout.addWidget(QLabel("Subdirectory:"))
-        self.dir_input = QLineEdit()
-        self.dir_input.setPlaceholderText("Optional, e.g. Languages, Math")
-        dir_layout.addWidget(self.dir_input)
-        layout.addLayout(dir_layout)
-
-        # Preview
-        self.preview_label = QLabel("")
-        self.preview_label.setStyleSheet("color: #555; font-style: italic; padding: 4px;")
-        layout.addWidget(self.preview_label)
-
-        self.name_input.textChanged.connect(self.update_preview)
-        self.dir_input.textChanged.connect(self.update_preview)
-
-        # Buttons
-        btn_layout = QHBoxLayout()
-        self.create_btn = QPushButton("Create")
-        self.create_btn.setStyleSheet(
-            "background-color: #4CAF50; color: white; font-weight: bold; padding: 8px 16px;"
-        )
-        self.create_btn.clicked.connect(self.do_create)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("padding: 8px 16px;")
-        cancel_btn.clicked.connect(self.reject)
-
-        btn_layout.addWidget(self.create_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-
-        self.update_preview()
-
-    def update_preview(self):
-        name = self.name_input.text().strip()
-        subdir = self.dir_input.text().strip()
-        if not name:
-            self.preview_label.setText("(enter a database name)")
-            self.create_btn.setEnabled(False)
-            return
-
-        full_path = make_db_path(name, subdir)
-        # Determine display path relative to DIR_DB
-        rel_path = os.path.relpath(full_path, DIR_DB)
-        # Strip the _barsky.db suffix for display
-        display = rel_path[: -len("_barsky.db")] if rel_path.endswith("_barsky.db") else rel_path
-        exists = os.path.exists(full_path)
-
-        if exists:
-            self.preview_label.setText(f"⚠ Already exists: {display}")
-            self.create_btn.setEnabled(False)
-        else:
-            self.preview_label.setText(f"Will create: {display}")
-            self.create_btn.setEnabled(True)
-
-    def do_create(self):
-        name = self.name_input.text().strip()
-        subdir = self.dir_input.text().strip()
-        if not name:
-            return
-
-        full_path = make_db_path(name, subdir)
-
-        if os.path.exists(full_path):
-            QMessageBox.warning(self, "Already Exists", f"Database already exists at:\n{full_path}")
-            return
-
-        # Create directories if needed
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-        self.result_path = full_path
-        # Build display name
-        if subdir:
-            safe_subdir = subdir.replace("\\", "/").strip("/")
-            safe_name = name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-            self.result_display = f"{safe_subdir}/{safe_name}"
-        else:
-            self.result_display = name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-        self.accept()
