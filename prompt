@@ -1,11 +1,5 @@
 DIR=/data/home/henry-arch/Dropbox/005.Study/00.KGB_Learning_System/
 DIR_DB=$DIR/db/
 
-SOURCE=$DIR/kgb_srs.py
-
-New Functionality:
-
-1. Main GUI: Replace "Language" with "Database"
-2. The directory of database is $DIR_DB. The app should recursively find the database in the directory.
-3. Change the database selection window into a selection menu and the databases should be arranged according to their directory structure
-4. Add a button to create a new database (new directory can be created at the same time if necessary)
+Bug:
+NameError: name 'QPen' is not defined. Did you mean: 'open'?

@@ -25,15 +25,16 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QMenu,
+    QFileDialog,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QFont, QFontDatabase, QPainter
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-from .config import load_settings, save_settings
+from .config import load_settings, save_settings, DIR_DB
 from .db import init_db, find_databases, DB_SUFFIX
 from .tts import TTSWorker
-from .dialogs import DynamicInputDialog, NewDatabaseDialog
+from .dialogs import DynamicInputDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 
@@ -282,18 +283,37 @@ class BarskyApp(QMainWindow):
                 return
 
     def create_new_database(self):
-        """Open dialog to create a new database."""
-        dialog = NewDatabaseDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_path = dialog.result_path
-            if new_path:
-                conn = init_db(new_path)
-                conn.close()
-                display = dialog.result_display
-                self.current_db_path = new_path
-                self.current_lang = display
-                self.db_btn.setText(f"📂 {display}")
-                self.load_database(silent=False)
+        """Use the OS native file dialog to create a new database file."""
+        os.makedirs(DIR_DB, exist_ok=True)
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Create New Database",
+            DIR_DB,
+            f"Database Files (*{DB_SUFFIX})",
+        )
+        if not path:
+            return
+
+        # Ensure the file ends with _barsky.db
+        if not path.endswith(DB_SUFFIX):
+            path = f"{path}{DB_SUFFIX}"
+
+        # Ensure parent directories exist (user may have created them in the dialog)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Initialize the database file
+        conn = init_db(path)
+        conn.close()
+
+        # Compute display name
+        rel_path = os.path.relpath(path, DIR_DB)
+        display = rel_path[: -len(DB_SUFFIX)] if rel_path.endswith(DB_SUFFIX) else rel_path
+
+        self.current_db_path = path
+        self.current_lang = display
+        self.db_btn.setText(f"📂 {display}")
+        self.load_database(silent=False)
 
     # ------------------------------------------------------------------
     # Database load
