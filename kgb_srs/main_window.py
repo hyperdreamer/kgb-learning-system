@@ -473,10 +473,13 @@ class BarskyApp(QMainWindow):
         w = self.scene.width()
         h = self.scene.height()
 
-        zone_y = h - 100
         zone_h = 80
-        zone_w = max(260, w * 0.3)
+        zone_y = h - 100
         margin = 50
+
+        # Prevent zone overlap on narrow windows
+        max_zone_w = max(100, (w - 3 * margin) / 2)
+        zone_w = min(max(260, int(w * 0.3)), int(max_zone_w))
 
         self.incorrect_zone = DropZoneItem(
             margin,
@@ -507,6 +510,9 @@ class BarskyApp(QMainWindow):
             self,
         )
         self.scene.addItem(self.correct_zone)
+
+        # Store zone info for draw_card_ui to use as layout bounds
+        self._zone_y = zone_y
 
         if self.current_card:
             self.draw_card_ui()
@@ -964,15 +970,22 @@ class BarskyApp(QMainWindow):
         if not self.current_card:
             return
 
-        card_id, front, back, box = self.current_card
+        zone_y = getattr(self, "_zone_y", self.scene.height() - 100)
 
         w = max(400, self.scene.width())
         h = max(400, self.scene.height())
 
         cw = int(w * 0.75)
         ch = int(h * 0.75)
+
+        # Clamp height so the card does not overlap the drop zones
+        available = zone_y - 20  # 20px breathing room above zone bar
+        if ch > available:
+            ch = max(200, available)
+
         cx = w / 2
-        cy = (h - 100) / 2
+        # Center the card in the available space above the zones
+        cy = available / 2
 
         self.card_ui = FlashCardItem(self, cx, cy, cw, ch)
 
