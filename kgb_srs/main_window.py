@@ -7,6 +7,7 @@ import re
 
 from PyQt6.QtWidgets import (
     QMainWindow,
+    QDialog,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
