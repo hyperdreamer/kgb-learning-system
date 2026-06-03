@@ -1,0 +1,21 @@
+# Database files
+db/
+*.db
+
+# Backup files
+*.bak
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
