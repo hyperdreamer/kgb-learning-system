@@ -245,6 +245,8 @@ class BarskyApp(QMainWindow):
         self.view = QGraphicsView(self.scene)
         self.view.setStyleSheet("background-color: #cfcfcf;")
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         main_layout.addWidget(self.view)
 
         # --- Review buttons ---
