@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QTextEdit,
 )
@@ -19,9 +18,13 @@ class DynamicInputDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.text_value = None
+        self.setMinimumSize(480, 340)
 
-        self.layout = QVBoxLayout(self)
-        self.layout.addWidget(QLabel(label_text))
+        layout = QVBoxLayout(self)
+
+        label = QLabel(label_text)
+        label.setWordWrap(True)
+        layout.addWidget(label)
 
         self.text_edit = QTextEdit()
         self.text_edit.setPlainText(initial_text)
@@ -33,20 +36,7 @@ class DynamicInputDialog(QDialog):
             "Markdown examples: **bold**, *italic*, # heading, - lists, `code`, tables.\n"
             "Math examples: $x^2$, $$\\int_0^1 x dx$$, \\(a+b\\), \\[E=mc^2\\]."
         )
-
-        if parent:
-            self.max_w = max(800, int(parent.width() * 0.8))
-            self.max_h = max(600, int(parent.height() * 0.8))
-        else:
-            self.max_w = 800
-            self.max_h = 600
-
-        self.min_w = 400
-        self.min_h = 300
-
-        self.text_edit.setMinimumWidth(self.min_w)
-        self.text_edit.setMinimumHeight(self.min_h)
-        self.layout.addWidget(self.text_edit)
+        layout.addWidget(self.text_edit, stretch=1)
 
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("OK")
@@ -59,38 +49,16 @@ class DynamicInputDialog(QDialog):
 
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
-        self.layout.addLayout(btn_layout)
+        layout.addLayout(btn_layout)
 
-        self.text_edit.document().documentLayout().documentSizeChanged.connect(self.adjust_size)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.adjust_size()
-
-    def adjust_size(self):
-        try:
-            self.text_edit.document().documentLayout().documentSizeChanged.disconnect(self.adjust_size)
-        except Exception:
-            pass
-
-        fm = self.text_edit.fontMetrics()
-        lines = self.text_edit.toPlainText().split('\n')
-        max_line_w = max([fm.horizontalAdvance(line) for line in lines] + [0])
-
-        new_w = max(self.min_w, min(max_line_w + 35, self.max_w))
-        self.text_edit.setFixedWidth(new_w)
-
-        doc = self.text_edit.document()
-        doc.setTextWidth(self.text_edit.viewport().width())
-
-        new_h = max(self.min_h, min(int(doc.size().height()) + 15, self.max_h))
-        self.text_edit.setFixedHeight(new_h)
-
-        self.layout.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
-
-        self.text_edit.document().documentLayout().documentSizeChanged.connect(self.adjust_size)
+        if parent:
+            w = min(max(520, int(parent.width() * 0.55)), 900)
+            h = min(max(380, int(parent.height() * 0.55)), 700)
+        else:
+            w = 600
+            h = 420
+        self.resize(w, h)
 
     def accept_input(self):
         self.text_value = self.text_edit.toPlainText().strip()
         self.accept()
-
