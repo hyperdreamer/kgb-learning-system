@@ -51,25 +51,3 @@ def find_databases():
                 results.append((display, full_path))
     results.sort(key=lambda x: x[0].lower())
     return results
-
-
-def make_db_path(name, subdir=""):
-    """Build a full database path from a name and optional subdirectory.
-
-    Args:
-        name: Database name (e.g. 'English', 'Set Theory').
-        subdir: Optional relative subdirectory under DIR_DB.
-
-    Returns:
-        Full path string.
-    """
-    safe_name = name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    db_filename = f"{safe_name}{DB_SUFFIX}"
-
-    if subdir:
-        safe_subdir = subdir.replace("\\", "/").strip("/")
-        target_dir = os.path.join(DIR_DB, safe_subdir)
-    else:
-        target_dir = DIR_DB
-
-    return os.path.join(target_dir, db_filename)

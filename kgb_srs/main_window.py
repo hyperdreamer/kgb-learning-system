@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QMenu,
     QFileDialog,
+    QApplication,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush
@@ -100,7 +101,6 @@ class BarskyApp(QMainWindow):
         font_size = self.settings.get("font_size", 14)
 
         font = QFont(font_family, font_size)
-        QApplication = __import__("PyQt6.QtWidgets", fromlist=["QApplication"]).QApplication
         QApplication.setFont(font)
 
         dyn_padding = max(10, int(font_size * 0.8))

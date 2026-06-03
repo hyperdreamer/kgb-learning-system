@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QGraphicsTextItem,
     QGraphicsRectItem,
     QTextEdit,
-    QApplication,
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor, QBrush, QPen
