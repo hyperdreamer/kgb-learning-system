@@ -1,9 +1,9 @@
 {
-  "width": 1436,
-  "height": 867,
+  "width": 1363,
+  "height": 847,
   "font_family": "Microsoft YaHei",
   "font_size": 14,
-  "default_database": "",
+  "default_database": "/data/Dropbox/005.Study/00.KGB_Learning_System/db/Languages/English_barsky.db",
   "tts_voice": "en-US-AvaMultilingualNeural",
   "default_language": "English",
   "review_card_width_ratio": 0.75,

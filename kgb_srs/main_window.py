@@ -421,7 +421,8 @@ class BarskyApp(QMainWindow):
                     )
 
         self.scene.clear()
-        self.redraw_canvas()
+        if self.isVisible():
+            self.redraw_canvas()
 
     def randomize_box_five(self):
         """Randomly pull a 5% chance of a mastered card back for review."""
@@ -451,6 +452,13 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # Canvas
     # ------------------------------------------------------------------
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Initial draw deferred until the window is visible (correct dimensions)
+        if not getattr(self, '_did_initial_canvas', False):
+            self._did_initial_canvas = True
+            QTimer.singleShot(0, self.redraw_canvas)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.redraw_canvas()
