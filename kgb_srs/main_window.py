@@ -73,7 +73,7 @@ class BarskyApp(QMainWindow):
                 if path == default_db and os.path.exists(default_db):
                     self.current_db_path = default_db
                     self.current_lang = display
-                    self.db_btn.setText(f"📂 {display}")
+                    self.db_btn.setText(f"📂 {self._leaf_name(display)}")
                     self.load_database(silent=True)
                     break
 
@@ -242,6 +242,15 @@ class BarskyApp(QMainWindow):
         forced_review_layout.addWidget(self.force_rev_btn)
         main_layout.addLayout(forced_review_layout)
 
+        # --- Delete current item ---
+        self.delete_current_btn = QPushButton("🗑 Delete Current Item")
+        self.delete_current_btn.setStyleSheet(
+            "background-color: #ff4444; color: white; padding: 8px 16px; "
+            "font-weight: bold; border-radius: 5px;"
+        )
+        self.delete_current_btn.clicked.connect(self.delete_current_card)
+        main_layout.addWidget(self.delete_current_btn)
+
         self.card_ui = None
         self.incorrect_zone = None
         self.correct_zone = None
@@ -269,6 +278,11 @@ class BarskyApp(QMainWindow):
         pos = self.db_btn.mapToGlobal(self.db_btn.rect().bottomLeft())
         menu.exec(pos)
 
+    @staticmethod
+    def _leaf_name(display):
+        """Extract just the database name from a display path like 'Math/Compactness'."""
+        return display.replace("\\", "/").rsplit("/", 1)[-1]
+
     def select_database(self, action):
         """Called when a database is selected from the menu."""
         db_path = action.data()
@@ -278,7 +292,7 @@ class BarskyApp(QMainWindow):
             if path == db_path:
                 self.current_db_path = db_path
                 self.current_lang = display
-                self.db_btn.setText(f"📂 {display}")
+                self.db_btn.setText(f"📂 {self._leaf_name(display)}")
                 self.load_database(silent=False)
                 return
 
@@ -312,7 +326,7 @@ class BarskyApp(QMainWindow):
 
         self.current_db_path = path
         self.current_lang = display
-        self.db_btn.setText(f"📂 {display}")
+        self.db_btn.setText(f"📂 {self._leaf_name(display)}")
         self.load_database(silent=False)
 
     # ------------------------------------------------------------------
@@ -745,6 +759,38 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # Review Flow
     # ------------------------------------------------------------------
+    def delete_current_card(self):
+        """Delete the currently displayed card after confirmation."""
+        if not self.current_card:
+            QMessageBox.information(self, "Nothing to Delete", "No card is currently displayed.")
+            return
+
+        card_id, front, back, box = self.current_card
+        preview = front[:80] + ("..." if len(front) > 80 else "")
+        msg = (
+            f"You are about to <b>permanently delete</b> the current card:\n\n"
+            f"<b>ID:</b> {card_id} | <b>Box:</b> {box}\n"
+            f"<b>Front:</b> {preview}\n\n"
+            f"This action <span style='color:red;'>cannot be undone</span>.\n"
+            f"Are you sure you want to delete it?"
+        )
+        reply = QMessageBox.question(
+            self,
+            "⚠ Permanently Delete Card",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        c = self.conn.cursor()
+        c.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+        self.conn.commit()
+
+        QMessageBox.information(self, "Deleted", f"Card #{card_id} has been permanently deleted.")
+        self.show_next_card()
+
     def start_review(self):
         if not self.conn:
             return
