@@ -121,8 +121,7 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # Database Menu
     # ------------------------------------------------------------------
-    @staticmethod
-    def build_db_menu(parent_menu):
+    def build_db_menu(self, parent_menu):
         """Build a hierarchical QMenu from the database directory structure."""
         dbs = find_databases()
         if not dbs:
@@ -141,6 +140,8 @@ class BarskyApp(QMainWindow):
                 node = node[part]
             node[parts[-1]] = full_path  # leaf
 
+        current_path = getattr(self, "current_db_path", None)
+
         def populate_menu(menu, subtree):
             items = sorted(
                 subtree.items(),
@@ -152,11 +153,37 @@ class BarskyApp(QMainWindow):
                     populate_menu(sub, value)
                     menu.addMenu(sub)
                 else:
-                    action = menu.addAction(name)
+                    label = f"● {name}" if value == current_path else name
+                    action = menu.addAction(label)
                     action.setData(value)  # full path
             return menu
 
         return populate_menu(parent_menu, tree)
+
+    @staticmethod
+    def _menu_contains(menu, target_path):
+        """Check whether a menu or any of its descendents contains target_path."""
+        for action in menu.actions():
+            if action.menu():
+                if BarskyApp._menu_contains(action.menu(), target_path):
+                    return True
+            elif action.data() == target_path:
+                return True
+        return False
+
+    @staticmethod
+    def _expand_to_path(menu, target_path):
+        """Walk menu hierarchy and open submenus to reach target_path."""
+        for action in menu.actions():
+            if action.menu():
+                if BarskyApp._menu_contains(action.menu(), target_path):
+                    menu.setActiveAction(action)
+                    QTimer.singleShot(20, lambda m=action.menu(), t=target_path:
+                                      BarskyApp._expand_to_path(m, t))
+                    return
+            elif action.data() == target_path:
+                menu.setActiveAction(action)
+                return
 
     # ------------------------------------------------------------------
     # UI Setup
@@ -259,7 +286,11 @@ class BarskyApp(QMainWindow):
     # Database selection
     # ------------------------------------------------------------------
     def show_db_menu(self):
-        """Show the hierarchical database selection menu below the button."""
+        """Show the hierarchical database selection menu below the button.
+
+        The currently selected database is marked with a block dot (●).
+        The menu auto-expands subdirectories to reach the active entry.
+        """
         menu = QMenu(self)
         self.build_db_menu(menu)
 
@@ -276,7 +307,12 @@ class BarskyApp(QMainWindow):
         connect_menu(menu)
 
         pos = self.db_btn.mapToGlobal(self.db_btn.rect().bottomLeft())
-        menu.exec(pos)
+
+        # Auto-expand to the currently selected database (if any)
+        if self.current_db_path and self._menu_contains(menu, self.current_db_path):
+            QTimer.singleShot(10, lambda: self._expand_to_path(menu, self.current_db_path))
+
+        menu.popup(pos)
 
     @staticmethod
     def _leaf_name(display):
