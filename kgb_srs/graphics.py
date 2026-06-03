@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QColor, QBrush, QPen
+from PyQt6.QtGui import QColor, QBrush, QPen, QPainterPath
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -34,20 +34,21 @@ from .markdown_utils import build_review_html
 
 
 class DropZoneItem(QGraphicsRectItem):
-    """A drop zone (correct/incorrect) at the bottom of the canvas."""
+    """A rounded drop zone (correct/incorrect) at the bottom of the canvas."""
 
     def __init__(self, x, y, w, h, pen, brush, text_html, is_correct, app_ref):
         super().__init__()
 
         self.is_correct = is_correct
         self.app_ref = app_ref
+        self._hovered = False
 
         self.setAcceptHoverEvents(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self.text_item = QGraphicsTextItem(self)
         self.text_item.setHtml(text_html)
-        self.text_item.setTextWidth(w)
+        self.text_item.setTextWidth(w - 24)  # pad for rounded corners
 
         text_rect = self.text_item.boundingRect()
         actual_h = max(h, text_rect.height() + 20)
@@ -57,11 +58,39 @@ class DropZoneItem(QGraphicsRectItem):
 
         self.setRect(0, 0, w, actual_h)
         self.setPos(x, adjusted_y)
-        self.setPen(pen)
-        self.setBrush(brush)
+        self._pen = pen
+        self._brush = brush
+        self._brush_dim = QBrush(brush.color().darker(115))
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
 
         text_y = (actual_h - text_rect.height()) / 2
-        self.text_item.setPos(0, text_y)
+        self.text_item.setPos(12, text_y)
+
+    def paint(self, painter, option, widget):
+        painter.setRenderHint(painter.RenderHint.Antialiasing)
+        rect = self.rect()
+        radius = 12
+
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+
+        brush = self._brush_dim if self._hovered else self._brush
+        painter.fillPath(path, brush)
+        painter.setPen(self._pen if self._hovered else QPen(self._pen.color().darker(120), 2))
+        painter.drawPath(path)
+
+        # let text paint via child item
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         if self.app_ref.current_card:

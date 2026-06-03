@@ -96,6 +96,18 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # Font / Styling
     # ------------------------------------------------------------------
+    @staticmethod
+    def _button_style(bg, hover=None):
+        hover = hover or bg
+        return (
+            f"QPushButton {{"
+            f"  background-color: {bg}; color: white; border: none; "
+            f"  border-radius: 6px; padding: 8px 16px; font-weight: bold; "
+            f"}}"
+            f"QPushButton:hover {{ background-color: {hover}; }}"
+            f"QPushButton:pressed {{ background-color: {bg}; }}"
+        )
+
     def apply_font_settings(self):
         font_family = self.settings.get("font_family", "Arial")
         font_size = self.settings.get("font_size", 14)
@@ -103,23 +115,30 @@ class BarskyApp(QMainWindow):
         font = QFont(font_family, font_size)
         QApplication.setFont(font)
 
-        dyn_padding = max(10, int(font_size * 0.8))
+        dyn_pad = max(10, int(font_size * 0.8))
+        fs = font_size + 2
 
-        btn_styles = {
-            "start_btn": "background-color: #4CAF50; color: white; border-radius: 5px;",
-            "force_seq_btn": "background-color: #FF9800; color: white; border-radius: 5px;",
-            "restart_review_btn": "background-color: #1E88E5; color: white; border-radius: 5px;",
-            "force_rev_btn": "background-color: #F4511E; color: white; border-radius: 5px;",
-        }
+        self.start_btn.setStyleSheet(
+            self._button_style("#43A047", "#66BB6A") +
+            f"padding: {dyn_pad}px; font-size: {fs}px;"
+        )
+        self.force_seq_btn.setStyleSheet(
+            self._button_style("#FB8C00", "#FFA726") +
+            f"padding: {dyn_pad}px; font-size: {fs}px;"
+        )
+        self.restart_review_btn.setStyleSheet(
+            self._button_style("#1E88E5", "#42A5F5") +
+            f"padding: {dyn_pad}px; font-size: {fs}px;"
+        )
+        self.force_rev_btn.setStyleSheet(
+            self._button_style("#E53935", "#EF5350") +
+            f"padding: {dyn_pad}px; font-size: {fs}px;"
+        )
 
-        for attr_name, style_base in btn_styles.items():
-            btn = getattr(self, attr_name, None)
-            if btn is not None:
-                btn.setStyleSheet(
-                    f"{style_base} "
-                    f"padding: {dyn_padding}px; font-family: '{font_family}'; "
-                    f"font-size: {font_size + 2}px; font-weight: bold;"
-                )
+        self.delete_current_btn.setStyleSheet(
+            self._button_style("#D32F2F", "#F44336") +
+            f"padding: {dyn_pad}px; font-size: {fs}px;"
+        )
 
     # ------------------------------------------------------------------
     # Database Menu
@@ -193,32 +212,49 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     def setup_ui(self):
         central_widget = QWidget()
+        central_widget.setStyleSheet(
+            "QWidget { background-color: #FAFAFA; }"
+        )
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(10, 8, 10, 8)
 
         # --- Top bar ---
         top_frame = QWidget()
+        top_frame.setStyleSheet(
+            "QWidget { background-color: #ECEFF1; border-radius: 8px; }"
+        )
         top_layout = QHBoxLayout(top_frame)
-        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setContentsMargins(10, 6, 10, 6)
+        top_layout.setSpacing(8)
 
         top_layout.addWidget(QLabel("Database:"))
 
         self.db_btn = QPushButton("📂 Select Database")
         self.db_btn.setStyleSheet(
-            "text-align: left; padding: 6px 12px; font-weight: bold;"
+            "QPushButton {"
+            "  text-align: left; padding: 6px 14px; font-weight: bold;"
+            "  background-color: #FFFFFF; border: 1px solid #CFD8DC;"
+            "  border-radius: 6px;"
+            "}"
+            "QPushButton:hover { background-color: #F5F5F5; }"
         )
         self.db_btn.clicked.connect(self.show_db_menu)
         top_layout.addWidget(self.db_btn)
 
-        self.new_db_btn = QPushButton("＋ New Database")
+        self.new_db_btn = QPushButton("＋ New")
         self.new_db_btn.setStyleSheet(
-            "background-color: #4CAF50; color: white; padding: 6px 12px; "
-            "font-weight: bold; border-radius: 4px;"
+            "QPushButton {"
+            "  background-color: #43A047; color: white; padding: 6px 14px;"
+            "  font-weight: bold; border: none; border-radius: 6px;"
+            "}"
+            "QPushButton:hover { background-color: #66BB6A; }"
         )
         self.new_db_btn.clicked.connect(self.create_new_database)
         top_layout.addWidget(self.new_db_btn)
 
-        self.random_checkbox = QCheckBox("Review Randomly")
+        self.random_checkbox = QCheckBox("Shuffle")
         self.random_checkbox.setEnabled(False)
         self.random_checkbox.stateChanged.connect(self.on_random_toggled)
         self.random_checkbox.setToolTip(
@@ -228,43 +264,59 @@ class BarskyApp(QMainWindow):
 
         top_layout.addStretch()
 
-        add_btn = QPushButton("Add Word")
-        add_btn.clicked.connect(self.add_word)
-        browse_btn = QPushButton("Browse and Edit")
-        browse_btn.clicked.connect(self.browse_cards)
-        settings_btn = QPushButton("Settings")
-        settings_btn.clicked.connect(self.open_settings_window)
+        def action_btn(text, handler):
+            btn = QPushButton(text)
+            btn.setStyleSheet(
+                "QPushButton {"
+                "  background-color: transparent; color: #37474F;"
+                "  border: 1px solid #B0BEC5; border-radius: 5px;"
+                "  padding: 5px 12px; font-weight: 600;"
+                "}"
+                "QPushButton:hover {"
+                "  background-color: #ECEFF1; border-color: #78909C;"
+                "}"
+            )
+            btn.clicked.connect(handler)
+            return btn
 
-        top_layout.addWidget(add_btn)
-        top_layout.addWidget(browse_btn)
-        top_layout.addWidget(settings_btn)
+        top_layout.addWidget(action_btn("Add Word", self.add_word))
+        top_layout.addWidget(action_btn("Browse", self.browse_cards))
+        top_layout.addWidget(action_btn("Settings", self.open_settings_window))
         main_layout.addWidget(top_frame)
 
         # --- Canvas ---
         self.scene = QGraphicsScene()
         self.view = QGraphicsView(self.scene)
-        self.view.setStyleSheet("background-color: #cfcfcf;")
+        self.view.setStyleSheet(
+            "QGraphicsView { background-color: #E8EDF2; border: 1px solid #CFD8DC; "
+            "border-radius: 8px; }"
+        )
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         main_layout.addWidget(self.view)
 
         # --- Review buttons ---
-        self.start_btn = QPushButton("Start Daily Review")
+        self.start_btn = QPushButton("▶ Start Daily Review")
+        self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.clicked.connect(self.start_review)
         main_layout.addWidget(self.start_btn)
 
         forced_review_layout = QHBoxLayout()
+        forced_review_layout.setSpacing(6)
 
-        self.force_seq_btn = QPushButton("Next Item")
+        self.force_seq_btn = QPushButton("→ Next Item")
+        self.force_seq_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.force_seq_btn.clicked.connect(
             lambda: self.start_forced_review(direction="ASC")
         )
 
-        self.restart_review_btn = QPushButton("Restart Current Review (1st Item)")
+        self.restart_review_btn = QPushButton("↺ Restart Review")
+        self.restart_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.restart_review_btn.clicked.connect(self.restart_current_review)
 
-        self.force_rev_btn = QPushButton("Previous Item")
+        self.force_rev_btn = QPushButton("← Prev Item")
+        self.force_rev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.force_rev_btn.clicked.connect(
             lambda: self.start_forced_review(direction="DESC")
         )
@@ -276,16 +328,16 @@ class BarskyApp(QMainWindow):
 
         # --- Delete current item ---
         self.delete_current_btn = QPushButton("🗑 Delete Current Item")
-        self.delete_current_btn.setStyleSheet(
-            "background-color: #ff4444; color: white; padding: 8px 16px; "
-            "font-weight: bold; border-radius: 5px;"
-        )
+        self.delete_current_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_current_btn.clicked.connect(self.delete_current_card)
+        self.delete_current_btn.hide()  # hidden until a card is shown
         main_layout.addWidget(self.delete_current_btn)
 
         self.card_ui = None
         self.incorrect_zone = None
         self.correct_zone = None
+
+        self._update_button_visibility()
 
     # ------------------------------------------------------------------
     # Database selection
@@ -812,6 +864,14 @@ class BarskyApp(QMainWindow):
         dialog.exec()
 
     # ------------------------------------------------------------------
+    # Button visibility
+    # ------------------------------------------------------------------
+    def _update_button_visibility(self):
+        """Show/hide review-dependent buttons based on whether a card is active."""
+        has_card = self.current_card is not None
+        self.delete_current_btn.setVisible(has_card)
+
+    # ------------------------------------------------------------------
     # Review Flow
     # ------------------------------------------------------------------
     def delete_current_card(self):
@@ -967,6 +1027,7 @@ class BarskyApp(QMainWindow):
         QMessageBox.information(self, "Done", "You have finished your reviews.")
         self.current_card = None
         self.review_mode = ""
+        self._update_button_visibility()
 
     def draw_card_ui(self):
         if not self.current_card:
@@ -1007,6 +1068,7 @@ class BarskyApp(QMainWindow):
             self.card_ui.set_text(display_md, False, spoken_front)
 
         self.scene.addItem(self.card_ui)
+        self._update_button_visibility()
 
     def flip_card(self):
         if not self.current_card:
