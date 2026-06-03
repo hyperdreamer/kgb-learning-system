@@ -87,6 +87,8 @@ class BarskyApp(QMainWindow):
     def closeEvent(self, event):
         self.settings["width"] = self.width()
         self.settings["height"] = self.height()
+        if self.current_db_path:
+            self.settings["default_database"] = self.current_db_path
         self._save_settings()
         event.accept()
 
