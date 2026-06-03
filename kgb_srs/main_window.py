@@ -1183,7 +1183,10 @@ class BarskyApp(QMainWindow):
         browse_btn.clicked.connect(browse_db)
 
         tts_combo = QComboBox()
-        tts_combo.setMinimumWidth(420)
+        tts_combo.setMinimumWidth(520)
+        tts_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        # Let the popup expand beyond the combo width so long names aren't cut off
+        tts_combo.view().setMinimumWidth(700)
         current_voice = self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
 
         # Start fetching voices in background
@@ -1199,7 +1202,7 @@ class BarskyApp(QMainWindow):
 
             selected_idx = 0
             for i, (short_name, locale, gender, friendly) in enumerate(voices):
-                label = f"{short_name}  ·  {locale}  ·  {gender}  —  {friendly}"
+                label = f"{short_name}  ·  {locale}  ·  {gender}"
                 tts_combo.addItem(label, short_name)
                 if short_name == current_voice:
                     selected_idx = i
