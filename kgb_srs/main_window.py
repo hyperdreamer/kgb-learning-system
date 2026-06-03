@@ -35,7 +35,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import load_settings, save_settings, DIR_DB
 from .db import init_db, find_databases, DB_SUFFIX
-from .tts import TTSWorker
+from .tts import TTSWorker, VoiceListWorker
 from .dialogs import DynamicInputDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
@@ -1182,17 +1182,44 @@ class BarskyApp(QMainWindow):
 
         browse_btn.clicked.connect(browse_db)
 
-        tts_input = QLineEdit(
-            self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
-        )
-        tts_input.setPlaceholderText("e.g. en-US-AvaMultilingualNeural")
+        tts_combo = QComboBox()
+        tts_combo.setMinimumWidth(420)
+        current_voice = self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
+
+        # Start fetching voices in background
+        voice_worker = VoiceListWorker()
+        voices_loaded = False
+
+        def on_voices_ready(voices):
+            nonlocal voices_loaded
+            voices_loaded = True
+            tts_combo.clear()
+            tts_combo.addItem("(loading voices…)", current_voice)
+            tts_combo.model().removeRow(0)
+
+            selected_idx = 0
+            for i, (short_name, locale, gender, friendly) in enumerate(voices):
+                label = f"{short_name}  ·  {locale}  ·  {gender}  —  {friendly}"
+                tts_combo.addItem(label, short_name)
+                if short_name == current_voice:
+                    selected_idx = i
+            tts_combo.setCurrentIndex(selected_idx)
+
+        def on_error(msg):
+            # On error, keep the text field as fallback
+            pass
+
+        voice_worker.voices_ready.connect(on_voices_ready)
+        voice_worker.error.connect(on_error)
+        voice_worker.finished.connect(voice_worker.deleteLater)
+        voice_worker.start()
 
         layout.addRow("Window Width:", w_input)
         layout.addRow("Window Height:", h_input)
         layout.addRow("Font Family:", font_combo)
         layout.addRow("Font Size:", size_input)
         layout.addRow("Default Database:", db_row)
-        layout.addRow("TTS Voice (Edge-TTS):", tts_input)
+        layout.addRow("TTS Voice (Edge-TTS):", tts_combo)
 
         save_btn = QPushButton("Save && Apply")
         save_btn.setStyleSheet("background-color: #ccffcc;")
@@ -1204,7 +1231,7 @@ class BarskyApp(QMainWindow):
             self.settings["font_family"] = font_combo.currentText()
             self.settings["font_size"] = size_input.value()
             self.settings["default_database"] = lang_input.text().strip()
-            self.settings["tts_voice"] = tts_input.text().strip()
+            self.settings["tts_voice"] = tts_combo.currentData() or current_voice
 
             self._save_settings()
             self.resize(self.settings["width"], self.settings["height"])

@@ -39,3 +39,33 @@ class TTSWorker(QThread):
             self.error.emit(str(e))
         finally:
             loop.close()
+
+
+class VoiceListWorker(QThread):
+    """Background worker that fetches the list of available Edge TTS voices."""
+
+    voices_ready = pyqtSignal(list)  # emits list of (ShortName, Locale, Gender, FriendlyName)
+    error = pyqtSignal(str)
+
+    async def _fetch(self):
+        voices = await edge_tts.list_voices()
+        result = []
+        for v in voices:
+            result.append((
+                v["ShortName"],
+                v["Locale"],
+                v.get("Gender", ""),
+                v.get("FriendlyName", v["ShortName"]),
+            ))
+        return result
+
+    def run(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            voices = loop.run_until_complete(self._fetch())
+            self.voices_ready.emit(voices)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            loop.close()
