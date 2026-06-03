@@ -1194,7 +1194,7 @@ class BarskyApp(QMainWindow):
         layout.addRow("Default Database:", db_row)
         layout.addRow("TTS Voice (Edge-TTS):", tts_input)
 
-        save_btn = QPushButton("Save & Apply")
+        save_btn = QPushButton("Save && Apply")
         save_btn.setStyleSheet("background-color: #ccffcc;")
         layout.addRow(save_btn)
 
