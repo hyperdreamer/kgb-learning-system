@@ -22,3 +22,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# User-local settings (machine-specific)
+barsky_settings.json
