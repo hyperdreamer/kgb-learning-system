@@ -67,6 +67,7 @@ class BarskyApp(QMainWindow):
         self.review_mode = ""
 
         self.tts_worker = None
+        self.voice_worker = None
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -1191,6 +1192,7 @@ class BarskyApp(QMainWindow):
 
         # Start fetching voices in background
         voice_worker = VoiceListWorker()
+        self.voice_worker = voice_worker  # keep a reference so it isn't GC'd while running
         voices_loaded = False
 
         def on_voices_ready(voices):
