@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QPushButton,
+    QToolButton,
     QGraphicsView,
     QGraphicsScene,
     QMessageBox,
@@ -58,6 +59,43 @@ from .ai_provider import AIProviderConfig
 _DB_MENU_STYLESHEET = (
     "QMenu::item { padding-right: 28px; }"
 )
+
+
+class SecretLineEdit(QWidget):
+    """Password input with a left-side button for toggling visibility."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+
+        self.toggle_button = QToolButton()
+        self.toggle_button.setText("👁")
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setAutoRaise(True)
+        self.toggle_button.setToolTip("Show API key")
+        self.toggle_button.setAccessibleName("Show API key")
+
+        self.line_edit = QLineEdit(text)
+        self.line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+
+        row.addWidget(self.toggle_button)
+        row.addWidget(self.line_edit)
+        self.toggle_button.toggled.connect(self._set_visible)
+
+    def _set_visible(self, visible):
+        mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+        action = "Hide API key" if visible else "Show API key"
+        self.line_edit.setEchoMode(mode)
+        self.toggle_button.setToolTip(action)
+        self.toggle_button.setAccessibleName(action)
+
+    def text(self):
+        return self.line_edit.text()
+
+    def setPlaceholderText(self, text):
+        self.line_edit.setPlaceholderText(text)
 
 
 from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
@@ -1597,8 +1635,7 @@ class BarskyApp(QMainWindow):
         ai_model_input = QLineEdit(self.settings.get("ai_model", "gpt-4o-mini"))
         layout.addRow("Model:", ai_model_input)
 
-        ai_key_input = QLineEdit(self.settings.get("ai_api_key", ""))
-        ai_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        ai_key_input = SecretLineEdit(self.settings.get("ai_api_key", ""))
         ai_key_input.setPlaceholderText("sk-... (stored locally, never committed)")
         layout.addRow("API Key:", ai_key_input)
 

@@ -57,6 +57,27 @@ def _qt_app():
 
 
 class TestFinalFormRegressions:
+    def test_api_key_visibility_button_toggles_plaintext(self):
+        _qt_app()
+        from PyQt6.QtWidgets import QLineEdit
+        from kgb_srs.main_window import SecretLineEdit
+
+        field = SecretLineEdit("sk-secret")
+        assert field.layout().indexOf(field.toggle_button) == 0
+        assert field.layout().indexOf(field.line_edit) == 1
+        assert field.line_edit.echoMode() == QLineEdit.EchoMode.Password
+        assert field.toggle_button.isCheckable()
+        assert field.toggle_button.toolTip() == "Show API key"
+
+        field.toggle_button.click()
+        assert field.line_edit.echoMode() == QLineEdit.EchoMode.Normal
+        assert field.text() == "sk-secret"
+        assert field.toggle_button.toolTip() == "Hide API key"
+
+        field.toggle_button.click()
+        assert field.line_edit.echoMode() == QLineEdit.EchoMode.Password
+        field.close()
+
     def test_public_ai_worker_does_not_shadow_thread_finished(self):
         _qt_app()
         from kgb_srs.ai_provider import _get_ai_worker_class
