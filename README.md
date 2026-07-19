@@ -152,9 +152,20 @@ Click **Add Entry**. The dialog adapts to the database type:
 - **Word/Phrase-based**: Front/back entry with optional AI generation for meanings.
 - **Knowledge-based**: Simple front/back entry with no AI prompts — preserves original generic behavior.
 
-### 4. Daily Review
+### 4. Review Controls
 
-Click **Start Daily Review**. The 5-box SRS system works identically across all subtypes.
+- **Start Daily Review** — begins a review of all cards due today. The 5-box SRS system works identically across all subtypes.
+- **Next** — sequential review in ascending ID order (useful for browsing all cards regardless of due date).
+- **Previous** — sequential review in descending ID order.
+- **Restart** — restart the current review from the beginning in ascending ID order.
+- **Close Review** — pauses the active review without grading or advancing. The current card and review mode are saved; remaining queued cards are preserved in order. Closing has no effect on the database — it is purely a UI convenience for pausing and resuming a session. **Close Review** is only enabled when a card is shown in an active review mode.
+
+  On resume, the paused card is always re-shown first.  The queue that follows depends on the resume action:
+  - **Start Daily Review** (after a daily close): the preserved daily queue.
+  - **Next**: ascending traversal from the paused card's position.
+  - **Previous**: descending traversal from the paused card's position.
+  - **Restart**: all cards in ascending order.
+- **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. **Delete Entry** is enabled whenever a database is loaded and a card is displayed (not only during reviews).
 
 ### 5. Browse & Edit
 

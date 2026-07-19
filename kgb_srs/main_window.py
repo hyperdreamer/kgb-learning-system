@@ -251,6 +251,9 @@ class BarskyApp(QMainWindow):
         self.is_current_flipped = False
         self.review_mode = ""
 
+        self._paused_review_card = None
+        self._paused_review_mode = ""
+
         self.tts_worker = None
         self.voice_worker = None
 
@@ -298,6 +301,9 @@ class BarskyApp(QMainWindow):
             f"}}"
             f"QPushButton:hover {{ background-color: {hover}; }}"
             f"QPushButton:pressed {{ background-color: {bg}; }}"
+            f"QPushButton:disabled {{"
+            f"  background-color: #CFD8DC; color: #78909C; "
+            f"}}"
         )
 
     def apply_font_settings(self):
@@ -327,8 +333,13 @@ class BarskyApp(QMainWindow):
             f"padding: {dyn_pad}px; font-size: {fs}px;"
         )
 
-        self.delete_current_btn.setStyleSheet(
+        self.delete_entry_btn.setStyleSheet(
             self._button_style("#D32F2F", "#F44336") +
+            f"padding: {dyn_pad}px; font-size: {fs}px;"
+        )
+
+        self.close_review_btn.setStyleSheet(
+            self._button_style("#78909C", "#90A4AE") +
             f"padding: {dyn_pad}px; font-size: {fs}px;"
         )
 
@@ -468,6 +479,11 @@ class BarskyApp(QMainWindow):
 
         self.add_entry_btn = action_btn(" Add Entry", "list-add", self.add_word)
         top_layout.addWidget(self.add_entry_btn)
+
+        self.delete_entry_btn = action_btn(" Delete Entry", "edit-delete", self.delete_current_card)
+        self.delete_entry_btn.setEnabled(False)
+        top_layout.addWidget(self.delete_entry_btn)
+
         top_layout.addWidget(
             action_btn(" Browse", "edit-find", self.browse_cards)
         )
@@ -532,15 +548,15 @@ class BarskyApp(QMainWindow):
         forced_review_layout.addWidget(self.force_seq_btn)
         forced_review_layout.addWidget(self.restart_review_btn)
         forced_review_layout.addWidget(self.force_rev_btn)
-        main_layout.addLayout(forced_review_layout)
 
-        # --- Delete current item ---
-        self.delete_current_btn = QPushButton(" Delete Current Item")
-        self.delete_current_btn.setIcon(self._icon("edit-delete"))
-        self.delete_current_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.delete_current_btn.clicked.connect(self.delete_current_card)
-        self.delete_current_btn.hide()
-        main_layout.addWidget(self.delete_current_btn)
+        self.close_review_btn = QPushButton(" Close Review")
+        self.close_review_btn.setIcon(self._icon("window-close"))
+        self.close_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_review_btn.setEnabled(False)
+        self.close_review_btn.clicked.connect(self.close_review)
+        forced_review_layout.addWidget(self.close_review_btn)
+
+        main_layout.addLayout(forced_review_layout)
 
         self.card_ui = None
         self.incorrect_zone = None
@@ -694,8 +710,12 @@ class BarskyApp(QMainWindow):
         self.current_card = None
         self.cards_due = []
         self.review_mode = ""
+        self._paused_review_card = None
+        self._paused_review_mode = ""
 
         self.randomize_box_five()
+
+        self._update_button_visibility()
 
         if not silent:
             QMessageBox.information(self, "Success", f"Loaded database: {self.current_lang}")
@@ -1135,6 +1155,22 @@ class BarskyApp(QMainWindow):
         if self.current_card is not None and self.current_card[0] == card_id:
             self.current_card = None
 
+    def _delete_card_by_id(self, card_id):
+        """Execute DELETE + commit, clean review state, clear matching paused.
+
+        Does NOT show dialogs or call show_next_card — callers own those
+        UI responsibilities.  Returns the integer card_id.
+        """
+        card_id = int(card_id)
+        self.conn.cursor().execute("DELETE FROM cards WHERE id = ?", (card_id,))
+        self.conn.commit()
+        self._remove_card_from_review_state(card_id)
+        if (self._paused_review_card is not None
+                and int(self._paused_review_card[0]) == card_id):
+            self._paused_review_card = None
+            self._paused_review_mode = ""
+        return card_id
+
     # ------------------------------------------------------------------
     # Browse
     # ------------------------------------------------------------------
@@ -1295,9 +1331,7 @@ class BarskyApp(QMainWindow):
                     self.current_card is not None
                     and str(self.current_card[0]) == str(card_id)
                 )
-                self.conn.cursor().execute("DELETE FROM cards WHERE id=?", (card_id,))
-                self.conn.commit()
-                self._remove_card_from_review_state(card_id)
+                self._delete_card_by_id(card_id)
                 refresh_list()
 
                 if deleted_current:
@@ -1313,13 +1347,75 @@ class BarskyApp(QMainWindow):
     # Button visibility
     # ------------------------------------------------------------------
     def _update_button_visibility(self):
-        """Show/hide review-dependent buttons based on whether a card is active."""
+        """Enable/disable review-dependent buttons based on state."""
+        has_db = self.conn is not None
         has_card = self.current_card is not None
-        self.delete_current_btn.setVisible(has_card)
+        has_active_review = has_card and self.review_mode != ""
+
+        self.delete_entry_btn.setEnabled(has_db and has_card)
+        self.close_review_btn.setEnabled(has_active_review)
+
+        self.start_btn.setEnabled(has_db)
+        self.force_seq_btn.setEnabled(has_db)
+        self.restart_review_btn.setEnabled(has_db)
+        self.force_rev_btn.setEnabled(has_db)
 
     # ------------------------------------------------------------------
     # Review Flow
     # ------------------------------------------------------------------
+    def close_review(self):
+        """Stop the active review without grading, deleting, or advancing.
+
+        Stores the current card and review mode so the same card can be
+        resumed later.  All resume paths re-show the paused card first;
+        the queue that follows depends on the action that resumes:
+
+        - Start Daily (after daily close): preserved remaining queue.
+        - Next (forced ASC): ascending traversal from paused position.
+        - Previous (forced DESC): descending traversal from paused position.
+        - Restart: all cards in ascending order.
+        """
+        if not self.current_card:
+            return
+
+        self._paused_review_card = self.current_card
+        self._paused_review_mode = self.review_mode
+
+        if self.card_ui:
+            self.scene.removeItem(self.card_ui)
+            self.card_ui = None
+
+        self.current_card = None
+        self.review_mode = ""
+
+        self._update_button_visibility()
+
+    def _resume_paused_card(self, cursor):
+        """If a paused card exists, re-fetch it from DB and insert at
+        front of cards_due, de-duplicating.  Clears paused state.
+        If the paused card was deleted from DB, clears state silently.
+        """
+        paused = self._paused_review_card
+        self._paused_review_card = None
+        self._paused_review_mode = ""
+
+        if paused is None:
+            return
+
+        cursor.execute(
+            "SELECT id, front, back, box FROM cards WHERE id = ?",
+            (paused[0],),
+        )
+        fresh = cursor.fetchone()
+        if fresh is None:
+            return  # card deleted — skip silently
+
+        # De-dup: remove from cards_due if present
+        paused_id = fresh[0]
+        self.cards_due = [c for c in self.cards_due if c[0] != paused_id]
+        # Insert at front
+        self.cards_due.insert(0, fresh)
+
     def delete_current_card(self):
         if not self.current_card:
             QMessageBox.information(self, "Nothing to Delete", "No card is currently displayed.")
@@ -1344,9 +1440,7 @@ class BarskyApp(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        c = self.conn.cursor()
-        c.execute("DELETE FROM cards WHERE id = ?", (card_id,))
-        self.conn.commit()
+        self._delete_card_by_id(card_id)
 
         QMessageBox.information(self, "Deleted", f"Card #{card_id} has been permanently deleted.")
         self.show_next_card()
@@ -1363,23 +1457,35 @@ class BarskyApp(QMainWindow):
                 self.card_ui = None
             self.current_card = None
 
-        today_str = datetime.date.today().isoformat()
-
         c = self.conn.cursor()
-        c.execute(
-            "SELECT id, front, back, box FROM cards WHERE next_review <= ?",
-            (today_str,),
-        )
-        self.cards_due = c.fetchall()
 
-        if self.random_checkbox.isChecked():
-            random.shuffle(self.cards_due)
-        else:
-            self.cards_due.sort(key=lambda x: x[0])
+        # Preserve queue when resuming a daily review — avoid
+        # reshuffle/requery that would lose the remaining order.
+        resume_daily = (
+            self._paused_review_card is not None
+            and self._paused_review_mode == "daily"
+        )
+
+        if not resume_daily:
+            today_str = datetime.date.today().isoformat()
+            c.execute(
+                "SELECT id, front, back, box FROM cards WHERE next_review <= ?",
+                (today_str,),
+            )
+            self.cards_due = c.fetchall()
+
+            if self.random_checkbox.isChecked():
+                random.shuffle(self.cards_due)
+            else:
+                self.cards_due.sort(key=lambda x: x[0])
+
+        # Resume paused card (inserts at front, de-duplicates).
+        self._resume_paused_card(c)
 
         if not self.cards_due:
             QMessageBox.information(self, "Done", "No cards due for review today!")
             self.review_mode = ""
+            self._update_button_visibility()
             return
 
         self.show_next_card()
@@ -1391,8 +1497,25 @@ class BarskyApp(QMainWindow):
 
         target_mode = "force_seq" if direction == "ASC" else "force_rev"
 
+        # Detect paused card and compute the starting offset for the
+        # remainder of the queue.  Paused card goes first unconditionally.
+        paused_fresh = None
+        if self._paused_review_card is not None:
+            paused = self._paused_review_card
+            self._paused_review_card = None
+            self._paused_review_mode = ""
+            c = self.conn.cursor()
+            c.execute(
+                "SELECT id, front, back, box FROM cards WHERE id = ?",
+                (paused[0],),
+            )
+            paused_fresh = c.fetchone()
+
         if restart:
             current_id = None
+        elif paused_fresh is not None:
+            # Resume: remaining cards start after the paused card's position.
+            current_id = paused_fresh[0]
         elif self.current_card is not None:
             current_id = self.current_card[0]
         else:
@@ -1408,32 +1531,86 @@ class BarskyApp(QMainWindow):
 
         c = self.conn.cursor()
 
-        if current_id is not None and current_id != 0:
-            if direction == "ASC":
-                query = (
-                    "SELECT id, front, back, box FROM cards WHERE id > ? ORDER BY id ASC"
-                )
-            else:
-                query = (
-                    "SELECT id, front, back, box FROM cards WHERE id < ? ORDER BY id DESC"
-                )
-            c.execute(query, (current_id,))
-            self.cards_due = c.fetchall()
+        # Build the queue: paused card first (if any), then remainder
+        if paused_fresh is not None:
+            self.cards_due = [paused_fresh]
+        else:
+            self.cards_due = []
 
-            if not self.cards_due:
+        if restart or paused_fresh is not None:
+            # Restart or resume: fetch remaining cards in the requested
+            # direction, de-duplicating against the paused card.
+            if restart:
+                # Restart: all cards from the beginning
+                query = (
+                    f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
+                )
+                c.execute(query)
+            else:
+                # Resume with paused card: remainder after paused card
+                if direction == "ASC":
+                    query = (
+                        "SELECT id, front, back, box FROM cards "
+                        "WHERE id > ? ORDER BY id ASC"
+                    )
+                else:
+                    query = (
+                        "SELECT id, front, back, box FROM cards "
+                        "WHERE id < ? ORDER BY id DESC"
+                    )
+                c.execute(query, (current_id,))
+
+            remaining = c.fetchall()
+
+            # Wrap around if no remaining (and not a restart — restart
+            # already fetched everything)
+            if not remaining and not restart:
                 wrap_query = (
                     f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
                 )
                 c.execute(wrap_query)
-                self.cards_due = c.fetchall()
+                remaining = c.fetchall()
+
+            # De-dup against paused card
+            if paused_fresh is not None:
+                paused_id = paused_fresh[0]
+                remaining = [r for r in remaining if r[0] != paused_id]
+
+            self.cards_due.extend(remaining)
         else:
-            query = f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
-            c.execute(query)
-            self.cards_due = c.fetchall()
+            # Normal (non-paused) flow
+            if current_id is not None and current_id != 0:
+                if direction == "ASC":
+                    query = (
+                        "SELECT id, front, back, box FROM cards "
+                        "WHERE id > ? ORDER BY id ASC"
+                    )
+                else:
+                    query = (
+                        "SELECT id, front, back, box FROM cards "
+                        "WHERE id < ? ORDER BY id DESC"
+                    )
+                c.execute(query, (current_id,))
+                self.cards_due = c.fetchall()
+
+                if not self.cards_due:
+                    wrap_query = (
+                        f"SELECT id, front, back, box FROM cards "
+                        f"ORDER BY id {direction}"
+                    )
+                    c.execute(wrap_query)
+                    self.cards_due = c.fetchall()
+            else:
+                query = (
+                    f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
+                )
+                c.execute(query)
+                self.cards_due = c.fetchall()
 
         if not self.cards_due:
             QMessageBox.information(self, "Empty", "There are no cards in the database.")
             self.review_mode = ""
+            self._update_button_visibility()
             return
 
         self.show_next_card()

@@ -1865,3 +1865,391 @@ class TestDropZoneLayoutDoesNotOverflow:
         )
 
         win.close()
+
+
+# ============================================================================
+# Review-controls — consolidated regression suite
+# ============================================================================
+
+
+class TestReviewControls:
+    """Button visibility (#1), close-preserves-queue (#2), resume semantics
+    (#3), and delete behavior."""
+
+    # -- shared helpers ---------------------------------------------------
+
+    @staticmethod
+    def _db(*ids):
+        """Return in-memory conn with cards inserted (all due today)."""
+        import sqlite3, datetime
+        from kgb_srs.db import init_db
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        today = datetime.date.today().isoformat()
+        for cid in ids:
+            conn.execute(
+                "INSERT INTO cards (id, front, back, box, next_review) "
+                "VALUES (?, ?, ?, 1, ?)", (cid, f"c{cid}", f"b{cid}", today))
+        conn.commit()
+        return conn
+
+    @staticmethod
+    def _win(conn=None, card=None, due=(), mode="",
+             paused_card=None, paused_mode=""):
+        """Build BarskyApp with review state injected."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+        w = BarskyApp()
+        if conn:
+            w.conn = conn
+        w.current_card = card
+        w.cards_due = list(due)
+        w.review_mode = mode
+        w._paused_review_card = paused_card
+        w._paused_review_mode = paused_mode
+        return w
+
+    @staticmethod
+    def _mock_dialogs():
+        """Patch QMessageBox to auto-confirm delete/acknowledge."""
+        from unittest.mock import patch
+        from PyQt6.QtWidgets import QMessageBox
+        return (
+            patch("kgb_srs.main_window.QMessageBox.question",
+                  return_value=QMessageBox.StandardButton.Yes),
+            patch("kgb_srs.main_window.QMessageBox.information"),
+        )
+
+    # -- stylesheet: disabled-rule required for visual fading --------------
+
+    def test_button_style_includes_disabled_rule(self):
+        """_button_style() must include QPushButton:disabled with faded
+        background (#CFD8DC) and muted text (#78909C)."""
+        from kgb_srs.main_window import BarskyApp
+        style = BarskyApp._button_style("#D32F2F", "#F44336")
+        assert "QPushButton:disabled" in style, (
+            "Missing QPushButton:disabled selector"
+        )
+        assert "#CFD8DC" in style, (
+            "Missing disabled background-color #CFD8DC"
+        )
+        assert "#78909C" in style, (
+            "Missing disabled color #78909C"
+        )
+        # Ensure enabled colors are untouched
+        assert "#D32F2F" in style
+        assert "#F44336" in style
+        assert "QPushButton:hover" in style
+
+    # -- finding #1: button visibility after DB load ----------------------
+
+    def test_buttons_after_db_load(self):
+        """Start/Next/Restart/Previous enabled; Delete/Close disabled."""
+        import tempfile, os
+        conn = self._db(1)
+        # load_database needs a real file-path — write to temp file
+        tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
+        tmp.close()
+        try:
+            from kgb_srs.db import init_db
+            init_db(tmp.name).close()
+            w = self._win(conn=conn)
+            w.current_db_path = tmp.name
+            w.current_lang = "Test"
+            w.load_database(silent=True)
+
+            assert w.start_btn.isEnabled()
+            assert w.force_seq_btn.isEnabled()
+            assert w.restart_review_btn.isEnabled()
+            assert w.force_rev_btn.isEnabled()
+            assert not w.delete_entry_btn.isEnabled()
+            assert not w.close_review_btn.isEnabled()
+        finally:
+            os.unlink(tmp.name)
+        conn.close(); w.close()
+
+    def test_delete_and_close_enabled_during_review(self):
+        """Delete/Close enabled when card + active review mode exist."""
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+        w._update_button_visibility()
+
+        assert w.delete_entry_btn.isEnabled()
+        assert w.close_review_btn.isEnabled()
+        conn.close(); w.close()
+
+    def test_buttons_disabled_after_close(self):
+        """After close_review, Delete and Close are disabled."""
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+        w.close_review()
+
+        assert not w.delete_entry_btn.isEnabled()
+        assert not w.close_review_btn.isEnabled()
+        conn.close(); w.close()
+
+    # -- finding #2: close preserves queue ---------------------------------
+
+    def test_close_preserves_cards_due(self):
+        """cards_due content and order unchanged after close_review."""
+        conn = self._db(1, 2, 3)
+        due = [(2, "c2", "b2", 1), (3, "c3", "b3", 1)]
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), due=due, mode="daily")
+
+        snapshot = list(w.cards_due)
+        w.close_review()
+        assert w.cards_due == snapshot, "cards_due must survive close unchanged"
+        conn.close(); w.close()
+
+    # -- close semantics ---------------------------------------------------
+
+    def test_close_stores_paused_card_and_mode(self):
+        """close_review saves card + mode, clears current_card + review_mode."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[(2, "c2", "b2", 1)], mode="daily")
+        w.close_review()
+
+        assert w._paused_review_card[0] == 1
+        assert w._paused_review_mode == "daily"
+        assert w.current_card is None
+        assert w.review_mode == ""
+        conn.close(); w.close()
+
+    def test_close_does_not_mutate_db(self):
+        """close_review leaves the database unchanged."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[(2, "c2", "b2", 1)], mode="daily")
+
+        before = list(conn.execute(
+            "SELECT id, box, next_review FROM cards ORDER BY id").fetchall())
+        w.close_review()
+        after = list(conn.execute(
+            "SELECT id, box, next_review FROM cards ORDER BY id").fetchall())
+        assert before == after
+        conn.close(); w.close()
+
+    def test_close_noop_without_card(self):
+        """close_review is safe when no card is shown."""
+        w = self._win()
+        w.close_review()
+        assert w._paused_review_card is None
+        w.close()
+
+    # -- resume: daily after close ----------------------------------------
+
+    def test_daily_resume_paused_first_preserved_queue(self):
+        """After daily close, start_review shows paused card first,
+        then the preserved remaining queue (no requery)."""
+        conn = self._db(1, 2, 3)
+        w = self._win(conn=conn, card=(2, "c2", "b2", 1),
+                       due=[(3, "c3", "b3", 1)], mode="daily")
+        w.close_review()
+        w.start_review()
+
+        assert w.current_card[0] == 2, "paused card must be first"
+        assert w._paused_review_card is None
+        assert [c[0] for c in w.cards_due] == [3], "preserved queue follows"
+        conn.close(); w.close()
+
+    def test_daily_resume_no_duplicate_in_queue(self):
+        """Paused card is de-duplicated from the resumed queue."""
+        conn = self._db(1, 2, 3)
+        w = self._win(conn=conn, card=(2, "c2", "b2", 1),
+                       due=[(2, "c2", "b2", 1), (3, "c3", "b3", 1)], mode="daily")
+        w.close_review()
+        w.start_review()
+        assert sum(1 for c in w.cards_due if c[0] == 2) == 0
+        conn.close(); w.close()
+
+    def test_daily_resume_skips_deleted_paused(self):
+        """If paused card was deleted, silently skip to next card."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[(2, "c2", "b2", 1)], mode="daily")
+        w.close_review()
+        conn.execute("DELETE FROM cards WHERE id=1"); conn.commit()
+        w.start_review()
+        assert w.current_card[0] != 1
+        conn.close(); w.close()
+
+    def test_daily_resume_fresh_db_data(self):
+        """Resumed card re-fetched from DB (sees external edits)."""
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+        w.close_review()
+        conn.execute("UPDATE cards SET front='updated', box=2 WHERE id=1")
+        conn.commit()
+        w.start_review()
+        assert w.current_card[1] == "updated"
+        assert w.current_card[3] == 2
+        conn.close(); w.close()
+
+    def test_daily_start_without_pause_fresh_query(self):
+        """No paused card → normal daily review with fresh DB query."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn)
+        w.start_review()
+        assert w.current_card is not None
+        assert w.review_mode == "daily"
+        conn.close(); w.close()
+
+    # -- resume: Next / Previous / Restart after close --------------------
+
+    def test_next_after_close_paused_first_then_asc(self):
+        """Next after close: paused first, then ASC from paused+1."""
+        conn = self._db(1, 2, 3, 4, 5)
+        w = self._win(conn=conn, card=(3, "c3", "b3", 1), mode="force_seq")
+        w.close_review()
+        w.start_forced_review(direction="ASC")
+
+        assert w.current_card[0] == 3
+        remaining = [c[0] for c in w.cards_due]
+        assert 3 not in remaining
+        assert remaining[0] == 4
+        conn.close(); w.close()
+
+    def test_previous_after_close_paused_first_then_desc(self):
+        """Previous after close: paused first, then DESC from paused-1."""
+        conn = self._db(1, 2, 3, 4, 5)
+        w = self._win(conn=conn, card=(3, "c3", "b3", 1), mode="force_rev")
+        w.close_review()
+        w.start_forced_review(direction="DESC")
+
+        assert w.current_card[0] == 3
+        assert [c[0] for c in w.cards_due][0] == 2
+        conn.close(); w.close()
+
+    def test_restart_after_close_paused_first_all_asc(self):
+        """Restart after close: paused first, all other cards ASC."""
+        conn = self._db(1, 2, 3, 4, 5)
+        w = self._win(conn=conn, card=(3, "c3", "b3", 1), mode="force_seq")
+        w.close_review()
+        w.restart_current_review()
+
+        assert w.current_card[0] == 3
+        assert sorted(c[0] for c in w.cards_due) == [1, 2, 4, 5]
+        conn.close(); w.close()
+
+    def test_forced_resume_skips_deleted_paused(self):
+        """Next after close: deleted paused card silently skipped."""
+        conn = self._db(1, 2, 3)
+        w = self._win(conn=conn, card=(2, "c2", "b2", 1), mode="force_seq")
+        w.close_review()
+        conn.execute("DELETE FROM cards WHERE id=2"); conn.commit()
+        w.start_forced_review(direction="ASC")
+        assert w.current_card[0] != 2
+        conn.close(); w.close()
+
+    # -- DB load clears paused state --------------------------------------
+
+    def test_db_load_clears_paused_state(self):
+        """Loading a database resets paused review state."""
+        import tempfile, os
+        conn = self._db(1)
+        # Create a real temp DB so load_database doesn't early-return
+        tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
+        tmp.close()
+        try:
+            from kgb_srs.db import init_db
+            init_db(tmp.name).close()
+            w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+            w.close_review()
+            assert w._paused_review_card is not None
+
+            w.current_db_path = tmp.name
+            w.current_lang = "Test"
+            w.load_database(silent=True)
+            assert w._paused_review_card is None
+            assert w._paused_review_mode == ""
+        finally:
+            os.unlink(tmp.name)
+        conn.close(); w.close()
+
+    # -- delete behavior --------------------------------------------------
+
+    def test_delete_clears_paused_and_advances(self):
+        """Deleting active card: DB row gone, paused cleared, next shown."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[(2, "c2", "b2", 1)], mode="daily",
+                       paused_card=(1, "c1", "b1", 1), paused_mode="daily")
+
+        p1, p2 = self._mock_dialogs()
+        with p1, p2:
+            w.delete_current_card()
+
+        assert conn.execute("SELECT id FROM cards WHERE id=1").fetchone() is None
+        assert w.current_card[0] == 2
+        assert w._paused_review_card is None
+        assert w._paused_review_mode == ""
+        conn.close(); w.close()
+
+    def test_delete_last_card_disables_buttons(self):
+        """Deleting the last card: no current card, buttons disabled."""
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[], mode="daily")
+
+        p1, p2 = self._mock_dialogs()
+        with p1, p2:
+            w.delete_current_card()
+
+        assert w.current_card is None
+        assert not w.delete_entry_btn.isEnabled()
+        assert not w.close_review_btn.isEnabled()
+        conn.close(); w.close()
+
+    def test_delete_removes_from_queue(self):
+        """Deleted card removed from cards_due."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)], mode="daily")
+
+        p1, p2 = self._mock_dialogs()
+        with p1, p2:
+            w.delete_current_card()
+
+        assert 1 not in [c[0] for c in w.cards_due]
+        conn.close(); w.close()
+
+    def test_delete_card_by_id_helper(self):
+        """_delete_card_by_id: DB row gone, review state + paused cleared."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
+                       due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)],
+                       mode="daily",
+                       paused_card=(1, "c1", "b1", 1), paused_mode="daily")
+
+        returned = w._delete_card_by_id(1)
+
+        # DB row deleted
+        assert conn.execute(
+            "SELECT id FROM cards WHERE id=1").fetchone() is None
+        # Card 2 still exists
+        assert conn.execute(
+            "SELECT id FROM cards WHERE id=2").fetchone() is not None
+        # Review state cleaned: not in cards_due, not current
+        assert 1 not in [c[0] for c in w.cards_due]
+        assert w.current_card is None
+        # Paused state cleared
+        assert w._paused_review_card is None
+        assert w._paused_review_mode == ""
+        # Returns the integer id
+        assert returned == 1
+        conn.close(); w.close()
+
+    # -- widget sanity ----------------------------------------------------
+
+    def test_widget_labels_and_existence(self):
+        """Verify delete_entry_btn label, close_review_btn type, no legacy."""
+        _qt_app()
+        from PyQt6.QtWidgets import QPushButton
+        from kgb_srs.main_window import BarskyApp
+        w = BarskyApp()
+
+        assert w.delete_entry_btn.text().strip() == "Delete Entry"
+        assert isinstance(w.close_review_btn, QPushButton)
+        assert not hasattr(w, "delete_current_btn"), "legacy widget removed"
+        w.close()
