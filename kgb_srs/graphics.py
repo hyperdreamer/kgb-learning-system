@@ -55,6 +55,10 @@ class DropZoneItem(QGraphicsRectItem):
 
         bottom_y = y + h
         adjusted_y = bottom_y - actual_h
+        # Never allow the zone to extend above the scene origin —
+        # the viewport clips from below automatically.
+        if adjusted_y < 0:
+            adjusted_y = 0
 
         self.setRect(0, 0, w, actual_h)
         self.setPos(x, adjusted_y)

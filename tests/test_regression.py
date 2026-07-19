@@ -60,23 +60,122 @@ class TestFinalFormRegressions:
     def test_api_key_visibility_button_toggles_plaintext(self):
         _qt_app()
         from PyQt6.QtWidgets import QLineEdit
-        from kgb_srs.main_window import SecretLineEdit
+        from PyQt6.QtCore import QSize
+        from PyQt6.QtGui import QAction
+        from kgb_srs.main_window import SecretLineEdit, _make_eye_icons
 
         field = SecretLineEdit("sk-secret")
-        assert field.layout().indexOf(field.toggle_button) == 0
-        assert field.layout().indexOf(field.line_edit) == 1
-        assert field.line_edit.echoMode() == QLineEdit.EchoMode.Password
-        assert field.toggle_button.isCheckable()
-        assert field.toggle_button.toolTip() == "Show API key"
 
-        field.toggle_button.click()
-        assert field.line_edit.echoMode() == QLineEdit.EchoMode.Normal
+        # Must be a QLineEdit — not a composite QWidget with a sub-layout
+        assert isinstance(field, QLineEdit), (
+            "SecretLineEdit must subclass QLineEdit directly"
+        )
+
+        # The toggle action is registered inside the QLineEdit
+        actions = field.actions()
+        assert len(actions) == 1, (
+            f"Expected exactly 1 trailing action, got {len(actions)}"
+        )
+        toggle_action = actions[0]
+        assert isinstance(toggle_action, QAction)
+        assert toggle_action is field._toggle_action
+        assert toggle_action.isCheckable(), "Action must be checkable"
+
+        # Carries a proper, non-null icon
+        icon = toggle_action.icon()
+        assert icon is not None
+        assert not icon.isNull(), "Action must have a drawn icon"
+
+        # Hidden and visible icons from _make_eye_icons are distinct
+        # QIcon objects with different pixmaps.
+        hidden_icon, visible_icon = _make_eye_icons()
+        assert not hidden_icon.isNull()
+        assert not visible_icon.isNull()
+        pix_hidden = hidden_icon.pixmap(QSize(24, 24))
+        pix_visible = visible_icon.pixmap(QSize(24, 24))
+        assert not pix_hidden.isNull()
+        assert not pix_visible.isNull()
+        assert pix_hidden.cacheKey() != pix_visible.cacheKey(), (
+            "Hidden and visible icons must have different pixmaps"
+        )
+
+        # Initial state: hidden (action unchecked → password echo)
+        assert field.echoMode() == QLineEdit.EchoMode.Password
+        assert not toggle_action.isChecked()
+        assert toggle_action.toolTip() == "Show API key"
+        assert toggle_action.text() == "Show API key"
+        key_hidden = toggle_action.icon().cacheKey()
+
+        # Toggle to visible
+        toggle_action.toggle()
+        assert field.echoMode() == QLineEdit.EchoMode.Normal
         assert field.text() == "sk-secret"
-        assert field.toggle_button.toolTip() == "Hide API key"
+        assert toggle_action.toolTip() == "Hide API key"
+        assert toggle_action.text() == "Hide API key"
+        assert toggle_action.isChecked()
+        key_visible = toggle_action.icon().cacheKey()
+        assert key_visible != key_hidden, (
+            "Action icon must visually change when toggled to visible — "
+            "cacheKey must differ"
+        )
 
-        field.toggle_button.click()
-        assert field.line_edit.echoMode() == QLineEdit.EchoMode.Password
+        # Toggle back to hidden
+        toggle_action.toggle()
+        assert field.echoMode() == QLineEdit.EchoMode.Password
+        assert not toggle_action.isChecked()
+        assert toggle_action.toolTip() == "Show API key"
+        assert toggle_action.text() == "Show API key"
+        key_back = toggle_action.icon().cacheKey()
+        assert key_back == key_hidden, (
+            "Action icon must return to hidden icon when toggled back — "
+            "cacheKey must match original"
+        )
+
         field.close()
+
+    def test_visible_eye_iris_centered_and_outlined(self):
+        """Visible eye icon: iris is a centred hollow outline circle.
+
+        Checks two geometric invariants on the visible (State.On) pixmap:
+        1. Centre pixel is transparent — confirms hollow outline, not a
+           filled disc.
+        2. A pixel left-of-centre on the iris ring has alpha — confirms
+           the iris is QPointF-centred.  The old int-overload bug
+           (drawEllipse(int(cx), int(cy), int(pr), int(pr))) placed the
+           iris entirely in the lower-right quadrant, so no iris alpha
+           exists left of (or above) the image centre.
+        """
+        _qt_app()
+        from kgb_srs.main_window import _make_eye_icons
+
+        sz = 20  # default used by SecretLineEdit
+        _hidden_icon, visible_icon = _make_eye_icons(size=sz)
+        pm = visible_icon.pixmap(sz, sz)
+        img = pm.toImage()
+
+        cx = cy = sz / 2.0       # 10.0
+        pr = sz * 0.14            # 2.8 — iris radius (float)
+        # Pixel on the iris-outline annulus, left of centre:
+        #   distance from centre ≈ pr, so inside the 1.5 px pen stroke.
+        #   Far enough from the eye-outline endpoints (x ≈ cx ± ew) that
+        #   the almond outline does not reach it.
+        offset = max(2, int(pr + 0.5))  # ≈ pr  rounded to an integer
+        tx = int(cx) - offset            # left-of-centre test column
+        ty = int(cy)                     # same row as centre
+
+        # 1. Centre transparency — iris is hollow (outline only).
+        assert img.pixelColor(int(cx), int(cy)).alpha() == 0, (
+            "Centre pixel must be transparent — iris must be an "
+            "outline, not a filled disc"
+        )
+
+        # 2. Iris outline extends left of centre.
+        a = img.pixelColor(tx, ty).alpha()
+        assert a > 0, (
+            f"No iris alpha at ({tx},{ty}) — iris may be top-left "
+            f"anchored (int-overload drawEllipse bug) rather than "
+            f"QPointF-centred"
+        )
 
     def test_public_ai_worker_does_not_shadow_thread_finished(self):
         _qt_app()
@@ -1009,6 +1108,39 @@ class TestNoSyncHTTPInMainWindow:
             "urllib.request.urlopen found in main_window.py"
 
 # ============================================================================
+# Add Entry button: toolbar label renamed from "Add Word" to "Add Entry"
+# ============================================================================
+
+class TestAddEntryButtonLabel:
+    """The top-toolbar button for adding items must have label 'Add Entry'."""
+
+    def test_add_entry_button_label_is_add_entry(self):
+        """The toolbar button stored as add_entry_btn has visible text
+        'Add Entry' after stripping leading whitespace."""
+        _qt_app()
+        from PyQt6.QtWidgets import QPushButton
+        from kgb_srs.main_window import BarskyApp
+
+        win = BarskyApp()
+
+        # Button must be stored as a stable attribute on the window
+        assert hasattr(win, "add_entry_btn"), (
+            "BarskyApp must store the add-entry toolbar button as "
+            "self.add_entry_btn for stable testability"
+        )
+        btn = win.add_entry_btn
+        assert isinstance(btn, QPushButton)
+
+        # Visible label: strip leading whitespace/mnemonic; assert exact text
+        visible_text = btn.text().strip()
+        assert visible_text == "Add Entry", (
+            f"Expected toolbar button label 'Add Entry', got '{visible_text}'"
+        )
+
+        win.close()
+
+
+# ============================================================================
 # Finding #19: QMenu submenu-indicator right-side spacing
 # ============================================================================
 
@@ -1023,6 +1155,24 @@ class TestMenuSubmenuSpacing:
         assert isinstance(_DB_MENU_STYLESHEET, str)
         assert "padding-right" in _DB_MENU_STYLESHEET
         assert "QMenu::item" in _DB_MENU_STYLESHEET
+
+    def test_db_menu_stylesheet_has_vertical_padding(self):
+        """_DB_MENU_STYLESHEET must include padding-top >=6px and
+        padding-bottom >=6px for readable row height."""
+        import re
+        from kgb_srs.main_window import _DB_MENU_STYLESHEET
+
+        m_top = re.search(r"padding-top\s*:\s*(\d+)px", _DB_MENU_STYLESHEET)
+        m_bottom = re.search(r"padding-bottom\s*:\s*(\d+)px", _DB_MENU_STYLESHEET)
+
+        assert m_top is not None, "stylesheetsheet missing padding-top"
+        assert m_bottom is not None, "stylesheetsheet missing padding-bottom"
+
+        top_px = int(m_top.group(1))
+        bottom_px = int(m_bottom.group(1))
+
+        assert top_px >= 6, f"padding-top is {top_px}px, expected >= 6px"
+        assert bottom_px >= 6, f"padding-bottom is {bottom_px}px, expected >= 6px"
 
     def test_root_menu_has_stylesheet(self, tmp_path, monkeypatch):
         """The root QMenu returned by build_db_menu carries the stylesheet."""
@@ -1594,3 +1744,124 @@ class TestSettingsStaging:
         )
 
         window.close()
+
+
+# ============================================================================
+# Drop-zone layout: zones must sit well above review controls
+# ============================================================================
+
+class TestDropZoneLayoutDoesNotOverflow:
+    """DropZoneItems must be fully inside the viewport with a visible
+    internal inset, and the QGraphicsView must be separated from the
+    review buttons by a clear external layout gap."""
+
+    # ── helpers ────────────────────────────────────────────────────────
+    @staticmethod
+    def _build_and_measure(window_size):
+        """Build BarskyApp at *window_size*, process events, and return
+        the (window, view, viewport, incorrect_zone, start_btn)."""
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.main_window import BarskyApp
+
+        win = BarskyApp()
+        win.resize(*window_size)
+        win.show()
+        QApplication.processEvents()
+        win.redraw_canvas()
+        QApplication.processEvents()
+        return win, win.view, win.view.viewport(), win.incorrect_zone, win.start_btn
+
+    # ── tests ──────────────────────────────────────────────────────────
+    def test_zone_fully_inside_viewport_with_inset(self):
+        """At a realistic default size the full zone bounding rect must
+        lie inside the viewport, and the zone bottom must leave ≥ 10 px
+        internal inset from the viewport bottom edge."""
+        _qt_app()
+        from PyQt6.QtCore import QPoint
+
+        win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
+
+        assert zone is not None, "incorrect zone not created"
+        sr = zone.sceneBoundingRect()
+        vr = view.mapFromScene(sr).boundingRect()
+
+        # Zone must be fully inside the viewport — no clipping.
+        assert vr.y() >= 0, f"zone top clipped: {vr.y()} px above viewport"
+        assert vr.bottom() <= vp.height(), (
+            f"zone bottom {vr.bottom()} exceeds viewport height {vp.height()}"
+        )
+
+        # Internal inset: zone bottom must be ≥ 10 px above viewport bottom.
+        inset = vp.height() - vr.bottom()
+        assert inset >= 10, (
+            f"zone-bottom → viewport-bottom inset is {inset} px, need ≥ 10"
+        )
+
+        win.close()
+
+    def test_view_to_button_external_gap(self):
+        """The QGraphicsView outer bottom edge must be ≥ 8 px above the
+        Start Daily Review button top in global coordinates."""
+        _qt_app()
+        from PyQt6.QtCore import QPoint
+
+        win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
+
+        view_bottom_global = view.mapToGlobal(QPoint(0, view.height())).y()
+        btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
+        external_gap = btn_top_global - view_bottom_global
+        assert external_gap >= 8, (
+            f"view outer bottom → button top gap is {external_gap} px, need ≥ 8"
+        )
+
+        win.close()
+
+    def test_zone_to_button_total_gap(self):
+        """The total gap from zone painted bottom to button top must be
+        clearly visible (≥ 18 px in global coordinates)."""
+        _qt_app()
+        from PyQt6.QtCore import QPoint
+
+        win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
+
+        sr = zone.sceneBoundingRect()
+        vr = view.mapFromScene(sr).boundingRect()
+        zone_bottom_global = vp.mapToGlobal(
+            QPoint(int(vr.center().x()), int(vr.bottom()))
+        ).y()
+        btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
+        total_gap = btn_top_global - zone_bottom_global
+        assert total_gap >= 18, (
+            f"zone bottom → button top total gap is {total_gap} px, need ≥ 18"
+        )
+
+        win.close()
+
+    def test_holds_at_minimum_viable_height(self):
+        """The constraints must hold at the minimum view height of 200
+        where the viewport is still large enough for the zone."""
+        _qt_app()
+        from PyQt6.QtCore import QPoint
+
+        # 600×400 keeps the view at its 200 px minimum height without
+        # pushing Qt into an unresolvable size negotiation.
+        win, view, vp, zone, start_btn = self._build_and_measure((600, 400))
+
+        assert zone is not None
+        sr = zone.sceneBoundingRect()
+        vr = view.mapFromScene(sr).boundingRect()
+
+        assert vr.y() >= 0
+        inset = vp.height() - vr.bottom()
+        assert inset >= 10, (
+            f"at min height: zone inset = {inset} px, need ≥ 10"
+        )
+
+        view_bottom_global = view.mapToGlobal(QPoint(0, view.height())).y()
+        btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
+        external_gap = btn_top_global - view_bottom_global
+        assert external_gap >= 8, (
+            f"at min height: external gap = {external_gap} px, need ≥ 8"
+        )
+
+        win.close()

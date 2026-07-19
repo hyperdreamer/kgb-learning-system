@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QPushButton,
-    QToolButton,
     QGraphicsView,
     QGraphicsScene,
     QMessageBox,
@@ -31,8 +30,8 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QApplication,
 )
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush, QIcon
+from PyQt6.QtCore import Qt, QPointF, QTimer, QUrl
+from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush, QIcon, QPixmap, QAction
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import load_settings, save_settings, DIR_DB
@@ -57,45 +56,105 @@ from .search import search_sentence_cards, search_word_phrase_cards
 from .ai_provider import AIProviderConfig
 
 _DB_MENU_STYLESHEET = (
-    "QMenu::item { padding-right: 28px; }"
+    "QMenu::item {"
+    " padding-left: 12px;"
+    " padding-right: 28px;"
+    " padding-top: 6px;"
+    " padding-bottom: 6px;"
+    " }"
 )
 
 
-class SecretLineEdit(QWidget):
-    """Password input with a left-side button for toggling visibility."""
+def _make_eye_icons(size=20):
+    """Return (hidden_icon, visible_icon) — distinct QIcon objects.
+
+    Painted with QPainter — no external assets, no Unicode emoji.
+
+    hidden_icon:  eye outline + diagonal slash (password hidden).
+    visible_icon: eye outline + centered hollow iris (plaintext visible).
+
+    Returns two separate QIcon instances because QLineEdit renders
+    QAction icons without consulting QIcon state (Off/On); explicit
+    setIcon() switching is required on toggle.
+    """
+    from PyQt6.QtGui import QPainterPath
+
+    grey = QColor(0x75, 0x75, 0x75)
+    pen = QPen(grey, 1.5)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+
+    margin = max(2, int(size * 0.22))
+    cx = size / 2.0
+    cy = size / 2.0
+    ew = size / 2.0 - margin  # eye half-width
+    eh = size / 2.0 - margin  # eye half-height
+
+    def _eye_outline():
+        p = QPainterPath()
+        p.moveTo(cx - ew, cy)
+        p.quadTo(cx, cy - eh, cx + ew, cy)
+        p.quadTo(cx, cy + eh, cx - ew, cy)
+        p.closeSubpath()
+        return p
+
+    def _render(draw_cb):
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        qp = QPainter(pm)
+        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        qp.setPen(pen)
+        draw_cb(qp)
+        qp.end()
+        return pm
+
+    # ── hidden (slashed eye): eye outline + diagonal slash ──
+    def _draw_hidden(qp):
+        qp.drawPath(_eye_outline())
+        slop = margin * 0.7
+        x1 = int(cx + ew - slop)
+        y1 = int(cy - eh + slop)
+        x2 = int(cx - ew + slop)
+        y2 = int(cy + eh - slop)
+        qp.drawLine(x1, y1, x2, y2)
+
+    # ── visible (open eye): eye outline + centered outlined iris ──
+    def _draw_visible(qp):
+        qp.drawPath(_eye_outline())
+        # No brush → outline only; pen already set by _render.
+        pr = size * 0.14  # iris radius
+        qp.drawEllipse(QPointF(cx, cy), pr, pr)
+
+    hidden_icon = QIcon(_render(_draw_hidden))
+    visible_icon = QIcon(_render(_draw_visible))
+    return hidden_icon, visible_icon
+
+
+class SecretLineEdit(QLineEdit):
+    """Password input with a visibility toggle action rendered inside the
+    QLineEdit at the trailing edge."""
 
     def __init__(self, text="", parent=None):
-        super().__init__(parent)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
+        super().__init__(text, parent)
+        self.setEchoMode(QLineEdit.EchoMode.Password)
 
-        self.toggle_button = QToolButton()
-        self.toggle_button.setText("👁")
-        self.toggle_button.setCheckable(True)
-        self.toggle_button.setAutoRaise(True)
-        self.toggle_button.setToolTip("Show API key")
-        self.toggle_button.setAccessibleName("Show API key")
+        self._icon_hidden, self._icon_visible = _make_eye_icons()
+        self._toggle_action = QAction(self._icon_hidden, "Show API key", self)
+        self._toggle_action.setCheckable(True)
+        self._toggle_action.setToolTip("Show API key")
 
-        self.line_edit = QLineEdit(text)
-        self.line_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.addAction(self._toggle_action,
+                       QLineEdit.ActionPosition.TrailingPosition)
+        self._toggle_action.toggled.connect(self._on_toggled)
 
-        row.addWidget(self.toggle_button)
-        row.addWidget(self.line_edit)
-        self.toggle_button.toggled.connect(self._set_visible)
-
-    def _set_visible(self, visible):
-        mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
-        action = "Hide API key" if visible else "Show API key"
-        self.line_edit.setEchoMode(mode)
-        self.toggle_button.setToolTip(action)
-        self.toggle_button.setAccessibleName(action)
-
-    def text(self):
-        return self.line_edit.text()
-
-    def setPlaceholderText(self, text):
-        self.line_edit.setPlaceholderText(text)
+    def _on_toggled(self, checked):
+        mode = QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
+        tip = "Hide API key" if checked else "Show API key"
+        icon = self._icon_visible if checked else self._icon_hidden
+        self.setEchoMode(mode)
+        self._toggle_action.setToolTip(tip)
+        self._toggle_action.setIcon(icon)
+        self._toggle_action.setText(tip)
 
 
 from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
@@ -345,7 +404,7 @@ class BarskyApp(QMainWindow):
         )
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(6)
+        main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 8, 10, 8)
 
         # --- Top bar ---
@@ -407,9 +466,8 @@ class BarskyApp(QMainWindow):
             btn.clicked.connect(handler)
             return btn
 
-        top_layout.addWidget(
-            action_btn(" Add Word", "list-add", self.add_word)
-        )
+        self.add_entry_btn = action_btn(" Add Entry", "list-add", self.add_word)
+        top_layout.addWidget(self.add_entry_btn)
         top_layout.addWidget(
             action_btn(" Browse", "edit-find", self.browse_cards)
         )
@@ -434,6 +492,8 @@ class BarskyApp(QMainWindow):
         self.view.setViewportUpdateMode(
             QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate
         )
+
+        self.view.setMinimumHeight(200)
 
         main_layout.addWidget(self.view, stretch=1)
 
@@ -693,14 +753,18 @@ class BarskyApp(QMainWindow):
         self.scene.clear()
         self.card_ui = None
 
-        self.scene.setSceneRect(
-            0, 0, self.view.width() - 5, self.view.height() - 5
-        )
-        w = self.scene.width()
-        h = self.scene.height()
+        # Derive scene rect from viewport dimensions (not widget size)
+        # so the scene matches the actual renderable area.
+        vp_w = self.view.viewport().width()
+        vp_h = self.view.viewport().height()
+        self.scene.setSceneRect(0, 0, vp_w, vp_h)
+        w = vp_w
+        h = vp_h
 
         zone_h = 80
-        zone_y = h - 100
+        # Clamp zone bottom anchor so the drop zone never starts
+        # above the viewport origin when the view is too short.
+        zone_y = max(0, h - 100)
         margin = 50
 
         max_zone_w = max(100, (w - 3 * margin) / 2)

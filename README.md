@@ -146,7 +146,7 @@ The currently loaded database is marked with **●**. Legacy databases appear un
 
 ### 3. Adding Cards
 
-Click **Add Word**. The dialog adapts to the database type:
+Click **Add Entry**. The dialog adapts to the database type:
 
 - **Sentence-based**: Full dialog with sentence input, unfamiliar item management, selected-text addition, in-dialog AI generation, validation, and per-item meaning editing.
 - **Word/Phrase-based**: Front/back entry with optional AI generation for meanings.
