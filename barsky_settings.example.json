@@ -8,5 +8,11 @@
   "default_language": "English",
   "review_card_width_ratio": 0.75,
   "review_card_height_ratio": 0.88,
-  "random_review": false
+  "random_review": false,
+  "ai_base_url": "https://api.openai.com/v1",
+  "ai_model": "gpt-4o-mini",
+  "ai_api_key": "",
+  "ai_timeout": 30,
+  "learned_language": "English",
+  "explanation_language": "Chinese"
 }

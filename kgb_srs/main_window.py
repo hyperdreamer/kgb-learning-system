@@ -1,6 +1,7 @@
 """Main application window – BarskyApp."""
 
 import os
+import sqlite3
 import datetime
 import random
 import re
@@ -36,18 +37,104 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from .config import load_settings, save_settings, DIR_DB
 from .db import init_db, find_databases, DB_SUFFIX
 from .tts import TTSWorker, VoiceListWorker
-from .dialogs import DynamicInputDialog
+from .dialogs import DynamicInputDialog  # still used for knowledge cards
+from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
+from .schema import (
+    ensure_unfamiliar_items_table, migrate_unfamiliar_items_meaning,
+    insert_sentence_card, get_sentence_card, update_sentence_card,
+    find_duplicate_sentence_card, validate_db_name, safe_db_filename,
+    resolve_db_path,
+)
+from .catalog import (DatabaseType, DatabaseCategory, infer_database_type,
+                       read_database_type, write_database_type,
+                       build_catalog_tree, DB_DIR_LANGUAGE_SENTENCE,
+                       DB_DIR_LANGUAGE_WORD_PHRASE, DB_DIR_KNOWLEDGE)
+from .validation import validate_unfamiliar_items, deduplicate_unfamiliar_items
+from .search import search_sentence_cards, search_word_phrase_cards
+from .ai_provider import AIProviderConfig
 
+_DB_MENU_STYLESHEET = (
+    "QMenu::item { padding-right: 28px; }"
+)
+
+
+from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
+def _compute_display_path(db_path, db_type, legacy_display):
+    """Compute the catalog display path for a database.
+
+    For databases under canonical directories, builds from the canonical path.
+    For legacy databases (e.g. db/Languages/English), prepends category/subtype
+    to the legacy display.
+    """
+    from .catalog import display_path_for
+
+    norm_path = os.path.normpath(db_path).replace("\\", "/")
+
+    canon_dirs = {
+        DatabaseType.LANGUAGE_SENTENCE: DB_DIR_LANGUAGE_SENTENCE.replace("\\", "/"),
+        DatabaseType.LANGUAGE_WORD_PHRASE: DB_DIR_LANGUAGE_WORD_PHRASE.replace("\\", "/"),
+        DatabaseType.KNOWLEDGE: DB_DIR_KNOWLEDGE.replace("\\", "/"),
+    }
+    canonical = canon_dirs.get(db_type, "")
+
+    if canonical and canonical in norm_path:
+        return display_path_for(db_path, db_type)
+
+    # Legacy path: prepend category and, for language DBs, subtype.
+    category = db_type.category_display
+    legacy = legacy_display.replace("\\", "/")
+    if db_type == DatabaseType.KNOWLEDGE:
+        return os.path.join(category, legacy)
+    return os.path.join(category, db_type.display, legacy)
+
+
+def _open_and_infer_type(db_path):
+    """Open a DB briefly to read or infer its type."""
+    try:
+        conn = sqlite3.connect(db_path)
+        db_type = read_database_type(conn)
+        conn.close()
+        if db_type is not None:
+            return db_type
+    except Exception:
+        pass
+    return infer_database_type(db_path)
+
+
+def _fetch_expressions_for_card(conn, card_id):
+    """Fetch unfamiliar expressions for a sentence card.
+    Returns list of (expression, meaning) tuples.
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT expression, meaning FROM unfamiliar_items "
+        "WHERE card_id=? ORDER BY id",
+        (card_id,),
+    )
+    return [(r[0], r[1]) for r in cur.fetchall()]
+
+
+def _expression_labels(items):
+    """Return expression text from structured or legacy child items."""
+    return [item[0] if isinstance(item, (tuple, list)) else item for item in items]
+
+# ---------------------------------------------------------------------------
+# BarskyApp
+# ---------------------------------------------------------------------------
 
 class BarskyApp(QMainWindow):
     """Main application window for the KGB 5-Box SRS System."""
 
     @staticmethod
     def _icon(name, fallback=""):
-        """Return a QIcon from the system theme, or an empty icon.
-        Fallback is a text string for button labels when no icon exists."""
         icon = QIcon.fromTheme(name)
         return icon if not icon.isNull() else QIcon()
 
@@ -61,6 +148,7 @@ class BarskyApp(QMainWindow):
         self.current_lang = None
         self.conn = None
         self.current_db_path = None
+        self._db_type = None
         self.current_card = None
         self.cards_due = []
         self.is_current_flipped = False
@@ -76,7 +164,6 @@ class BarskyApp(QMainWindow):
         self.setup_ui()
         self.apply_font_settings()
 
-        # Auto-load the default database if set
         default_db = self.settings.get("default_database", "")
         if default_db:
             for display, path in find_databases():
@@ -152,30 +239,25 @@ class BarskyApp(QMainWindow):
     # Database Menu
     # ------------------------------------------------------------------
     def build_db_menu(self, parent_menu):
-        """Build a hierarchical QMenu from the database directory structure."""
+        """Build a hierarchical QMenu using catalog-based categories/subtypes."""
         dbs = find_databases()
-        if not dbs:
-            no_action = parent_menu.addAction("(no databases found)")
-            no_action.setEnabled(False)
-            return parent_menu
-
-        # Build a tree: {part: {subtree | leaf_path}}
-        tree = {}
+        entries = []
         for display, full_path in dbs:
-            parts = display.replace("\\", "/").split("/")
-            node = tree
-            for part in parts[:-1]:
-                if part not in node:
-                    node[part] = {}
-                node = node[part]
-            node[parts[-1]] = full_path  # leaf
+            db_type = _open_and_infer_type(full_path)
+            dp = _compute_display_path(full_path, db_type, display)
+            entries.append((dp, full_path, db_type))
 
+        tree = build_catalog_tree(entries)
         current_path = getattr(self, "current_db_path", None)
 
         def populate_menu(menu, subtree):
+            menu.setStyleSheet(_DB_MENU_STYLESHEET)
             items = sorted(
                 subtree.items(),
-                key=lambda kv: (not isinstance(kv[1], dict), kv[0].lower()),
+                key=lambda kv: (
+                    not isinstance(kv[1], dict),
+                    kv[0].lower(),
+                ),
             )
             for name, value in items:
                 if isinstance(value, dict):
@@ -183,16 +265,17 @@ class BarskyApp(QMainWindow):
                     populate_menu(sub, value)
                     menu.addMenu(sub)
                 else:
-                    label = f"● {name}" if value == current_path else name
+                    db_path, db_type = value
+                    bullet = "● " if db_path == current_path else ""
+                    label = f"{bullet}{name}"
                     action = menu.addAction(label)
-                    action.setData(value)  # full path
+                    action.setData(db_path)
             return menu
 
         return populate_menu(parent_menu, tree)
 
     @staticmethod
     def _menu_contains(menu, target_path):
-        """Check whether a menu or any of its descendents contains target_path."""
         for action in menu.actions():
             if action.menu():
                 if BarskyApp._menu_contains(action.menu(), target_path):
@@ -203,7 +286,6 @@ class BarskyApp(QMainWindow):
 
     @staticmethod
     def _expand_to_path(menu, target_path):
-        """Walk menu hierarchy and open submenus to reach target_path."""
         for action in menu.actions():
             if action.menu():
                 if BarskyApp._menu_contains(action.menu(), target_path):
@@ -279,35 +361,48 @@ class BarskyApp(QMainWindow):
             btn.setIcon(self._icon(icon_name))
             btn.setStyleSheet(
                 "QPushButton {"
-                "  background-color: transparent; color: #37474F;"
-                "  border: 1px solid #B0BEC5; border-radius: 5px;"
-                "  padding: 5px 12px; font-weight: 600;"
+                "  background-color: transparent; border: 1px solid #B0BEC5;"
+                "  border-radius: 6px; padding: 6px 12px; font-weight: bold;"
                 "}"
-                "QPushButton:hover {"
-                "  background-color: #ECEFF1; border-color: #78909C;"
-                "}"
+                "QPushButton:hover { background-color: #ECEFF1; }"
             )
             btn.clicked.connect(handler)
             return btn
 
-        top_layout.addWidget(action_btn("Add", "list-add", self.add_word))
-        top_layout.addWidget(action_btn("Browse", "edit-find", self.browse_cards))
-        top_layout.addWidget(action_btn("Settings", "preferences-system", self.open_settings_window))
+        top_layout.addWidget(
+            action_btn(" Add Word", "list-add", self.add_word)
+        )
+        top_layout.addWidget(
+            action_btn(" Browse", "edit-find", self.browse_cards)
+        )
+        top_layout.addWidget(
+            action_btn(" Settings", "preferences-system", self.open_settings_window)
+        )
         main_layout.addWidget(top_frame)
 
         # --- Canvas ---
-        self.scene = QGraphicsScene()
-        self.view = QGraphicsView(self.scene)
+        self.view = QGraphicsView()
         self.view.setStyleSheet(
-            "QGraphicsView { background-color: #E8EDF2; border: 1px solid #CFD8DC; "
-            "border-radius: 8px; }"
+            "QGraphicsView {"
+            "  background-color: #FAFAFA; border: 2px solid #E0E0E0;"
+            "  border-radius: 10px;"
+            "}"
         )
-        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        main_layout.addWidget(self.view)
+        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.scene = QGraphicsScene(self)
+        self.view.setScene(self.scene)
+        self.view.setViewportUpdateMode(
+            QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate
+        )
 
-        # --- Review buttons ---
+        main_layout.addWidget(self.view, stretch=1)
+
+        # --- Bottom buttons ---
+        bottom_layout = QVBoxLayout()
+        bottom_layout.setSpacing(6)
+
         self.start_btn = QPushButton(" Start Daily Review")
         self.start_btn.setIcon(self._icon("media-playback-start"))
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -346,7 +441,7 @@ class BarskyApp(QMainWindow):
         self.delete_current_btn.setIcon(self._icon("edit-delete"))
         self.delete_current_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.delete_current_btn.clicked.connect(self.delete_current_card)
-        self.delete_current_btn.hide()  # hidden until a card is shown
+        self.delete_current_btn.hide()
         main_layout.addWidget(self.delete_current_btn)
 
         self.card_ui = None
@@ -359,15 +454,9 @@ class BarskyApp(QMainWindow):
     # Database selection
     # ------------------------------------------------------------------
     def show_db_menu(self):
-        """Show the hierarchical database selection menu below the button.
-
-        The currently selected database is marked with a block dot (●).
-        The menu auto-expands subdirectories to reach the active entry.
-        """
         menu = QMenu(self)
         self.build_db_menu(menu)
 
-        # Connect all leaf actions (those with data)
         def connect_menu(m):
             for action in m.actions():
                 if action.menu():
@@ -381,7 +470,6 @@ class BarskyApp(QMainWindow):
 
         pos = self.db_btn.mapToGlobal(self.db_btn.rect().bottomLeft())
 
-        # Auto-expand to the currently selected database (if any)
         if self.current_db_path and self._menu_contains(menu, self.current_db_path):
             QTimer.singleShot(10, lambda: self._expand_to_path(menu, self.current_db_path))
 
@@ -389,11 +477,9 @@ class BarskyApp(QMainWindow):
 
     @staticmethod
     def _leaf_name(display):
-        """Extract just the database name from a display path like 'Math/Compactness'."""
         return display.replace("\\", "/").rsplit("/", 1)[-1]
 
     def select_database(self, action):
-        """Called when a database is selected from the menu."""
         db_path = action.data()
         if not db_path:
             return
@@ -406,46 +492,67 @@ class BarskyApp(QMainWindow):
                 return
 
     def create_new_database(self):
-        """Use the OS native file dialog to create a new database file."""
-        os.makedirs(DIR_DB, exist_ok=True)
-
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Create New Database",
-            DIR_DB,
-            f"Database Files (*{DB_SUFFIX})",
-        )
-        if not path:
+        """Show category/subtype selection dialog, then create DB with metadata."""
+        dialog = DBCreationDialog(self, base_dir=DIR_DB)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
-        # Ensure the file ends with _barsky.db
-        if not path.endswith(DB_SUFFIX):
-            path = f"{path}{DB_SUFFIX}"
+        db_type = dialog.selected_type
+        name = dialog.db_name
 
-        # Ensure parent directories exist (user may have created them in the dialog)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if not validate_db_name(name):
+            QMessageBox.warning(
+                self, "Invalid Name",
+                f"Database name '{name}' contains invalid characters.\n\n"
+                "Names must not contain /, \\, .., NUL, or control characters."
+            )
+            return
 
-        # Initialize the database file
+        canon_map = {
+            DatabaseType.LANGUAGE_SENTENCE: DB_DIR_LANGUAGE_SENTENCE,
+            DatabaseType.LANGUAGE_WORD_PHRASE: DB_DIR_LANGUAGE_WORD_PHRASE,
+            DatabaseType.KNOWLEDGE: DB_DIR_KNOWLEDGE,
+        }
+        subdir = canon_map[db_type]
+
+        try:
+            path = resolve_db_path(DIR_DB, subdir, name)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Name", str(e))
+            return
+
+        target_dir = os.path.dirname(path)
+        os.makedirs(target_dir, exist_ok=True)
+
+        if os.path.exists(path):
+            QMessageBox.warning(
+                self, "Exists",
+                f"A database named '{name}' already exists in this location."
+            )
+            return
+
         conn = init_db(path)
+        write_database_type(conn, db_type)
+        if db_type == DatabaseType.LANGUAGE_SENTENCE:
+            ensure_unfamiliar_items_table(conn)
+            migrate_unfamiliar_items_meaning(conn)
         conn.close()
 
-        # Compute display name
-        rel_path = os.path.relpath(path, DIR_DB)
-        display = rel_path[: -len(DB_SUFFIX)] if rel_path.endswith(DB_SUFFIX) else rel_path
+        display = os.path.join(subdir, name)
 
         self.current_db_path = path
         self.current_lang = display
-        self.db_btn.setText(f"📂 {self._leaf_name(display)}")
+        self.db_btn.setText(f"📂 {name}")
         self.load_database(silent=False)
 
     # ------------------------------------------------------------------
-    # Database load
+    # Database open / close
     # ------------------------------------------------------------------
     def load_database(self, silent=False):
-        """Load a database from the current path."""
+        """Open the database, ensure metadata, and initialize review state."""
         if not self.current_db_path:
             if not silent:
-                QMessageBox.warning(self, "Error", "Please select a database first.")
+                QMessageBox.warning(self, "Error", "Load a database first.")
             return
 
         if not os.path.exists(self.current_db_path):
@@ -460,6 +567,19 @@ class BarskyApp(QMainWindow):
 
         self.conn = init_db(self.current_db_path)
 
+        # --- Metadata inference / persistence ---
+        db_type = read_database_type(self.conn)
+        if db_type is None:
+            db_type = infer_database_type(self.current_db_path)
+            write_database_type(self.conn, db_type)
+
+        self._db_type = db_type
+
+        if db_type == DatabaseType.LANGUAGE_SENTENCE:
+            ensure_unfamiliar_items_table(self.conn)
+            migrate_unfamiliar_items_meaning(self.conn)
+
+        # --- Restore random review ---
         c = self.conn.cursor()
         c.execute("SELECT value FROM settings WHERE key = 'random_review'")
         res = c.fetchone()
@@ -481,8 +601,8 @@ class BarskyApp(QMainWindow):
 
         if not silent:
             QMessageBox.information(self, "Success", f"Loaded database: {self.current_lang}")
-            if "Math" in self.current_lang or "LaTeX" in self.current_lang:
-                if not HAS_WEBENGINE:
+            if not HAS_WEBENGINE:
+                if "Math" in self.current_lang or "LaTeX" in self.current_lang:
                     QMessageBox.warning(
                         self,
                         "Notice",
@@ -495,7 +615,6 @@ class BarskyApp(QMainWindow):
             self.redraw_canvas()
 
     def randomize_box_five(self):
-        """Randomly pull a 5% chance of a mastered card back for review."""
         c = self.conn.cursor()
         c.execute("SELECT id FROM cards WHERE box = 5")
         mastered_cards = c.fetchall()
@@ -524,7 +643,6 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     def showEvent(self, event):
         super().showEvent(event)
-        # Initial draw deferred until the window is visible (correct dimensions)
         if not getattr(self, '_did_initial_canvas', False):
             self._did_initial_canvas = True
             QTimer.singleShot(0, self.redraw_canvas)
@@ -547,7 +665,6 @@ class BarskyApp(QMainWindow):
         zone_y = h - 100
         margin = 50
 
-        # Prevent zone overlap on narrow windows
         max_zone_w = max(100, (w - 3 * margin) / 2)
         zone_w = min(max(260, int(w * 0.3)), int(max_zone_w))
 
@@ -581,7 +698,6 @@ class BarskyApp(QMainWindow):
         )
         self.scene.addItem(self.correct_zone)
 
-        # Store zone info for draw_card_ui to use as layout bounds
         self._zone_y = zone_y
 
         if self.current_card:
@@ -620,171 +736,384 @@ class BarskyApp(QMainWindow):
             QMessageBox.warning(self, "Error", "Load a database first.")
             return
 
-        front_dialog = DynamicInputDialog(
-            self,
-            "Add New Word/Phrase",
-            "Enter the word/phrase (Front). Markdown and MathJax are supported during review:",
-        )
-        if front_dialog.exec() != QDialog.DialogCode.Accepted or not front_dialog.text_value:
+        db_type = getattr(self, "_db_type", None)
+        if db_type is None:
             return
 
-        front = front_dialog.text_value
+        if db_type == DatabaseType.LANGUAGE_SENTENCE:
+            self._add_sentence_card()
+        elif db_type == DatabaseType.LANGUAGE_WORD_PHRASE:
+            self._add_word_phrase_card()
+        else:
+            self._add_knowledge_card()
+
+    def _add_sentence_card(self, edit_card_id=None):
+        """Show the sentence-based card dialog."""
+        if edit_card_id is not None:
+            existing = get_sentence_card(self.conn, edit_card_id)
+            if existing is None:
+                return
+            front, back, box, items = existing
+            # Pass full (expression, meaning) pairs; the dialog will use
+            # meanings to pre-populate meaning editors.
+            dialog = SentenceCardDialog(
+                self, "Edit Sentence Card", front, items, back,
+                settings=self.settings,
+            )
+        else:
+            dialog = SentenceCardDialog(
+                self, "Add Sentence Card", settings=self.settings,
+            )
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        sentence = dialog.result_sentence
+        items = dialog.result_items
+        back = dialog.result_back
+
+        # Duplicate detection for new cards
+        if edit_card_id is None:
+            dup_id = find_duplicate_sentence_card(self.conn, sentence, items)
+            if dup_id is not None:
+                reply = QMessageBox.question(
+                    self, "Duplicate Detected",
+                    "A card with the same sentence and expressions already exists.\n\n"
+                    "Open it for editing instead?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    return self._add_sentence_card(edit_card_id=dup_id)
+                # else: continue creating new card
+
+        if edit_card_id is not None:
+            update_sentence_card(
+                self.conn, edit_card_id,
+                front=sentence, back=back, items=items,
+            )
+            QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
+            self._refresh_current_card(edit_card_id)
+        else:
+            card_id = insert_sentence_card(self.conn, sentence, items, back)
+            QMessageBox.information(self, "Added", "Card added to Box 1.")
+            self._show_new_card(card_id, sentence, back)
+
+    def _add_word_phrase_card(self, edit_card_id=None, existing_front=""):
+        """Show the word/phrase-based card dialog with inline AI meanings."""
+        meanings_data = None
+
+        if edit_card_id is not None:
+            if not existing_front:
+                c = self.conn.cursor()
+                c.execute("SELECT front, back FROM cards WHERE id=?", (edit_card_id,))
+                row = c.fetchone()
+                if not row:
+                    return
+                existing_front = row[0]
+                # Try to extract meaning/example pairs from existing back text
+                meanings_data = self._parse_back_to_meanings(row[1])
+
+            dialog = WordPhraseCardDialog(
+                self,
+                "Edit Word/Phrase",
+                front=existing_front,
+                meanings_data=meanings_data,
+                settings=self.settings,
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            front = dialog.result_front
+            back = dialog.result_back
+            meanings = dialog.result_meanings
+        else:
+            dialog = WordPhraseCardDialog(
+                self,
+                "Add New Word/Phrase",
+                settings=self.settings,
+            )
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            front = dialog.result_front
+            back = dialog.result_back
+            meanings = dialog.result_meanings
+
+        if not front or not back:
+            return
+
         c = self.conn.cursor()
-        c.execute(
-            "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
-            (front,),
-        )
-        existing_card = c.fetchone()
+
+        # Duplicate check for new cards
+        if edit_card_id is None:
+            c.execute(
+                "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
+                (front,),
+            )
+            existing_card = c.fetchone()
+            if existing_card:
+                card_id, ex_front, ex_back, ex_box = existing_card
+                QMessageBox.information(
+                    self, "Already Exists",
+                    f"'{ex_front}' is already in your database (Box {ex_box}).\n\n"
+                    "Opening Edit window."
+                )
+                return self._add_word_phrase_card(edit_card_id=card_id, existing_front=ex_front)
 
         today_str = datetime.date.today().isoformat()
 
-        if existing_card:
-            card_id, ex_front, ex_back, ex_box = existing_card
-            msg = (
-                f"'{ex_front}' is already in your database (Box {ex_box}).\n\n"
-                "Opening Edit window. Card will reset to Box 1."
+        if edit_card_id is not None:
+            c.execute(
+                "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
+                (front, back, today_str, edit_card_id),
             )
-            QMessageBox.information(self, "Already Exists", msg)
+            self.conn.commit()
+            QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
+            self._refresh_current_card(edit_card_id)
+        else:
+            c.execute(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
+                (front, back, today_str),
+            )
+            card_id = c.lastrowid
+            self.conn.commit()
+            QMessageBox.information(self, "Added", "Word/phrase added to Box 1.")
+            self._show_new_card(card_id, front, back)
 
-            edit_front_dialog = DynamicInputDialog(self, "Edit Word", "Front:", ex_front)
-            if edit_front_dialog.exec() != QDialog.DialogCode.Accepted or not edit_front_dialog.text_value:
-                return
-            new_front = edit_front_dialog.text_value
+    @staticmethod
+    def _parse_back_to_meanings(back: str) -> list[tuple[str, str]] | None:
+        """Try to extract (meaning, example) pairs from existing back text.
 
-            dialog = DynamicInputDialog(
+        Returns None if parsing fails, so dialog starts fresh.
+        """
+        if not back:
+            return None
+        import re
+        result = []
+        # Pattern: "1. meaning\n*example*" or just "meaning"
+        parts = re.split(r'\n\n|\n(?=\d+\.)', back)
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # Remove number prefix
+            part = re.sub(r'^\d+\.\s*', '', part)
+            # Extract example in *...*
+            example_match = re.search(r'\*(.+?)\*', part)
+            if example_match:
+                example = example_match.group(1).strip()
+                meaning = part[:example_match.start()].strip().rstrip('\n')
+                result.append((meaning, example))
+            else:
+                result.append((part, ""))
+        return result if result else None
+
+    def _add_knowledge_card(self, edit_card_id=None, existing_front=""):
+        """Add/edit a knowledge-based (generic front/back) card.
+
+        Uses a simple front/back flow with no language AI prompts.
+        This preserves the original generic card behavior for math,
+        knowledge, and other non-language databases.
+        """
+        if edit_card_id is not None and existing_front:
+            front = existing_front
+        else:
+            front_dialog = DynamicInputDialog(
                 self,
-                "Edit Translation",
-                "Enter the translation, meanings, or sample sentences. Markdown and MathJax are supported during review:",
+                "Add New Knowledge Card",
+                "Enter the front content. Markdown and MathJax are supported:",
+            )
+            if front_dialog.exec() != QDialog.DialogCode.Accepted or not front_dialog.text_value:
+                return
+            front = front_dialog.text_value
+
+        c = self.conn.cursor()
+        if edit_card_id is None:
+            c.execute(
+                "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
+                (front,),
+            )
+            existing_card = c.fetchone()
+            if existing_card:
+                card_id, ex_front, ex_back, ex_box = existing_card
+                QMessageBox.information(
+                    self, "Already Exists",
+                    f"'{ex_front}' is already in your database (Box {ex_box}).\n\n"
+                    "Opening Edit window."
+                )
+                return self._add_knowledge_card(
+                    edit_card_id=card_id, existing_front=ex_front)
+
+        today_str = datetime.date.today().isoformat()
+
+        if edit_card_id is not None:
+            c.execute("SELECT back FROM cards WHERE id=?", (edit_card_id,))
+            row = c.fetchone()
+            ex_back = row[0] if row else ""
+
+            back_dialog = DynamicInputDialog(
+                self,
+                "Edit Knowledge Card",
+                "Enter the back content. Markdown and MathJax supported:",
                 ex_back,
             )
-            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.text_value:
+            if back_dialog.exec() == QDialog.DialogCode.Accepted and back_dialog.text_value:
                 c.execute(
                     "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-                    (new_front, dialog.text_value, today_str, card_id),
+                    (front, back_dialog.text_value, today_str, edit_card_id),
                 )
                 self.conn.commit()
                 QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
-
-                if self.current_card and str(self.current_card[0]) == str(card_id):
-                    self.current_card = (card_id, new_front, dialog.text_value, 1)
-                    self.is_current_flipped = False
-                    if self.card_ui:
-                        self.scene.removeItem(self.card_ui)
-                        self.card_ui = None
-                    self.draw_card_ui()
-                elif self.current_card is not None:
-                    self.cards_due = [
-                        cf for cf in self.cards_due if cf[0] != card_id
-                    ]
-                    self.cards_due.insert(0, self.current_card)
-                    self.current_card = (card_id, new_front, dialog.text_value, 1)
-                    self.is_current_flipped = False
-                    if self.card_ui:
-                        self.scene.removeItem(self.card_ui)
-                        self.card_ui = None
-                    self.draw_card_ui()
+                self._refresh_current_card(edit_card_id)
         else:
-            dialog = DynamicInputDialog(
+            back_dialog = DynamicInputDialog(
                 self,
-                "Add Translation",
-                "Enter the translation, meanings, or sample sentences. Markdown and MathJax are supported during review:",
+                "Add Knowledge Card",
+                "Enter the back content. Markdown and MathJax supported:",
             )
-            if dialog.exec() == QDialog.DialogCode.Accepted and dialog.text_value:
+            if back_dialog.exec() == QDialog.DialogCode.Accepted and back_dialog.text_value:
                 c.execute(
                     "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
-                    (front, dialog.text_value, today_str),
+                    (front, back_dialog.text_value, today_str),
                 )
                 card_id = c.lastrowid
                 self.conn.commit()
-                QMessageBox.information(self, "Added", "Word added to Box 1.")
+                QMessageBox.information(self, "Added", "Knowledge card added to Box 1.")
+                self._show_new_card(card_id, front, back_dialog.text_value)
 
-                if self.current_card is not None:
-                    self.cards_due.insert(0, self.current_card)
-                    self.current_card = (card_id, front, dialog.text_value, 1)
-                    self.is_current_flipped = False
-                    if self.card_ui:
-                        self.scene.removeItem(self.card_ui)
-                        self.card_ui = None
-                    self.draw_card_ui()
+    def _show_new_card(self, card_id, front, back):
+        """Show a newly-added card immediately."""
+        if self.current_card is not None:
+            self.cards_due.insert(0, self.current_card)
+        self.current_card = (card_id, front, back, 1)
+        self.is_current_flipped = False
+        if self.card_ui:
+            self.scene.removeItem(self.card_ui)
+            self.card_ui = None
+        self.draw_card_ui()
 
+    def _refresh_current_card(self, card_id):
+        """Refresh after an edit without disrupting review queue.
+
+        If *card_id* is the current card, refresh it in place.
+        Otherwise, update or remove card_id from cards_due without
+        changing the current card.
+        """
+        c = self.conn.cursor()
+        c.execute("SELECT id, front, back, box FROM cards WHERE id=?", (card_id,))
+        fresh = c.fetchone()
+        if not fresh:
+            # Card was deleted — remove from queue
+            if self.current_card is not None:
+                self.cards_due = [
+                    cf for cf in self.cards_due if cf[0] != card_id
+                ]
+            return
+
+        if self.current_card is not None and self.current_card[0] == card_id:
+            # Same card — refresh in place
+            self.current_card = fresh
+            self.is_current_flipped = False
+            if self.card_ui:
+                self.scene.removeItem(self.card_ui)
+                self.card_ui = None
+            self.draw_card_ui()
+        else:
+            # Different card — update or remove from cards_due
+            was_queued = any(cf[0] == card_id for cf in self.cards_due)
+            self.cards_due = [
+                cf for cf in self.cards_due if cf[0] != card_id
+            ]
+            if was_queued:
+                # Preserve queue membership without replacing the active card.
+                self.cards_due.append(fresh)
+
+    def _remove_card_from_review_state(self, card_id):
+        """Remove a deleted card from current and queued review state."""
+        card_id = int(card_id)
+        self.cards_due = [card for card in self.cards_due if card[0] != card_id]
+        if self.current_card is not None and self.current_card[0] == card_id:
+            self.current_card = None
+
+    # ------------------------------------------------------------------
+    # Browse
+    # ------------------------------------------------------------------
     def browse_cards(self):
         if not self.conn:
             return
 
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Browse Cards: {self.current_lang}")
-        dialog.resize(800, 600)
+        dialog.resize(800, 500)
+
         layout = QVBoxLayout(dialog)
 
-        filter_layout = QHBoxLayout()
-        filter_label = QLabel("Filter:")
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Search:"))
         filter_input = QLineEdit()
-        filter_input.setPlaceholderText(
-            "Search keywords (use ' AND ' / ' OR ' for multiple terms, e.g. 'math AND theorem')"
-        )
-        filter_layout.addWidget(filter_label)
-        filter_layout.addWidget(filter_input)
-        layout.addLayout(filter_layout)
+        filter_input.setPlaceholderText("Type to search; use AND or OR to combine terms")
+        filter_row.addWidget(filter_input)
+        layout.addLayout(filter_row)
 
         table = QTableWidget()
         table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(
-            ["ID", "Front (Word/Phrase)", "Box", "Next Review Date"]
-        )
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
-        )
+        table.setHorizontalHeaderLabels(["ID", "Front", "Box", "Next Review"])
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(table)
 
+        db_type_local = getattr(self, "_db_type", None)
+
         def refresh_list():
             table.setRowCount(0)
-            filter_text = filter_input.text().strip()
-
             c = self.conn.cursor()
-            c.execute("SELECT id, front, back, box, next_review FROM cards")
 
-            for row_data in c.fetchall():
-                card_id, front, back, box, next_review = row_data
+            search_text_local = filter_input.text().strip()
+            logic_local = "AND"
+            if " OR " in search_text_local.upper():
+                logic_local = "OR"
+            elif " AND " in search_text_local.upper():
+                logic_local = "AND"
 
-                if filter_text:
-                    search_content = f"{front}\n{back}".lower()
+            if search_text_local:
+                db_now = getattr(self, "_db_type", None)
+                if db_now == DatabaseType.LANGUAGE_SENTENCE:
+                    results = search_sentence_cards(self.conn, search_text_local, logic_local)
+                    for r in results:
+                        row_idx = table.rowCount()
+                        table.insertRow(row_idx)
+                        table.setItem(row_idx, 0, QTableWidgetItem(str(r["id"])))
+                        front_display = r["front"]
+                        if r.get("expressions"):
+                            front_display += " [" + ", ".join(r["expressions"]) + "]"
+                        table.setItem(row_idx, 1, QTableWidgetItem(front_display))
+                        table.setItem(row_idx, 2, QTableWidgetItem(str(r["box"])))
+                        table.setItem(row_idx, 3, QTableWidgetItem(str(r["next_review"])))
+                    return
+                else:
+                    results = search_word_phrase_cards(self.conn, search_text_local, logic_local)
+                    for r in results:
+                        row_idx = table.rowCount()
+                        table.insertRow(row_idx)
+                        table.setItem(row_idx, 0, QTableWidgetItem(str(r["id"])))
+                        table.setItem(row_idx, 1, QTableWidgetItem(str(r["front"])))
+                        table.setItem(row_idx, 2, QTableWidgetItem(str(r["box"])))
+                        table.setItem(row_idx, 3, QTableWidgetItem(str(r["next_review"])))
+                    return
 
-                    or_parts = re.split(r"\s+OR\s+", filter_text, flags=re.IGNORECASE)
-                    matched_any_or = False
-
-                    for or_part in or_parts:
-                        and_parts = re.split(
-                            r"\s+AND\s+", or_part, flags=re.IGNORECASE
-                        )
-                        matched_all_and = True
-
-                        for and_part in and_parts:
-                            kw = and_part.strip().lower()
-                            if kw and kw not in search_content:
-                                matched_all_and = False
-                                break
-
-                        if matched_all_and:
-                            matched_any_or = True
-                            break
-
-                    if not matched_any_or:
-                        continue
-
+            # No search text: show all
+            c.execute("SELECT id, front, back, box, next_review FROM cards ORDER BY id")
+            for card in c.fetchall():
+                card_id, front, back, box, next_review = card
                 row_idx = table.rowCount()
                 table.insertRow(row_idx)
                 table.setItem(row_idx, 0, QTableWidgetItem(str(card_id)))
-                table.setItem(row_idx, 1, QTableWidgetItem(str(front)))
+                front_display_all = front
+                db_now = getattr(self, "_db_type", None)
+                if db_now == DatabaseType.LANGUAGE_SENTENCE:
+                    exprs = _fetch_expressions_for_card(self.conn, card_id)
+                    if exprs:
+                        front_display_all += " [" + ", ".join(_expression_labels(exprs)) + "]"
+                table.setItem(row_idx, 1, QTableWidgetItem(front_display_all))
                 table.setItem(row_idx, 2, QTableWidgetItem(str(box)))
                 table.setItem(row_idx, 3, QTableWidgetItem(str(next_review)))
 
@@ -803,11 +1132,23 @@ class BarskyApp(QMainWindow):
             selected = table.selectedItems()
             if not selected:
                 return
-            card_id = selected[0].text()
+            card_id = int(selected[0].text())
+
+            db_type_edit = getattr(self, "_db_type", None)
+            if db_type_edit == DatabaseType.LANGUAGE_SENTENCE:
+                dialog.close()
+                self._add_sentence_card(edit_card_id=card_id)
+                return
+            if db_type_edit == DatabaseType.LANGUAGE_WORD_PHRASE:
+                dialog.close()
+                self._add_word_phrase_card(edit_card_id=card_id)
+                return
 
             c = self.conn.cursor()
             c.execute("SELECT front, back FROM cards WHERE id=?", (card_id,))
             card = c.fetchone()
+            if not card:
+                return
 
             new_front_dialog = DynamicInputDialog(dialog, "Edit Word", "Front:", card[0])
             if new_front_dialog.exec() != QDialog.DialogCode.Accepted or not new_front_dialog.text_value:
@@ -834,25 +1175,7 @@ class BarskyApp(QMainWindow):
                     "Card has been updated and moved back to Box 1 for review today.",
                 )
 
-                if self.current_card and str(self.current_card[0]) == str(card_id):
-                    self.current_card = (
-                        int(card_id),
-                        new_front,
-                        ml_dialog.text_value,
-                        1,
-                    )
-                    self.is_current_flipped = False
-                    if self.card_ui:
-                        self.scene.removeItem(self.card_ui)
-                        self.card_ui = None
-                    self.draw_card_ui()
-                elif self.current_card is not None:
-                    self.cards_due = [
-                        cf for cf in self.cards_due if cf[0] != int(card_id)
-                    ]
-                    self.cards_due.append(
-                        (int(card_id), new_front, ml_dialog.text_value, 1)
-                    )
+                self._refresh_current_card(card_id)
 
         def on_delete():
             selected = table.selectedItems()
@@ -866,11 +1189,16 @@ class BarskyApp(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
+                deleted_current = (
+                    self.current_card is not None
+                    and str(self.current_card[0]) == str(card_id)
+                )
                 self.conn.cursor().execute("DELETE FROM cards WHERE id=?", (card_id,))
                 self.conn.commit()
+                self._remove_card_from_review_state(card_id)
                 refresh_list()
 
-                if self.current_card and str(self.current_card[0]) == str(card_id):
+                if deleted_current:
                     self.show_next_card()
 
         edit_btn.clicked.connect(on_edit)
@@ -891,7 +1219,6 @@ class BarskyApp(QMainWindow):
     # Review Flow
     # ------------------------------------------------------------------
     def delete_current_card(self):
-        """Delete the currently displayed card after confirmation."""
         if not self.current_card:
             QMessageBox.information(self, "Nothing to Delete", "No card is currently displayed.")
             return
@@ -1059,13 +1386,11 @@ class BarskyApp(QMainWindow):
         cw = int(w * 0.75)
         ch = int(h * 0.75)
 
-        # Clamp height so the card does not overlap the drop zones
-        available = zone_y - 20  # 20px breathing room above zone bar
+        available = zone_y - 20
         if ch > available:
             ch = max(200, available)
 
         cx = w / 2
-        # Center the card in the available space above the zones
         cy = available / 2
 
         self.card_ui = FlashCardItem(self, cx, cy, cw, ch)
@@ -1076,15 +1401,52 @@ class BarskyApp(QMainWindow):
             spoken_front = markdown_to_plain_text(front)
             spoken_back = markdown_to_plain_text(back)
             spoken_text = f"{spoken_front}. {spoken_back}".strip()
-            display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
+
+            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
+                display_md = self._build_sentence_card_display(
+                    card_id, front, back, flipped=True, metadata=metadata_md
+                )
+            else:
+                display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
+
             self.card_ui.set_text(display_md, True, spoken_text)
         else:
             spoken_front = markdown_to_plain_text(front)
-            display_md = f"{metadata_md}\n\n{front}"
+
+            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
+                display_md = self._build_sentence_card_display(
+                    card_id, front, back, flipped=False, metadata=metadata_md
+                )
+            else:
+                display_md = f"{metadata_md}\n\n{front}"
+
             self.card_ui.set_text(display_md, False, spoken_front)
 
         self.scene.addItem(self.card_ui)
         self._update_button_visibility()
+
+    def _build_sentence_card_display(self, card_id, sentence, back, flipped, metadata):
+        """Build display content for a sentence-based card."""
+        items = _fetch_expressions_for_card(self.conn, card_id)
+
+        if flipped:
+            lines = [metadata, "", f"**{sentence}**", ""]
+            for item in items:
+                expr = item[0] if isinstance(item, tuple) else item
+                meaning = item[1] if isinstance(item, tuple) and len(item) > 1 else ""
+                if meaning:
+                    lines.append(f"- **{expr}**: {meaning}")
+                else:
+                    lines.append(f"- **{expr}**")
+            if back:
+                lines.extend(["", "---", "", back])
+            return "\n".join(lines)
+        else:
+            lines = [metadata, "", f"**{sentence}**", "", "Unfamiliar:"]
+            for item in items:
+                expr = item[0] if isinstance(item, tuple) else item
+                lines.append(f"- *{expr}*")
+            return "\n".join(lines)
 
     def flip_card(self):
         if not self.current_card:
@@ -1094,7 +1456,13 @@ class BarskyApp(QMainWindow):
         card_id, front, back, box = self.current_card
 
         metadata_md = f"**Box {box}** | ID: `{card_id}`"
-        display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
+
+        if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
+            display_md = self._build_sentence_card_display(
+                card_id, front, back, flipped=True, metadata=metadata_md
+            )
+        else:
+            display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
 
         spoken_front = markdown_to_plain_text(front)
         spoken_back = markdown_to_plain_text(back)
@@ -1186,18 +1554,13 @@ class BarskyApp(QMainWindow):
         tts_combo = QComboBox()
         tts_combo.setMinimumWidth(520)
         tts_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        # Let the popup expand beyond the combo width so long names aren't cut off
         tts_combo.view().setMinimumWidth(700)
         current_voice = self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
 
-        # Start fetching voices in background
         voice_worker = VoiceListWorker()
-        self.voice_worker = voice_worker  # keep a reference so it isn't GC'd while running
-        voices_loaded = False
+        self.voice_worker = voice_worker
 
         def on_voices_ready(voices):
-            nonlocal voices_loaded
-            voices_loaded = True
             tts_combo.clear()
             tts_combo.addItem("(loading voices…)", current_voice)
             tts_combo.model().removeRow(0)
@@ -1211,7 +1574,6 @@ class BarskyApp(QMainWindow):
             tts_combo.setCurrentIndex(selected_idx)
 
         def on_error(msg):
-            # On error, keep the text field as fallback
             pass
 
         voice_worker.voices_ready.connect(on_voices_ready)
@@ -1226,19 +1588,57 @@ class BarskyApp(QMainWindow):
         layout.addRow("Default Database:", db_row)
         layout.addRow("TTS Voice (Edge-TTS):", tts_combo)
 
+        # --- AI Provider Settings ---
+        layout.addRow(QLabel("<b>AI Provider (OpenAI-compatible)</b>"))
+
+        ai_base_input = QLineEdit(self.settings.get("ai_base_url", "https://api.openai.com/v1"))
+        layout.addRow("Base URL:", ai_base_input)
+
+        ai_model_input = QLineEdit(self.settings.get("ai_model", "gpt-4o-mini"))
+        layout.addRow("Model:", ai_model_input)
+
+        ai_key_input = QLineEdit(self.settings.get("ai_api_key", ""))
+        ai_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        ai_key_input.setPlaceholderText("sk-... (stored locally, never committed)")
+        layout.addRow("API Key:", ai_key_input)
+
+        ai_timeout_input = QSpinBox()
+        ai_timeout_input.setRange(5, 120)
+        ai_timeout_input.setValue(int(self.settings.get("ai_timeout", 30)))
+        ai_timeout_input.setSuffix(" s")
+        layout.addRow("Timeout:", ai_timeout_input)
+
+        learned_lang_input = QLineEdit(self.settings.get("learned_language", "English"))
+        layout.addRow("Learned Language:", learned_lang_input)
+
+        explain_lang_input = QLineEdit(self.settings.get("explanation_language", "Chinese"))
+        layout.addRow("Explanation Language:", explain_lang_input)
+
         save_btn = QPushButton("Save && Apply")
         save_btn.setStyleSheet("background-color: #ccffcc;")
         layout.addRow(save_btn)
 
         def save_and_apply():
-            self.settings["width"] = w_input.value()
-            self.settings["height"] = h_input.value()
-            self.settings["font_family"] = font_combo.currentText()
-            self.settings["font_size"] = size_input.value()
-            self.settings["default_database"] = lang_input.text().strip()
-            self.settings["tts_voice"] = tts_combo.currentData() or current_voice
+            staged = dict(self.settings)
+            staged["width"] = w_input.value()
+            staged["height"] = h_input.value()
+            staged["font_family"] = font_combo.currentText()
+            staged["font_size"] = size_input.value()
+            staged["default_database"] = lang_input.text().strip()
+            staged["tts_voice"] = tts_combo.currentData() or current_voice
+            staged["ai_base_url"] = ai_base_input.text().strip()
+            staged["ai_model"] = ai_model_input.text().strip()
+            staged["ai_api_key"] = ai_key_input.text().strip()
+            staged["ai_timeout"] = ai_timeout_input.value()
+            staged["learned_language"] = learned_lang_input.text().strip()
+            staged["explanation_language"] = explain_lang_input.text().strip()
 
-            self._save_settings()
+            try:
+                save_settings(staged)
+            except OSError as exc:
+                QMessageBox.critical(dialog, "Settings Not Saved", str(exc))
+                return
+            self.settings.update(staged)
             self.resize(self.settings["width"], self.settings["height"])
             self.apply_font_settings()
             dialog.accept()
