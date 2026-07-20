@@ -27,8 +27,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QFileDialog,
     QProgressBar,
-    QFrame,
     QSizePolicy,
+    QTabWidget,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -591,16 +591,16 @@ class WordPhraseCardDialog(QDialog):
 
     Features:
       1. Enter the word/phrase (front) in a single text field.
-      2. Up to 2 meaning rows, each with a meaning text and example text.
-         At least 1 non‑empty meaning AND example row is required.
+      2. Up to 2 meanings as tabs, each with meaning text and example text.
+         At least 1 non‑empty meaning AND example is required.
       3. Optionally auto‑generate meanings via AI with a Generate button.
          The dialog stays open; generation is nonblocking (QThread).
-         On completion, meanings populate editable fields.
-      4. Manual users can edit meaning/example fields, add a second row,
-         or remove the second row.
+         On completion, meanings populate editable tabs.
+      4. Manual users can edit meaning/example fields, add a second meaning
+         tab, or close a tab (keeping at least one).
       5. Save is only accepted when:
-         - At least 1 row has non‑empty meaning AND non‑empty example.
-         - At most 2 rows exist.
+         - At least 1 tab has non‑empty meaning AND non‑empty example.
+         - At most 2 tabs exist.
     """
 
     def __init__(self, parent=None, title="Add Word/Phrase",
@@ -608,12 +608,12 @@ class WordPhraseCardDialog(QDialog):
                  settings: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumSize(540, 520)
+        self.setMinimumSize(540, 460)
         self._result_front = ""
         self._result_meanings: list[tuple[str, str]] = []
         self._settings = settings or {}
         self._ai_worker: _AIGenerateWorker | None = None
-        # [{meaning_edit, example_edit, container, number_label, remove_btn}]
+        # [{meaning_edit, example_edit, page}]
         self._meaning_rows: list[dict] = []
 
         layout = QVBoxLayout(self)
@@ -645,27 +645,33 @@ class WordPhraseCardDialog(QDialog):
 
         self._check_ai_availability()
 
-        # --- Meanings section ---
+        # --- Meanings (tabs) ---
         header_row = QHBoxLayout()
         header_row.addWidget(QLabel("<b>Meanings</b>"), stretch=1)
-        self._add_row_btn = QPushButton("+ Add Row")
-        self._add_row_btn.setToolTip("Add a second meaning row (max 2).")
+        self._add_meaning_btn = QPushButton("+ Add Meaning")
+        self._add_meaning_btn.setToolTip("Add a second meaning tab (max 2).")
         # clicked emits a bool; wrap so it is not bound to meaning=
-        self._add_row_btn.clicked.connect(lambda _checked=False: self._add_meaning_row())
-        header_row.addWidget(self._add_row_btn)
+        self._add_meaning_btn.clicked.connect(
+            lambda _checked=False: self._add_meaning_row()
+        )
+        header_row.addWidget(self._add_meaning_btn)
         layout.addLayout(header_row)
 
-        self._meanings_container = QVBoxLayout()
-        self._meanings_container.setContentsMargins(0, 0, 0, 0)
-        self._meanings_container.setSpacing(10)
-        layout.addLayout(self._meanings_container)
+        self._meanings_tabs = QTabWidget()
+        self._meanings_tabs.setDocumentMode(True)
+        self._meanings_tabs.setMovable(False)
+        self._meanings_tabs.setTabsClosable(True)
+        self._meanings_tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        self._meanings_tabs.setMinimumHeight(220)
+        self._meanings_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        layout.addWidget(self._meanings_tabs, stretch=1)
 
         # Status
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
-
-        layout.addStretch(1)
 
         # --- Buttons ---
         btn_layout = QHBoxLayout()
@@ -692,23 +698,22 @@ class WordPhraseCardDialog(QDialog):
             for meaning, example in meanings_data:
                 self._add_meaning_row(meaning=meaning, example=example)
         else:
-            # Start with one empty row
             self._add_meaning_row()
 
-        self._update_row_button()
+        self._update_meaning_controls()
 
     # ------------------------------------------------------------------
-    # Row management
+    # Meaning tab management
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _make_meaning_field(placeholder: str, height: int = 54) -> QTextEdit:
-        """Compact multi-line field without heavy scrollbar chrome."""
+    def _make_meaning_field(placeholder: str, min_height: int = 72) -> QTextEdit:
+        """Multi-line field with clean chrome; expands inside the tab page."""
         edit = QTextEdit()
         edit.setAcceptRichText(False)
-        edit.setFixedHeight(height)
+        edit.setMinimumHeight(min_height)
         edit.setPlaceholderText(placeholder)
-        edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         edit.setTabChangesFocus(True)
@@ -729,109 +734,74 @@ class WordPhraseCardDialog(QDialog):
         return edit
 
     def _add_meaning_row(self, meaning="", example=""):
-        """Add a meaning row with meaning + example fields."""
+        """Add a meaning tab with meaning + example fields."""
         if len(self._meaning_rows) >= 2:
             return
 
-        container = QFrame()
-        container.setObjectName("meaningRow")
-        container.setStyleSheet(
-            "QFrame#meaningRow {"
-            "  background-color: #F7F9FA;"
-            "  border: 1px solid #E0E6EA;"
-            "  border-radius: 8px;"
-            "}"
-        )
-        row_layout = QVBoxLayout(container)
-        row_layout.setContentsMargins(12, 10, 12, 10)
-        row_layout.setSpacing(4)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(10, 10, 10, 10)
+        page_layout.setSpacing(6)
 
-        # Row header
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 2)
-        row_num = len(self._meaning_rows) + 1
-        number_label = QLabel(f"<b>#{row_num}</b>")
-        number_label.setStyleSheet("color: #455A64;")
-        header.addWidget(number_label)
-        header.addStretch()
-        remove_btn = QPushButton("Remove")
-        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        remove_btn.setFixedHeight(26)
-        remove_btn.setStyleSheet(
-            "QPushButton {"
-            "  border: 1px solid #CFD8DC;"
-            "  border-radius: 4px;"
-            "  padding: 2px 10px;"
-            "  background: #FFFFFF;"
-            "  color: #546E7A;"
-            "}"
-            "QPushButton:hover {"
-            "  border-color: #EF9A9A;"
-            "  color: #C62828;"
-            "  background: #FFEBEE;"
-            "}"
-        )
-        remove_btn.setToolTip("Remove this meaning row")
-        remove_btn.clicked.connect(
-            lambda _checked=False, c=container: self._remove_meaning_row(c)
-        )
-        remove_btn.setVisible(row_num > 1)
-        header.addWidget(remove_btn)
-        row_layout.addLayout(header)
-
-        # Meaning field
         meaning_label = QLabel("Meaning")
         meaning_label.setStyleSheet("color: #607D8B; font-size: 12px;")
-        row_layout.addWidget(meaning_label)
+        page_layout.addWidget(meaning_label)
         meaning_edit = self._make_meaning_field(
-            "Meaning in your explanation language..."
+            "Meaning in your explanation language...", min_height=72
         )
         meaning_edit.setPlainText(meaning or "")
-        row_layout.addWidget(meaning_edit)
+        page_layout.addWidget(meaning_edit, stretch=1)
 
-        # Example field
         example_label = QLabel("Example sentence")
         example_label.setStyleSheet("color: #607D8B; font-size: 12px;")
-        row_layout.addWidget(example_label)
+        page_layout.addWidget(example_label)
         example_edit = self._make_meaning_field(
-            "Example sentence showing usage...", height=54
+            "Example sentence showing usage...", min_height=72
         )
         example_edit.setPlainText(example or "")
-        row_layout.addWidget(example_edit)
+        page_layout.addWidget(example_edit, stretch=1)
 
+        tab_index = self._meanings_tabs.addTab(page, "")
         self._meaning_rows.append({
             "meaning_edit": meaning_edit,
             "example_edit": example_edit,
-            "container": container,
-            "number_label": number_label,
-            "remove_btn": remove_btn,
+            "page": page,
         })
-        self._meanings_container.addWidget(container)
-        self._rebuild_row_numbering()
-        self._update_row_button()
+        self._rebuild_tab_labels()
+        self._meanings_tabs.setCurrentIndex(tab_index)
+        self._update_meaning_controls()
+        meaning_edit.setFocus()
 
-    def _remove_meaning_row(self, container: QWidget):
-        """Remove a specific meaning row."""
+    def _on_tab_close_requested(self, index: int):
+        """Close a meaning tab (keep at least one)."""
         if len(self._meaning_rows) <= 1:
-            return  # keep at least one row
-        self._meaning_rows = [
-            r for r in self._meaning_rows if r["container"] is not container
-        ]
-        self._meanings_container.removeWidget(container)
-        container.deleteLater()
-        self._rebuild_row_numbering()
-        self._update_row_button()
+            return
+        if index < 0 or index >= len(self._meaning_rows):
+            return
+        row = self._meaning_rows.pop(index)
+        self._meanings_tabs.removeTab(index)
+        row["page"].deleteLater()
+        self._rebuild_tab_labels()
+        self._update_meaning_controls()
 
-    def _rebuild_row_numbering(self):
-        """Update #N labels and remove-button visibility after row changes."""
-        for idx, row in enumerate(self._meaning_rows, start=1):
-            row["number_label"].setText(f"<b>#{idx}</b>")
-            # Only allow removing when more than one row exists; first stays
-            # removable once a second row is present so either can be dropped.
-            row["remove_btn"].setVisible(len(self._meaning_rows) > 1)
+    def _rebuild_tab_labels(self):
+        """Refresh Meaning N tab titles after add/remove."""
+        for idx in range(self._meanings_tabs.count()):
+            self._meanings_tabs.setTabText(idx, f"Meaning {idx + 1}")
 
-    def _update_row_button(self):
-        self._add_row_btn.setEnabled(len(self._meaning_rows) < 2)
+    def _update_meaning_controls(self):
+        """Sync Add button and tab-close affordance with current count."""
+        count = len(self._meaning_rows)
+        self._add_meaning_btn.setEnabled(count < 2)
+        # Only allow closing when a second meaning exists.
+        self._meanings_tabs.setTabsClosable(count > 1)
+        bar = self._meanings_tabs.tabBar()
+        if bar is None:
+            return
+        for idx in range(self._meanings_tabs.count()):
+            close_btn = bar.tabButton(idx, bar.ButtonPosition.RightSide)
+            if close_btn is not None:
+                close_btn.setVisible(count > 1)
 
     # ------------------------------------------------------------------
     # AI availability
@@ -880,7 +850,7 @@ class WordPhraseCardDialog(QDialog):
         def on_finished(raw_text):
             try:
                 meanings = parse_word_phrase_meanings(raw_text)
-                # Clear existing rows
+                # Clear existing tabs
                 self._clear_all_rows()
                 # Populate from AI results
                 for m in meanings:
@@ -888,6 +858,8 @@ class WordPhraseCardDialog(QDialog):
                     meaning_text, example_text = self._split_meaning_example(
                         m.contextual_meaning)
                     self._add_meaning_row(meaning=meaning_text, example=example_text)
+                if not self._meaning_rows:
+                    self._add_meaning_row()
                 self._ai_status.setText(
                     f"Generated {len(meanings)} meaning(s). Review and edit before saving."
                 )
@@ -911,16 +883,18 @@ class WordPhraseCardDialog(QDialog):
         if self._ai_worker is worker:
             self._ai_worker = None
             self._restore_ui_after_ai()
+
+    @staticmethod
     def _split_meaning_example(contextual_meaning: str) -> tuple[str, str]:
         """Split a contextual_meaning string into (meaning, example).
 
         The AI formats output like:
-            "1. A domestic feline\n*The cat sat on the mat.*"
+            "1. A domestic feline\\n*The cat sat on the mat.*"
         We extract the meaning text and example text.
         """
         import re
         text = contextual_meaning.strip()
-        # Try to find pattern: "1. meaning\n*example.*" or similar
+        # Try to find pattern: "1. meaning\\n*example.*" or similar
         # First, strip the number prefix like "1. "
         text = re.sub(r'^\d+\.\s*', '', text)
         # Split on italic example: *...*
@@ -934,16 +908,20 @@ class WordPhraseCardDialog(QDialog):
         return text, ""
 
     def _clear_all_rows(self):
-        """Remove all meaning row widgets."""
-        for row in list(self._meaning_rows):
-            self._meanings_container.removeWidget(row["container"])
-            row["container"].deleteLater()
+        """Remove all meaning tabs."""
+        while self._meanings_tabs.count():
+            page = self._meanings_tabs.widget(0)
+            self._meanings_tabs.removeTab(0)
+            if page is not None:
+                page.deleteLater()
         self._meaning_rows.clear()
+        self._update_meaning_controls()
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable/disable all controls during AI generation or close."""
         self._front_edit.setEnabled(enabled)
-        self._add_row_btn.setEnabled(enabled and len(self._meaning_rows) < 2)
+        self._add_meaning_btn.setEnabled(enabled and len(self._meaning_rows) < 2)
+        self._meanings_tabs.setEnabled(enabled)
         self._validate_btn.setEnabled(enabled)
         self._save_btn.setEnabled(enabled)
         self._cancel_btn.setEnabled(enabled)
@@ -956,6 +934,7 @@ class WordPhraseCardDialog(QDialog):
         self._set_controls_enabled(True)
         self._generate_btn.setEnabled(True)
         self._ai_progress.setVisible(False)
+        self._update_meaning_controls()
 
     # ------------------------------------------------------------------
     # Close / Cancel safety
@@ -979,7 +958,7 @@ class WordPhraseCardDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _get_rows_data(self) -> list[tuple[str, str]]:
-        """Collect all meaning rows as (meaning, example) tuples."""
+        """Collect all meaning tabs as (meaning, example) tuples."""
         result = []
         for row in self._meaning_rows:
             meaning = row["meaning_edit"].toPlainText().strip()
@@ -1027,7 +1006,7 @@ class WordPhraseCardDialog(QDialog):
         if not rows:
             QMessageBox.warning(
                 self, "Validation",
-                "Add at least one meaning row with both a meaning text "
+                "Add at least one meaning with both a meaning text "
                 "and a non‑empty example sentence."
             )
             return
@@ -1035,7 +1014,7 @@ class WordPhraseCardDialog(QDialog):
         if any(not meaning or not example for meaning, example in rows):
             QMessageBox.warning(
                 self, "Validation",
-                "Every non-empty row must contain both a meaning and an example."
+                "Every non-empty meaning must contain both a meaning and an example."
             )
             return
 

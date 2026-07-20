@@ -296,7 +296,7 @@ class TestFinalFormRegressions:
         assert dialog.result_meanings == []
         dialog.close()
 
-    def test_word_dialog_add_row_button_does_not_pass_clicked_bool(self):
+    def test_word_dialog_add_meaning_button_does_not_pass_clicked_bool(self):
         """QPushButton.clicked emits a bool; must not become meaning text."""
         _qt_app()
         from kgb_srs.forms import WordPhraseCardDialog
@@ -304,43 +304,46 @@ class TestFinalFormRegressions:
         dialog = WordPhraseCardDialog(front="bank")
         assert len(dialog._meaning_rows) == 1
 
-        dialog._add_row_btn.click()
+        dialog._add_meaning_btn.click()
 
         assert len(dialog._meaning_rows) == 2
+        assert dialog._meanings_tabs.count() == 2
         second = dialog._meaning_rows[1]
         assert second["meaning_edit"].toPlainText() == ""
         assert second["example_edit"].toPlainText() == ""
         dialog.close()
 
-    def test_word_dialog_meaning_rows_are_card_separated(self):
-        """Two meaning rows render as separate fixed-height cards with gap."""
+    def test_word_dialog_meanings_use_tabs(self):
+        """Meanings are tab pages labeled Meaning N; close keeps one tab."""
         _qt_app()
         from PyQt6.QtWidgets import QApplication
         from kgb_srs.forms import WordPhraseCardDialog
 
         dialog = WordPhraseCardDialog(front="bank")
-        dialog._add_row_btn.click()
-        dialog.resize(560, 640)
+        assert dialog._add_meaning_btn.text() == "+ Add Meaning"
+        assert dialog._meanings_tabs.count() == 1
+        assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
+        assert not dialog._meanings_tabs.tabsClosable()
+
+        dialog._add_meaning_btn.click()
+        dialog.resize(560, 520)
         dialog.show()
         QApplication.processEvents()
 
-        rows = dialog._meaning_rows
-        assert len(rows) == 2
-        c0, c1 = rows[0]["container"], rows[1]["container"]
-        assert c0.height() == c1.height()
-        assert c1.y() >= c0.y() + c0.height() + 8  # spaced cards, not stacked flush
-        for row in rows:
-            assert row["meaning_edit"].height() == 54
-            assert row["example_edit"].height() == 54
-            assert row["remove_btn"].isVisible()
-        assert [r["number_label"].text() for r in rows] == ["<b>#1</b>", "<b>#2</b>"]
+        assert dialog._meanings_tabs.count() == 2
+        assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
+        assert dialog._meanings_tabs.tabText(1) == "Meaning 2"
+        assert dialog._meanings_tabs.tabsClosable()
+        assert not dialog._add_meaning_btn.isEnabled()
+        # Newly added tab is active
+        assert dialog._meanings_tabs.currentIndex() == 1
 
-        # Removing row 1 renumbers the remaining row to #1
-        rows[0]["remove_btn"].click()
+        dialog._on_tab_close_requested(0)
         QApplication.processEvents()
-        assert len(dialog._meaning_rows) == 1
-        assert dialog._meaning_rows[0]["number_label"].text() == "<b>#1</b>"
-        assert not dialog._meaning_rows[0]["remove_btn"].isVisible()
+        assert dialog._meanings_tabs.count() == 1
+        assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
+        assert not dialog._meanings_tabs.tabsClosable()
+        assert dialog._add_meaning_btn.isEnabled()
         dialog.close()
 
     def test_sentence_dialog_rejects_blank_meaning_before_accept(self, monkeypatch):
