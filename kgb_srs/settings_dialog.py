@@ -1,5 +1,6 @@
 """Categorized application settings dialog."""
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -35,9 +36,12 @@ class SettingsDialog(QDialog):
         "Languages",
     )
 
-    def __init__(self, settings, parent=None):
+    def __init__(self, settings, parent=None, current_size=None):
         super().__init__(parent)
+        if parent is not None:
+            self.setFont(parent.font())
         self.settings = settings
+        self.current_size = current_size
         self.current_voice = settings.get(
             "tts_voice", "en-US-AvaMultilingualNeural"
         )
@@ -51,12 +55,21 @@ class SettingsDialog(QDialog):
         self.category_list = QListWidget()
         self.category_list.setObjectName("settingsCategoryList")
         self.category_list.addItems(self.CATEGORIES)
+        self.category_list.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.category_list.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
         )
-        self.category_list.setMaximumWidth(
-            self.category_list.sizeHintForColumn(0) + 32
+        # Size from font metrics rather than the pre-polish column hint, which
+        # can grow after the native style initializes and elide larger fonts.
+        longest_category = max(
+            self.category_list.fontMetrics().horizontalAdvance(label)
+            for label in self.CATEGORIES
         )
+        category_width = longest_category + 112
+        self.category_list.setMinimumWidth(category_width)
+        self.category_list.setMaximumWidth(category_width)
         content_layout.addWidget(self.category_list)
 
         self.pages = QStackedWidget()
@@ -120,16 +133,19 @@ class SettingsDialog(QDialog):
 
     def _build_appearance_page(self):
         page, layout = self._page()
+        current_width, current_height = self.current_size or (
+            self.settings["width"], self.settings["height"]
+        )
         self.window_width_input = QSpinBox()
         self.window_width_input.setObjectName("windowWidthInput")
         self.window_width_input.setRange(400, 3000)
-        self.window_width_input.setValue(self.settings["width"])
+        self.window_width_input.setValue(current_width)
         layout.addRow("Window Width:", self.window_width_input)
 
         self.window_height_input = QSpinBox()
         self.window_height_input.setObjectName("windowHeightInput")
         self.window_height_input.setRange(400, 3000)
-        self.window_height_input.setValue(self.settings["height"])
+        self.window_height_input.setValue(current_height)
         layout.addRow("Window Height:", self.window_height_input)
 
         self.font_family_input = QComboBox()

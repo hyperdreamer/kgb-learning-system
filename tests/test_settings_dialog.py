@@ -7,8 +7,16 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QListWidget, QStackedWidget
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QListWidget,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QWidget,
+)
 
 
 _APP = None
@@ -55,7 +63,7 @@ def settings():
     }
 
 
-def _dialog(monkeypatch, settings, save=None):
+def _dialog(monkeypatch, settings, save=None, current_size=None):
     _app()
     import kgb_srs.settings_dialog as module
 
@@ -63,7 +71,9 @@ def _dialog(monkeypatch, settings, save=None):
     monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
     if save is not None:
         monkeypatch.setattr(module, "save_settings", save)
-    return module.SettingsDialog(settings), worker
+    return module.SettingsDialog(
+        settings, current_size=current_size
+    ), worker
 
 
 def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch, settings):
@@ -100,6 +110,16 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
     assert worker.started
     assert dialog.voice_worker is worker
     dialog.close()
+
+
+def test_live_window_size_overrides_stale_persisted_geometry(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings, current_size=(1234, 876))
+
+    assert dialog.window_width_input.value() == 1234
+    assert dialog.window_height_input.value() == 876
+    assert settings["width"] == 900
+    assert settings["height"] == 700
+    dialog.reject()
 
 
 def test_switching_categories_does_not_save_or_mutate_settings(monkeypatch, settings):
@@ -209,17 +229,45 @@ def test_dialog_does_not_force_wide_voice_controls(monkeypatch, settings):
     dialog.reject()
 
 
+def test_large_app_font_keeps_category_labels_visible(monkeypatch, settings):
+    _app()
+    parent = QMainWindow()
+    parent.setFont(QFont("Arial", 18))
+    dialog = None
+    try:
+        import kgb_srs.settings_dialog as module
+
+        worker = FakeVoiceWorker()
+        monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
+        dialog = module.SettingsDialog(settings, parent=parent)
+        dialog.show()
+        _app().processEvents()
+        longest_label_width = dialog.category_list.sizeHintForColumn(0)
+
+        assert dialog.category_list.viewport().width() >= longest_label_width
+        assert (
+            dialog.category_list.horizontalScrollBarPolicy()
+            == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+    finally:
+        if dialog is not None:
+            dialog.reject()
+        parent.close()
+
+
 def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monkeypatch):
     _app()
     import kgb_srs.main_window as module
 
     class FakeDialog:
         results = [module.QDialog.DialogCode.Rejected, module.QDialog.DialogCode.Accepted]
+        current_sizes = []
 
-        def __init__(self, settings, parent=None):
+        def __init__(self, settings, parent=None, current_size=None):
             self.settings = settings
             self.parent = parent
             self.voice_worker = object()
+            self.current_sizes.append(current_size)
 
         def exec(self):
             return self.results.pop(0)
@@ -228,6 +276,12 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
 
     class WindowStub:
         settings = {"width": 777, "height": 555}
+
+        def width(self):
+            return 1111
+
+        def height(self):
+            return 888
 
         def resize(self, width, height):
             calls.append(("resize", width, height))
@@ -241,8 +295,48 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
     module.BarskyApp.open_settings_window(window)
     assert calls == []
     assert window.voice_worker is not None
+    assert FakeDialog.current_sizes == [(1111, 888)]
     module.BarskyApp.open_settings_window(window)
     assert calls == [("resize", 777, 555), ("font",)]
+    assert FakeDialog.current_sizes == [(1111, 888), (1111, 888)]
+
+
+def test_font_settings_are_scoped_to_main_window_and_owned_dialog(monkeypatch, settings):
+    app = _app()
+    original_font = QFont(app.font())
+    baseline = QFont("Sans Serif", 9)
+    app.setFont(baseline)
+    baseline_font = (app.font().family(), app.font().pointSize())
+
+    from kgb_srs.main_window import BarskyApp
+    import kgb_srs.settings_dialog as module
+
+    worker = FakeVoiceWorker()
+    monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
+    window = QMainWindow()
+    try:
+        child = QWidget(window)
+        for name in (
+            "start_btn", "restart_review_btn", "previous_review_btn",
+            "delete_entry_btn",
+        ):
+            setattr(window, name, QPushButton(window))
+        window.settings = {"font_family": "Arial", "font_size": 23}
+        window._button_style = BarskyApp._button_style
+
+        BarskyApp.apply_font_settings(window)
+        dialog = module.SettingsDialog(
+            settings, parent=window, current_size=(900, 700)
+        )
+
+        assert (app.font().family(), app.font().pointSize()) == baseline_font
+        assert window.font().pointSize() == 23
+        assert child.font().pointSize() == 23
+        assert dialog.font().pointSize() == 23
+        dialog.reject()
+    finally:
+        window.close()
+        app.setFont(original_font)
 
 
 def test_cancel_button_rejects_without_saving(monkeypatch, settings):

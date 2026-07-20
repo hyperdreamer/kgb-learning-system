@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QMenu,
-    QApplication,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
@@ -228,7 +227,7 @@ class BarskyApp(QMainWindow):
         font_size = self.settings.get("font_size", 14)
 
         font = QFont(font_family, font_size)
-        QApplication.setFont(font)
+        self.setFont(font)
 
         dyn_pad = max(10, int(font_size * 0.8))
         fs = font_size + 2
@@ -1733,7 +1732,9 @@ class BarskyApp(QMainWindow):
     # Settings Dialog
     # ------------------------------------------------------------------
     def open_settings_window(self):
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(
+            self.settings, self, current_size=(self.width(), self.height())
+        )
         # Keep the background voice-list thread alive even if the modal dialog
         # is closed before the request completes, matching the previous
         # MainWindow-owned worker lifetime.
