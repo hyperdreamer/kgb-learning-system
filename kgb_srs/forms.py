@@ -27,6 +27,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QFileDialog,
     QProgressBar,
+    QFrame,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -606,14 +608,16 @@ class WordPhraseCardDialog(QDialog):
                  settings: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumSize(520, 480)
+        self.setMinimumSize(540, 520)
         self._result_front = ""
         self._result_meanings: list[tuple[str, str]] = []
         self._settings = settings or {}
         self._ai_worker: _AIGenerateWorker | None = None
-        self._meaning_rows: list[dict] = []  # [{meaning_edit, example_edit, container}]
+        # [{meaning_edit, example_edit, container, number_label, remove_btn}]
+        self._meaning_rows: list[dict] = []
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
 
         # --- Word/Phrase (Front) ---
         layout.addWidget(QLabel("Word / Phrase (Front):"))
@@ -621,8 +625,6 @@ class WordPhraseCardDialog(QDialog):
         self._front_edit.setText(front)
         self._front_edit.setPlaceholderText("Enter the word or phrase to learn...")
         layout.addWidget(self._front_edit)
-
-        layout.addSpacing(8)
 
         # --- AI controls ---
         ai_row = QHBoxLayout()
@@ -643,8 +645,6 @@ class WordPhraseCardDialog(QDialog):
 
         self._check_ai_availability()
 
-        layout.addSpacing(4)
-
         # --- Meanings section ---
         header_row = QHBoxLayout()
         header_row.addWidget(QLabel("<b>Meanings</b>"), stretch=1)
@@ -656,6 +656,8 @@ class WordPhraseCardDialog(QDialog):
         layout.addLayout(header_row)
 
         self._meanings_container = QVBoxLayout()
+        self._meanings_container.setContentsMargins(0, 0, 0, 0)
+        self._meanings_container.setSpacing(10)
         layout.addLayout(self._meanings_container)
 
         # Status
@@ -663,7 +665,7 @@ class WordPhraseCardDialog(QDialog):
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
 
-        layout.addStretch()
+        layout.addStretch(1)
 
         # --- Buttons ---
         btn_layout = QHBoxLayout()
@@ -699,76 +701,134 @@ class WordPhraseCardDialog(QDialog):
     # Row management
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _make_meaning_field(placeholder: str, height: int = 54) -> QTextEdit:
+        """Compact multi-line field without heavy scrollbar chrome."""
+        edit = QTextEdit()
+        edit.setAcceptRichText(False)
+        edit.setFixedHeight(height)
+        edit.setPlaceholderText(placeholder)
+        edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        edit.setTabChangesFocus(True)
+        doc = edit.document()
+        if doc is not None:
+            doc.setDocumentMargin(6)
+        edit.setStyleSheet(
+            "QTextEdit {"
+            "  border: 1px solid #CFD8DC;"
+            "  border-radius: 6px;"
+            "  padding: 2px 6px;"
+            "  background: #FFFFFF;"
+            "}"
+            "QTextEdit:focus {"
+            "  border: 1px solid #42A5F5;"
+            "}"
+        )
+        return edit
+
     def _add_meaning_row(self, meaning="", example=""):
         """Add a meaning row with meaning + example fields."""
         if len(self._meaning_rows) >= 2:
             return
 
-        container = QWidget()
+        container = QFrame()
+        container.setObjectName("meaningRow")
+        container.setStyleSheet(
+            "QFrame#meaningRow {"
+            "  background-color: #F7F9FA;"
+            "  border: 1px solid #E0E6EA;"
+            "  border-radius: 8px;"
+            "}"
+        )
         row_layout = QVBoxLayout(container)
-        row_layout.setContentsMargins(0, 4, 0, 4)
+        row_layout.setContentsMargins(12, 10, 12, 10)
+        row_layout.setSpacing(4)
 
         # Row header
         header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 2)
         row_num = len(self._meaning_rows) + 1
-        header.addWidget(QLabel(f"<b>#{row_num}</b>"))
+        number_label = QLabel(f"<b>#{row_num}</b>")
+        number_label.setStyleSheet("color: #455A64;")
+        header.addWidget(number_label)
         header.addStretch()
-        if row_num > 1:
-            remove_btn = QPushButton("✕ Remove")
-            remove_btn.clicked.connect(lambda: self._remove_meaning_row(container))
-            header.addWidget(remove_btn)
+        remove_btn = QPushButton("Remove")
+        remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        remove_btn.setFixedHeight(26)
+        remove_btn.setStyleSheet(
+            "QPushButton {"
+            "  border: 1px solid #CFD8DC;"
+            "  border-radius: 4px;"
+            "  padding: 2px 10px;"
+            "  background: #FFFFFF;"
+            "  color: #546E7A;"
+            "}"
+            "QPushButton:hover {"
+            "  border-color: #EF9A9A;"
+            "  color: #C62828;"
+            "  background: #FFEBEE;"
+            "}"
+        )
+        remove_btn.setToolTip("Remove this meaning row")
+        remove_btn.clicked.connect(
+            lambda _checked=False, c=container: self._remove_meaning_row(c)
+        )
+        remove_btn.setVisible(row_num > 1)
+        header.addWidget(remove_btn)
         row_layout.addLayout(header)
 
         # Meaning field
-        row_layout.addWidget(QLabel("Meaning:"))
-        meaning_edit = QTextEdit()
-        meaning_edit.setAcceptRichText(False)
-        meaning_edit.setMaximumHeight(60)
-        meaning_edit.setPlainText(meaning)
-        meaning_edit.setPlaceholderText("Meaning in your explanation language...")
+        meaning_label = QLabel("Meaning")
+        meaning_label.setStyleSheet("color: #607D8B; font-size: 12px;")
+        row_layout.addWidget(meaning_label)
+        meaning_edit = self._make_meaning_field(
+            "Meaning in your explanation language..."
+        )
+        meaning_edit.setPlainText(meaning or "")
         row_layout.addWidget(meaning_edit)
 
         # Example field
-        row_layout.addWidget(QLabel("Example sentence:"))
-        example_edit = QTextEdit()
-        example_edit.setAcceptRichText(False)
-        example_edit.setMaximumHeight(60)
-        example_edit.setPlainText(example)
-        example_edit.setPlaceholderText("Example sentence showing usage...")
+        example_label = QLabel("Example sentence")
+        example_label.setStyleSheet("color: #607D8B; font-size: 12px;")
+        row_layout.addWidget(example_label)
+        example_edit = self._make_meaning_field(
+            "Example sentence showing usage...", height=54
+        )
+        example_edit.setPlainText(example or "")
         row_layout.addWidget(example_edit)
 
         self._meaning_rows.append({
             "meaning_edit": meaning_edit,
             "example_edit": example_edit,
             "container": container,
+            "number_label": number_label,
+            "remove_btn": remove_btn,
         })
-
-        # Insert before the spacer at the end (if any)
-        count = self._meanings_container.count()
-        if count > 0 and self._meanings_container.itemAt(count - 1).spacerItem():
-            self._meanings_container.insertWidget(count - 1, container)
-        else:
-            self._meanings_container.addWidget(container)
-
+        self._meanings_container.addWidget(container)
+        self._rebuild_row_numbering()
         self._update_row_button()
 
     def _remove_meaning_row(self, container: QWidget):
         """Remove a specific meaning row."""
+        if len(self._meaning_rows) <= 1:
+            return  # keep at least one row
         self._meaning_rows = [
             r for r in self._meaning_rows if r["container"] is not container
         ]
         self._meanings_container.removeWidget(container)
         container.deleteLater()
-
-        # Re-number remaining rows
         self._rebuild_row_numbering()
         self._update_row_button()
 
     def _rebuild_row_numbering(self):
-        """Rebuild header labels after row addition/removal."""
-        # We need to update the row header labels (remove old and add new).
-        # For simplicity, we skip renumbering — the rows are in order.
-        pass
+        """Update #N labels and remove-button visibility after row changes."""
+        for idx, row in enumerate(self._meaning_rows, start=1):
+            row["number_label"].setText(f"<b>#{idx}</b>")
+            # Only allow removing when more than one row exists; first stays
+            # removable once a second row is present so either can be dropped.
+            row["remove_btn"].setVisible(len(self._meaning_rows) > 1)
 
     def _update_row_button(self):
         self._add_row_btn.setEnabled(len(self._meaning_rows) < 2)
