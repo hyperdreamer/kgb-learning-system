@@ -315,7 +315,7 @@ class TestFinalFormRegressions:
         dialog.close()
 
     def test_word_dialog_meanings_use_tabs(self):
-        """Meanings are tab pages labeled Meaning N; close keeps one tab."""
+        """Meanings are tab pages labeled Meaning N; Remove keeps one tab."""
         _qt_app()
         from PyQt6.QtWidgets import QApplication
         from kgb_srs.forms import WordPhraseCardDialog
@@ -325,6 +325,7 @@ class TestFinalFormRegressions:
         assert dialog._meanings_tabs.count() == 1
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert not dialog._meanings_tabs.tabsClosable()
+        assert not dialog._remove_meaning_btn.isEnabled()
 
         dialog._add_meaning_btn.click()
         dialog.resize(560, 520)
@@ -334,17 +335,25 @@ class TestFinalFormRegressions:
         assert dialog._meanings_tabs.count() == 2
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert dialog._meanings_tabs.tabText(1) == "Meaning 2"
-        assert dialog._meanings_tabs.tabsClosable()
+        assert not dialog._meanings_tabs.tabsClosable()
         assert dialog._add_meaning_btn.isEnabled()
+        assert dialog._remove_meaning_btn.isEnabled()
         # Newly added tab is active
         assert dialog._meanings_tabs.currentIndex() == 1
+        # No native per-tab close buttons (avoids double-X style artifacts)
+        bar = dialog._meanings_tabs.tabBar()
+        assert bar is not None
+        for i in range(dialog._meanings_tabs.count()):
+            assert bar.tabButton(i, bar.ButtonPosition.RightSide) is None
+            assert bar.tabButton(i, bar.ButtonPosition.LeftSide) is None
 
-        dialog._on_tab_close_requested(0)
+        dialog._remove_meaning_btn.click()
         QApplication.processEvents()
         assert dialog._meanings_tabs.count() == 1
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert not dialog._meanings_tabs.tabsClosable()
         assert dialog._add_meaning_btn.isEnabled()
+        assert not dialog._remove_meaning_btn.isEnabled()
         dialog.close()
 
     def test_word_dialog_allows_up_to_max_meaning_tabs(self):

@@ -659,16 +659,26 @@ class WordPhraseCardDialog(QDialog):
             lambda _checked=False: self._add_meaning_row()
         )
         header_row.addWidget(self._add_meaning_btn)
+        self._remove_meaning_btn = QPushButton("Remove")
+        self._remove_meaning_btn.setToolTip("Remove the current meaning tab.")
+        self._remove_meaning_btn.clicked.connect(
+            lambda _checked=False: self._remove_current_meaning()
+        )
+        header_row.addWidget(self._remove_meaning_btn)
         layout.addLayout(header_row)
 
         self._meanings_tabs = QTabWidget()
         self._meanings_tabs.setDocumentMode(True)
         self._meanings_tabs.setMovable(False)
-        self._meanings_tabs.setTabsClosable(True)
-        self._meanings_tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        # Avoid native per-tab close buttons: Plasma/Fusion styles can paint
+        # a double/ghost X. Remove is a single explicit header control.
+        self._meanings_tabs.setTabsClosable(False)
         self._meanings_tabs.setMinimumHeight(220)
         self._meanings_tabs.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._meanings_tabs.currentChanged.connect(
+            lambda _idx: self._update_meaning_controls()
         )
         layout.addWidget(self._meanings_tabs, stretch=1)
 
@@ -777,7 +787,7 @@ class WordPhraseCardDialog(QDialog):
         meaning_edit.setFocus()
 
     def _on_tab_close_requested(self, index: int):
-        """Close a meaning tab (keep at least one)."""
+        """Close a meaning tab by index (keep at least one)."""
         if len(self._meaning_rows) <= 1:
             return
         if index < 0 or index >= len(self._meaning_rows):
@@ -788,24 +798,23 @@ class WordPhraseCardDialog(QDialog):
         self._rebuild_tab_labels()
         self._update_meaning_controls()
 
+    def _remove_current_meaning(self):
+        """Remove the currently selected meaning tab."""
+        self._on_tab_close_requested(self._meanings_tabs.currentIndex())
+
     def _rebuild_tab_labels(self):
         """Refresh Meaning N tab titles after add/remove."""
         for idx in range(self._meanings_tabs.count()):
             self._meanings_tabs.setTabText(idx, f"Meaning {idx + 1}")
 
     def _update_meaning_controls(self):
-        """Sync Add button and tab-close affordance with current count."""
+        """Sync Add/Remove buttons with current tab count."""
         count = len(self._meaning_rows)
         self._add_meaning_btn.setEnabled(count < MAX_WORD_PHRASE_MEANINGS)
-        # Only allow closing when more than one meaning exists.
-        self._meanings_tabs.setTabsClosable(count > 1)
-        bar = self._meanings_tabs.tabBar()
-        if bar is None:
-            return
-        for idx in range(self._meanings_tabs.count()):
-            close_btn = bar.tabButton(idx, bar.ButtonPosition.RightSide)
-            if close_btn is not None:
-                close_btn.setVisible(count > 1)
+        # Keep at least one meaning tab.
+        self._remove_meaning_btn.setEnabled(count > 1)
+        # Never use native close widgets (style-dependent double-X artifacts).
+        self._meanings_tabs.setTabsClosable(False)
 
     # ------------------------------------------------------------------
     # AI availability
@@ -926,6 +935,9 @@ class WordPhraseCardDialog(QDialog):
         self._front_edit.setEnabled(enabled)
         self._add_meaning_btn.setEnabled(
             enabled and len(self._meaning_rows) < MAX_WORD_PHRASE_MEANINGS
+        )
+        self._remove_meaning_btn.setEnabled(
+            enabled and len(self._meaning_rows) > 1
         )
         self._meanings_tabs.setEnabled(enabled)
         self._validate_btn.setEnabled(enabled)
