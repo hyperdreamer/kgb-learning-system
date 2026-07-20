@@ -244,7 +244,10 @@ class TestUpdateSentenceCard:
         result = get_sentence_card(migrated_conn, card_id)
         assert result[0] == "New sentence"
         assert result[1] == "Meanings"
-        assert result[3] == [("New", "new meaning")]
+        assert len(result[3]) == 1
+        assert result[3][0][0] == "New"
+        assert result[3][0][1] == "new meaning"
+        assert result[3][0][2] is not None  # sense_id linked
 
     def test_resets_box_on_update(self, migrated_conn):
         card_id = insert_sentence_card(

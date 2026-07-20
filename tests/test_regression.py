@@ -485,7 +485,7 @@ class TestFinalFormRegressions:
         dialog.close()
 
     def test_sentence_dialog_ai_success_status_is_ready_to_save(self, monkeypatch):
-        """AI success status should not force a review/edit theater message."""
+        """AI success status should report reuse/create and ready to save."""
         _qt_app()
         from PyQt6.QtCore import QThread
         from PyQt6.QtWidgets import QApplication
@@ -514,21 +514,21 @@ class TestFinalFormRegressions:
         dialog._generate_ai_meanings()
         assert started
         assert dialog._ai_worker is not None
-        # Prompt is for the selected item only (not every list item).
+        # Prompt is sense-assignment for the selected item only.
         assert "Hello" in prompts[0]
-        assert "Unfamiliar items:" in prompts[0]
+        assert "action" in prompts[0].lower() or "reuse" in prompts[0].lower()
 
-        # Valid AI JSON payload matching parse_sentence_meanings shape.
+        # Valid AI JSON payload matching parse_sense_assignment shape (create).
         raw = (
-            '{"items": [{"expression": "Hello", '
-            '"contextual_meaning": "a greeting"}]}'
+            '{"expression": "Hello", "action": "create", '
+            '"sense_id": null, "meaning": "a greeting"}'
         )
         dialog._ai_worker.result.emit(raw)
         QApplication.processEvents()
 
         status = dialog._ai_status.text()
         assert "Review and edit" not in status
-        assert "Generated meaning for 'Hello'" in status
+        assert "Hello" in status
         assert "Ready to save" in status
         assert dialog._meanings["Hello"] == "a greeting"
         assert dialog._meaning_widgets[0][1].toPlainText() == "a greeting"
@@ -548,7 +548,7 @@ class TestFinalFormRegressions:
         )
         dialog._accept()
 
-        assert dialog.result_items == [
+        assert [(e, m) for e, m, _s in dialog.result_items] == [
             ("Hello", "greeting"),
             ("world", "earth"),
         ]
@@ -749,7 +749,9 @@ class TestSentenceCRUDWithMeanings:
         result = get_sentence_card(conn, cid)
         assert result[0] == "New sentence"
         assert result[1] == "Rendered"
-        assert result[3][0] == ("new", "new meaning")
+        assert result[3][0][0] == "new"
+        assert result[3][0][1] == "new meaning"
+        assert result[3][0][2] is not None
 
     def test_cards_back_is_rendered_representation(self, conn):
         """cards.back is a rendered/cache field, not the source of truth."""

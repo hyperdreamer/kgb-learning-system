@@ -491,6 +491,15 @@ class BarskyApp(QMainWindow):
 
         self.browse_btn = action_btn(" Browse", "edit-find", self.browse_cards)
         top_layout.addWidget(self.browse_btn)
+        self.derive_wp_btn = action_btn(
+            " Derive W/P", "document-save-as", self.derive_word_phrase_database
+        )
+        self.derive_wp_btn.setToolTip(
+            "Project this sentence database into a word/phrase database "
+            "keyed by (expression, sense)."
+        )
+        self.derive_wp_btn.setVisible(False)
+        top_layout.addWidget(self.derive_wp_btn)
         self.settings_btn = action_btn(
             " Settings", "preferences-system", self.open_settings_window
         )
@@ -719,8 +728,8 @@ class BarskyApp(QMainWindow):
         self._db_type = db_type
 
         if db_type == DatabaseType.LANGUAGE_SENTENCE:
-            ensure_unfamiliar_items_table(self.conn)
-            migrate_unfamiliar_items_meaning(self.conn)
+            from .schema import ensure_sentence_schema
+            ensure_sentence_schema(self.conn)
 
         # --- Restore random review ---
         c = self.conn.cursor()
@@ -933,15 +942,17 @@ class BarskyApp(QMainWindow):
             if existing is None:
                 return
             front, back, box, items = existing
-            # Pass full (expression, meaning) pairs; the dialog will use
-            # meanings to pre-populate meaning editors.
+            # Pass full (expression, meaning, sense_id) tuples; the dialog
+            # uses meanings + sense links for AI reuse.
             dialog = SentenceCardDialog(
                 self, "Edit Sentence Card", front, items, back,
                 settings=self.settings,
+                conn=self.conn,
             )
         else:
             dialog = SentenceCardDialog(
                 self, "Add Sentence Card", settings=self.settings,
+                conn=self.conn,
             )
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
@@ -976,6 +987,104 @@ class BarskyApp(QMainWindow):
             card_id = insert_sentence_card(self.conn, sentence, items, back)
             QMessageBox.information(self, "Added", "Card added to Box 1.")
             self._show_new_card(card_id, sentence, back)
+
+    def derive_word_phrase_database(self):
+        """Project the open sentence DB into a word/phrase DB by (expression, sense)."""
+        if not self.conn or getattr(self, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE:
+            QMessageBox.information(
+                self,
+                "Derive Word/Phrase",
+                "Open a sentence-based database first.",
+            )
+            return
+
+        from .senses import derive_word_phrase_database, list_all_senses
+
+        if not list_all_senses(self.conn):
+            # Try backfill from items first.
+            from .senses import backfill_senses_from_items
+
+            backfill_senses_from_items(self.conn)
+            if not list_all_senses(self.conn):
+                QMessageBox.information(
+                    self,
+                    "Derive Word/Phrase",
+                    "No expression senses yet.\n\n"
+                    "Add sentence cards and Generate Meaning first.",
+                )
+                return
+
+        # Default target name from source leaf name.
+        source_path = self.current_db_path or ""
+        leaf = os.path.basename(source_path)
+        if leaf.endswith("_barsky.db"):
+            leaf = leaf[: -len("_barsky.db")]
+        default_name = f"{leaf}-senses" if leaf else "derived-senses"
+
+        name_dialog = DynamicInputDialog(
+            self,
+            "Derive Word/Phrase Database",
+            "New word/phrase database name:",
+            default_name,
+        )
+        if name_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        name = (name_dialog.text_value or "").strip()
+        if not name:
+            return
+        if not validate_db_name(name):
+            QMessageBox.warning(
+                self,
+                "Invalid Name",
+                f"Database name '{name}' contains invalid characters.",
+            )
+            return
+
+        db_root = get_database_root(self.settings)
+        try:
+            ensure_database_root_structure(db_root)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Database Directory",
+                f"Could not prepare database directory:\n{db_root}\n\n{exc}",
+            )
+            return
+
+        subdir = DB_DIR_LANGUAGE_WORD_PHRASE
+        target_dir = os.path.join(db_root, subdir)
+        os.makedirs(target_dir, exist_ok=True)
+        filename = safe_db_filename(name)
+        target_path = os.path.join(target_dir, filename)
+
+        if os.path.exists(target_path):
+            reply = QMessageBox.question(
+                self,
+                "Database Exists",
+                f"'{name}' already exists.\n\nUpdate its word/phrase cards from current senses?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        target_conn = init_db(target_path)
+        try:
+            from .senses import derive_word_phrase_database as _derive
+
+            stats = _derive(self.conn, target_conn)
+        finally:
+            target_conn.close()
+
+        QMessageBox.information(
+            self,
+            "Derived Word/Phrase Database",
+            (
+                f"Wrote {stats['expressions']} expression(s) / "
+                f"{stats['senses']} sense(s).\n"
+                f"Inserted: {stats['inserted']}  Updated: {stats['updated']}\n\n"
+                f"{target_path}"
+            ),
+        )
 
     def _add_word_phrase_card(self, edit_card_id=None, existing_front=""):
         """Show the word/phrase-based card dialog with inline AI meanings."""
@@ -1421,6 +1530,17 @@ class BarskyApp(QMainWindow):
         has_paused = self._paused_review_card is not None
 
         self.delete_entry_btn.setEnabled(has_db and has_card)
+        if hasattr(self, "derive_wp_btn"):
+            self.derive_wp_btn.setVisible(
+                has_db
+                and getattr(self, "_db_type", None)
+                == DatabaseType.LANGUAGE_SENTENCE
+            )
+            self.derive_wp_btn.setEnabled(
+                has_db
+                and getattr(self, "_db_type", None)
+                == DatabaseType.LANGUAGE_SENTENCE
+            )
 
         if not has_db:
             self.start_btn.setEnabled(False)

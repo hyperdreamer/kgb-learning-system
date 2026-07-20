@@ -94,6 +94,62 @@ def build_sentence_prompt(
     )
 
 
+_SENSE_ASSIGN_PROMPT_TEMPLATE = """\
+You assign dictionary senses for language learning.
+
+Given a sentence and one expression from that sentence, decide whether an
+existing sense already fits this context, or a new sense is needed.
+
+Sentence:
+{sentence}
+
+Expression:
+{expression}
+
+Known prior senses for this expression (may be empty):
+{prior_senses}
+
+Respond in {explanation_language} with JSON only:
+{{"expression": "{expression}", "action": "reuse"|"create", "sense_id": <int or null>, "meaning": "<text>"}}
+
+Rules:
+- If a prior sense matches this sentence's usage, action="reuse" and
+  sense_id MUST be one of the listed ids. meaning may be "".
+- If no prior sense fits, action="create", sense_id=null, and meaning MUST
+  be a concise contextual meaning of the expression as used in this sentence.
+- Do not invent sense_id values that are not listed.
+- Prefer reuse when the sense is the same even if wording differs slightly.
+- Meaning text (when create) must be specific to this sentence's usage."""
+
+
+def build_sense_assignment_prompt(
+    sentence: str,
+    expression: str,
+    prior_senses: list[tuple[int, str]],
+    explanation_language: str = "Chinese",
+) -> str:
+    """Build prompt: reuse prior sense id or create a new contextual meaning.
+
+    *prior_senses* is a list of (sense_id, meaning_text).
+    """
+    if prior_senses:
+        lines = [
+            f"  - id={sid}: {meaning}" for sid, meaning in prior_senses
+        ]
+        prior_block = "\n".join(lines)
+    else:
+        prior_block = "  (none)"
+    # Escape braces in expression for .format safety by not putting
+    # free user text into format fields that contain braces — expression
+    # is substituted only in plain slots.
+    return _SENSE_ASSIGN_PROMPT_TEMPLATE.format(
+        sentence=sentence,
+        expression=expression,
+        prior_senses=prior_block,
+        explanation_language=explanation_language,
+    )
+
+
 _WORD_PHRASE_PROMPT_TEMPLATE = """\
 You are a language learning assistant. Given a word or phrase, provide up to
 {max_meanings} common modern meanings, each with an example sentence showing

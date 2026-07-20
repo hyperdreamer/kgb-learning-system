@@ -47,9 +47,11 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 - **AI generation**: In-dialog nonblocking AI generation for the **selected** unfamiliar item only. A **Generate Meaning** button starts a background QThread with the sentence + that one expression; controls are disabled during generation; on completion, that item's meaning field is filled. Meanings are always **contextual to the sentence**. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor). Manual meaning edits remain available as a quiet escape hatch when AI is offline or a single meaning needs a fix. The Meaning panel shows only the currently selected list item (not every item at once).
 - **Review**: The front shows the sentence with target surface spans in bold. The back shows the same highlighted sentence, a horizontal rule, then each expression with its contextual meaning once (no bullet list; the derived `cards.back` cache is not re-appended).
 - **TTS**: Reads the sentence aloud.
-- **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
+- **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, optional `sense_id` FK to global `expression_senses`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). Global sense identity is `(expression_norm, meaning_norm)`. The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
+- **Sense inventory**: Generate Meaning asks AI to **reuse** a prior sense for the expression when it fits this sentence, or **create** a new sense. The meaning field is AI-primary (read-only); double-click unlocks rare manual repair.
+- **Derive Word/Phrase**: From an open sentence DB, **Derive W/P** projects unique `(expression, sense)` units into a word/phrase database (one card per expression; multiple senses on the back with example sentences).
 - **Duplicate detection**: A new card with the same normalized sentence and same normalized ordered list of expressions triggers an edit-offer rather than a silent duplicate.
-- **Migration**: Existing databases without the `meaning` column are safely migrated on next open — an `ALTER TABLE ADD COLUMN` is applied idempotently with no data loss.
+- **Migration**: Existing databases without the `meaning` / `sense_id` columns are safely migrated on next open — `ALTER TABLE ADD COLUMN` and `expression_senses` creation are applied idempotently with no data loss.
 - **Atomicity**: Card + child record insertion uses transactions with rollback on any error.
 - **Search**: Searches sentence, unfamiliar expression, back, and child meaning fields. Supports OR groups containing AND terms (e.g., `math AND theorem OR topology`).
 
@@ -59,6 +61,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 - **Dialog**: The **WordPhraseCardDialog** provides tabbed editing of 1–5 meanings, each with a meaning text and example sentence. At least one non-empty meaning+example is required on Save.
 - **AI generation**: In-dialog nonblocking AI generation via a **Generate Meanings** button. Up to 5 common modern meanings are produced, each with a non-empty example sentence. Responses with missing/empty examples or more than 5 meanings are rejected with a visible error. Controls are disabled during generation; on completion, tabs are populated and editable.
 - **Manual editing**: Users may add/close meaning tabs (keeping at least one), edit meaning and example fields, and validate before saving.
+- **Derived from sentences**: A word/phrase DB can be auto-built from a sentence DB's sense inventory (`expression_senses`), using source sentences as examples.
 - **Review**: Standard front/back flip card with Markdown and MathJax rendering.
 - **Search**: Searches front and back (meanings/examples) fields.
 
@@ -101,10 +104,11 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 1. Create/open the **Add Sentence Card** dialog.
 2. Enter the sentence and unfamiliar items (type manually or use **Add selected text** to add highlighted text from the sentence).
 3. Select one item in the list. The **Meaning** panel shows only that item.
-4. Click **Generate Meaning** — AI fills that item's contextual meaning for this sentence (button disables while AI runs; no busy-waiting).
+4. Click **Generate Meaning** — AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense. The meaning field is AI-primary (read-only display); double-click unlocks rare manual repair.
 5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
 6. **Validate** (optional) to verify all items appear in the sentence.
-7. **Save** commits the card with expression+meaning pairs.
+7. **Save** commits the card with expression+meaning pairs linked to global senses.
+8. Optional: on a sentence DB, click **Derive W/P** to project unique `(expression, sense)` units into a word/phrase database.
 
 ---
 

@@ -151,6 +151,112 @@ def parse_sentence_meanings(
 
 
 # ---------------------------------------------------------------------------
+# Sense assignment (reuse existing sense or create new meaning)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SenseAssignment:
+    """AI judgment: reuse a prior sense id, or create a new meaning text."""
+
+    expression: str
+    action: str  # "reuse" | "create"
+    sense_id: int | None = None
+    meaning: str = ""
+
+
+def parse_sense_assignment(
+    response_text: str,
+    expression: str,
+    prior_sense_ids: list[int],
+) -> SenseAssignment:
+    """Parse AI response for reuse-or-create sense assignment.
+
+    Expected shape:
+        {
+          "expression": "...",
+          "action": "reuse" | "create",
+          "sense_id": <int or null>,
+          "meaning": "<text; required when action=create>"
+        }
+
+    Validates:
+      - expression matches expected (normalized)
+      - action is reuse or create
+      - reuse → sense_id in prior_sense_ids
+      - create → non-empty meaning; sense_id ignored
+    """
+    json_text = _extract_json(response_text)
+    data = _parse_json(json_text)
+
+    if not isinstance(data, dict):
+        raise AIValidationError("AI response must be a JSON object")
+
+    expr = data.get("expression")
+    if expr is None or not str(expr).strip():
+        raise AIValidationError("Missing non-empty 'expression' field")
+    if normalize_sentence(str(expr)) != normalize_sentence(expression):
+        raise AIValidationError(
+            f"Expected expression matching {expression!r} but got {expr!r}"
+        )
+
+    action = data.get("action")
+    if action is None or not str(action).strip():
+        raise AIValidationError("Missing non-empty 'action' field")
+    action_norm = str(action).strip().lower()
+    if action_norm not in ("reuse", "create"):
+        raise AIValidationError(
+            f"action must be 'reuse' or 'create', got {action!r}"
+        )
+
+    raw_sense_id = data.get("sense_id", None)
+    sense_id: int | None = None
+    if raw_sense_id is not None and str(raw_sense_id).strip() != "":
+        try:
+            sense_id = int(raw_sense_id)
+        except (TypeError, ValueError) as e:
+            raise AIValidationError(
+                f"sense_id must be an integer or null, got {raw_sense_id!r}"
+            ) from e
+
+    meaning = data.get("meaning", "")
+    meaning_text = str(meaning).strip() if meaning is not None else ""
+
+    allowed = set(prior_sense_ids)
+
+    if action_norm == "reuse":
+        if not prior_sense_ids:
+            raise AIValidationError(
+                "action=reuse is invalid when no prior senses exist"
+            )
+        if sense_id is None:
+            raise AIValidationError("action=reuse requires sense_id")
+        if sense_id not in allowed:
+            raise AIValidationError(
+                f"sense_id {sense_id} is not one of the prior senses "
+                f"{sorted(allowed)}"
+            )
+        return SenseAssignment(
+            expression=expression,
+            action="reuse",
+            sense_id=sense_id,
+            meaning="",
+        )
+
+    # create
+    if not meaning_text:
+        raise AIValidationError(
+            "action=create requires non-empty 'meaning'"
+        )
+    return SenseAssignment(
+        expression=expression,
+        action="create",
+        sense_id=None,
+        meaning=meaning_text,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Membership fallback (local-first residual)
 # ---------------------------------------------------------------------------
 

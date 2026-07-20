@@ -5,7 +5,11 @@ Key schema:
   settings(key TEXT PK, value TEXT)
   unfamiliar_items(id INTEGER PK, card_id INTEGER FK→cards ON DELETE CASCADE,
                    expression TEXT, meaning TEXT NOT NULL DEFAULT '',
+                   sense_id INTEGER NULL FK→expression_senses,
                    UNIQUE(card_id, expression))
+  expression_senses(id INTEGER PK, expression, meaning,
+                    expression_norm, meaning_norm,
+                    UNIQUE(expression_norm, meaning_norm))
 """
 
 import os
@@ -183,6 +187,15 @@ def migrate_unfamiliar_items_meaning(conn):
         conn.commit()
 
 
+def ensure_sentence_schema(conn) -> None:
+    """Ensure all sentence-DB tables/columns (items + global senses)."""
+    ensure_unfamiliar_items_table(conn)
+    migrate_unfamiliar_items_meaning(conn)
+    from .senses import ensure_expression_senses_table
+
+    ensure_expression_senses_table(conn)
+
+
 # ---------------------------------------------------------------------------
 # Validation helpers for sentence-card invariants
 # ---------------------------------------------------------------------------
@@ -323,26 +336,34 @@ def insert_sentence_card(
     # Reject empty meanings for sentence cards (newly created)
     _require_nonempty_meanings(unfamiliar_items, "insert")
 
-    ensure_unfamiliar_items_table(conn)
-    migrate_unfamiliar_items_meaning(conn)
+    ensure_sentence_schema(conn)
 
-    # Normalize items to (expression, meaning) tuples
-    normalized: list[tuple[str, str]] = []
+    from .senses import create_or_get_sense
+
+    # Normalize items to (expression, meaning, optional sense_id) tuples
+    normalized: list[tuple[str, str, int | None]] = []
     for item in unfamiliar_items:
         if isinstance(item, tuple):
-            expr, meaning = item
-            normalized.append((str(expr), str(meaning) if meaning else ""))
+            expr = str(item[0])
+            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
+            sense_id = None
+            if len(item) > 2 and item[2] is not None:
+                try:
+                    sense_id = int(item[2])
+                except (TypeError, ValueError):
+                    sense_id = None
+            normalized.append((expr, meaning, sense_id))
         else:
-            normalized.append((str(item), ""))
+            normalized.append((str(item), "", None))
 
     # Deduplicate by expression
     seen: set[str] = set()
-    deduped: list[tuple[str, str]] = []
-    for expr, meaning in normalized:
+    deduped: list[tuple[str, str, int | None]] = []
+    for expr, meaning, sense_id in normalized:
         key = normalize_sentence(expr)
         if key and key not in seen:
             seen.add(key)
-            deduped.append((expr, meaning))
+            deduped.append((expr, meaning, sense_id))
 
     if not deduped:
         raise ValueError("At least one non-empty unfamiliar item is required.")
@@ -357,11 +378,26 @@ def insert_sentence_card(
         )
         card_id = cur.lastrowid
 
-        for expr, meaning in deduped:
+        for expr, meaning, preferred_sense_id in deduped:
+            sense = None
+            if preferred_sense_id is not None:
+                from .senses import get_sense
+
+                pref = get_sense(conn, preferred_sense_id)
+                if pref is not None and normalize_sentence(
+                    pref.expression
+                ) == normalize_sentence(expr):
+                    sense = pref
+                    meaning = pref.meaning
+            if sense is None:
+                sense = create_or_get_sense(
+                    conn, expr, meaning, commit=False
+                )
             cur.execute(
-                "INSERT INTO unfamiliar_items (card_id, expression, meaning) "
-                "VALUES (?, ?, ?)",
-                (card_id, expr, meaning),
+                "INSERT INTO unfamiliar_items "
+                "(card_id, expression, meaning, sense_id) "
+                "VALUES (?, ?, ?, ?)",
+                (card_id, expr, meaning, sense.id),
             )
 
         conn.commit()
@@ -374,7 +410,8 @@ def insert_sentence_card(
 def get_sentence_card(conn, card_id: int):
     """Retrieve a sentence card with its unfamiliar items.
 
-    Returns (front, back, box, [(expression, meaning), ...]) or None.
+    Returns (front, back, box, [(expression, meaning, sense_id), ...])
+    or None. *sense_id* may be None for legacy rows.
     """
     cur = conn.cursor()
     cur.execute(
@@ -385,11 +422,11 @@ def get_sentence_card(conn, card_id: int):
         return None
 
     cur.execute(
-        "SELECT expression, meaning FROM unfamiliar_items "
+        "SELECT expression, meaning, sense_id FROM unfamiliar_items "
         "WHERE card_id=? ORDER BY id",
         (card_id,),
     )
-    items = [(row[0], row[1]) for row in cur.fetchall()]
+    items = [(row[0], row[1], row[2]) for row in cur.fetchall()]
 
     return (card[0], card[1], card[2], items)
 
@@ -421,26 +458,34 @@ def update_sentence_card(
     # Reject empty meanings for sentence cards (newly edited)
     _require_nonempty_meanings(items, "update")
 
-    ensure_unfamiliar_items_table(conn)
-    migrate_unfamiliar_items_meaning(conn)
+    ensure_sentence_schema(conn)
 
-    # Normalize items to (expression, meaning) tuples
-    normalized: list[tuple[str, str]] = []
+    from .senses import create_or_get_sense, get_sense
+
+    # Normalize items to (expression, meaning, optional sense_id) tuples
+    normalized: list[tuple[str, str, int | None]] = []
     for item in items:
         if isinstance(item, tuple):
-            expr, meaning = item
-            normalized.append((str(expr), str(meaning) if meaning else ""))
+            expr = str(item[0])
+            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
+            sense_id = None
+            if len(item) > 2 and item[2] is not None:
+                try:
+                    sense_id = int(item[2])
+                except (TypeError, ValueError):
+                    sense_id = None
+            normalized.append((expr, meaning, sense_id))
         else:
-            normalized.append((str(item), ""))
+            normalized.append((str(item), "", None))
 
     # Deduplicate by expression
     seen: set[str] = set()
-    deduped: list[tuple[str, str]] = []
-    for expr, meaning in normalized:
+    deduped: list[tuple[str, str, int | None]] = []
+    for expr, meaning, sense_id in normalized:
         key = normalize_sentence(expr)
         if key and key not in seen:
             seen.add(key)
-            deduped.append((expr, meaning))
+            deduped.append((expr, meaning, sense_id))
 
     if not deduped:
         raise ValueError("At least one non-empty unfamiliar item is required.")
@@ -456,11 +501,24 @@ def update_sentence_card(
 
         # Replace unfamiliar items: delete old, insert new.
         cur.execute("DELETE FROM unfamiliar_items WHERE card_id=?", (card_id,))
-        for expr, meaning in deduped:
+        for expr, meaning, preferred_sense_id in deduped:
+            sense = None
+            if preferred_sense_id is not None:
+                pref = get_sense(conn, preferred_sense_id)
+                if pref is not None and normalize_sentence(
+                    pref.expression
+                ) == normalize_sentence(expr):
+                    sense = pref
+                    meaning = pref.meaning
+            if sense is None:
+                sense = create_or_get_sense(
+                    conn, expr, meaning, commit=False
+                )
             cur.execute(
-                "INSERT INTO unfamiliar_items (card_id, expression, meaning) "
-                "VALUES (?, ?, ?)",
-                (card_id, expr, meaning),
+                "INSERT INTO unfamiliar_items "
+                "(card_id, expression, meaning, sense_id) "
+                "VALUES (?, ?, ?, ?)",
+                (card_id, expr, meaning, sense.id),
             )
 
         conn.commit()

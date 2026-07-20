@@ -45,18 +45,21 @@ from .ai_provider import (
     AIClient,
     _make_http_call,
     build_sentence_prompt,
+    build_sense_assignment_prompt,
     build_word_phrase_prompt,
     build_membership_prompt,
     AIMissingConfigError,
 )
 from .ai_parser import (
     parse_sentence_meanings,
+    parse_sense_assignment,
     parse_word_phrase_meanings,
     parse_membership_claims,
     AIParseError,
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
 )
+from .senses import list_senses_for_expression, get_sense, create_or_get_sense
 import json
 import urllib.error
 
@@ -137,7 +140,8 @@ class SentenceCardDialog(QDialog):
 
     def __init__(self, parent=None, title="Add Sentence Card",
                  sentence="", items=None, back="",
-                 settings: dict | None = None):
+                 settings: dict | None = None,
+                 conn=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(560, 520)
@@ -145,22 +149,33 @@ class SentenceCardDialog(QDialog):
         self._result_items: list = []
         self._result_back = ""
         self._settings = settings or {}
+        self._conn = conn  # optional: sentence DB for sense inventory
         _apply_ui_font(self, self._settings, parent)
         self._ai_worker: _AIGenerateWorker | None = None
         # `back` is accepted for API compatibility with main_window but is
         # not shown or edited; meanings come from items pairs only.
         _ = back
-        # Persistent meaning store for every list item. Only the selected
-        # item is shown in the Meaning editor at a time.
+        # Persistent meaning + sense_id store for every list item.
+        # Meanings are AI-assigned (reuse existing sense or create new).
         self._meanings: dict[str, str] = {}
+        self._sense_ids: dict[str, int | None] = {}
         if items:
             for item in items:
                 if isinstance(item, tuple):
-                    self._meanings[str(item[0])] = (
+                    expr = str(item[0])
+                    self._meanings[expr] = (
                         str(item[1]) if len(item) > 1 else ""
                     )
+                    sid = None
+                    if len(item) > 2 and item[2] is not None:
+                        try:
+                            sid = int(item[2])
+                        except (TypeError, ValueError):
+                            sid = None
+                    self._sense_ids[expr] = sid
                 else:
                     self._meanings[str(item)] = ""
+                    self._sense_ids[str(item)] = None
         # Currently displayed expression in the single meaning editor.
         self._active_meaning_expr: str | None = None
         # Compatibility alias used by older tests / callers that inspect
@@ -241,8 +256,9 @@ class SentenceCardDialog(QDialog):
         ai_row.addWidget(self._ai_status, stretch=1)
         self._generate_btn = QPushButton("🤖 Generate Meaning")
         self._generate_btn.setToolTip(
-            "Uses AI to generate the selected word/phrase's meaning "
-            "in the context of this sentence."
+            "AI reuses a prior sense for this word/phrase when it fits this "
+            "sentence, or creates a new sense (contextual). Primary path — "
+            "meanings are not typed manually."
         )
         self._generate_btn.clicked.connect(self._generate_ai_meanings)
         self._generate_btn.setEnabled(False)
@@ -254,8 +270,12 @@ class SentenceCardDialog(QDialog):
         ai_row.addWidget(self._ai_progress)
         layout.addLayout(ai_row)
 
-        # --- Meaning (single card for the selected item) ---
+        # --- Meaning (single card for the selected item; AI-filled) ---
         layout.addWidget(QLabel("<b>Meaning</b>"))
+        self._sense_source_label = QLabel("")
+        self._sense_source_label.setStyleSheet("color: #607D8B;")
+        self._sense_source_label.setWordWrap(True)
+        layout.addWidget(self._sense_source_label)
         self._meanings_layout = QVBoxLayout()
         self._meanings_layout.setSpacing(8)
         self._meanings_layout.setContentsMargins(0, 0, 0, 0)
@@ -373,6 +393,7 @@ class SentenceCardDialog(QDialog):
             else:
                 self._persist_active_meaning()
                 self._meanings.setdefault(text, "")
+                self._sense_ids.setdefault(text, None)
                 self._items_list.addItem(text)
                 self._item_entry.clear()
                 self._status_label.setText("")
@@ -400,6 +421,7 @@ class SentenceCardDialog(QDialog):
         else:
             self._persist_active_meaning()
             self._meanings.setdefault(selected, "")
+            self._sense_ids.setdefault(selected, None)
             self._items_list.addItem(selected)
             self._status_label.setText(
                 f"Added: {selected[:50]}")
@@ -413,6 +435,7 @@ class SentenceCardDialog(QDialog):
             expr = item.text()
             self._items_list.takeItem(self._items_list.row(item))
             self._meanings.pop(expr, None)
+            self._sense_ids.pop(expr, None)
         self._status_label.setText("")
         self._on_item_selection_changed()
 
@@ -473,11 +496,14 @@ class SentenceCardDialog(QDialog):
 
         self._meaning_widgets.clear()
         self._active_meaning_expr = None
+        if hasattr(self, "_sense_source_label"):
+            self._sense_source_label.setText("")
 
         items = self._get_items()
         if not items:
             empty = QLabel(
-                "Add unfamiliar words/phrases, then select one to edit its meaning."
+                "Add unfamiliar words/phrases, then select one and "
+                "click Generate Meaning."
             )
             empty.setStyleSheet(
                 "color: #90A4AE; font-style: italic; padding: 8px 2px;"
@@ -489,7 +515,9 @@ class SentenceCardDialog(QDialog):
 
         expr = self._selected_expression()
         if expr is None:
-            empty = QLabel("Select an unfamiliar word/phrase to edit its meaning.")
+            empty = QLabel(
+                "Select an unfamiliar word/phrase, then Generate Meaning."
+            )
             empty.setStyleSheet(
                 "color: #90A4AE; font-style: italic; padding: 8px 2px;"
             )
@@ -502,7 +530,9 @@ class SentenceCardDialog(QDialog):
         for key in list(self._meanings.keys()):
             if key not in items:
                 del self._meanings[key]
+                self._sense_ids.pop(key, None)
         self._meanings.setdefault(expr, "")
+        self._sense_ids.setdefault(expr, None)
 
         card = QWidget()
         card.setObjectName("sentenceMeaningCard")
@@ -529,30 +559,94 @@ class SentenceCardDialog(QDialog):
         card_layout.addWidget(expr_label)
 
         edit = self._make_meaning_field(
-            f"Meaning for '{expr}' in this sentence..."
+            f"Use Generate Meaning for '{expr}' in this sentence…"
         )
         edit.setPlainText(self._meanings.get(expr, ""))
+        # AI-primary path: field is read-only display of assigned sense.
+        # Store still syncs via textChanged (programmatic fills + repair).
+        edit.setReadOnly(True)
+        edit.setToolTip(
+            "Filled by Generate Meaning (reuse prior sense or create new). "
+            "Double-click to unlock manual repair if AI is wrong."
+        )
         edit.textChanged.connect(self._on_active_meaning_changed)
+        edit.mouseDoubleClickEvent = (  # type: ignore[method-assign]
+            lambda event, e=edit: self._unlock_meaning_edit(e, event)
+        )
         card_layout.addWidget(edit)
         self._meanings_layout.addWidget(card)
         self._meaning_widgets.append((expr, edit))
         self._active_meaning_expr = expr
+        self._update_sense_source_label(expr)
         self._meanings_layout.addStretch()
 
+    def _unlock_meaning_edit(self, edit: QTextEdit, event) -> None:
+        """Escape hatch: double-click unlocks manual meaning repair."""
+        edit.setReadOnly(False)
+        edit.setStyleSheet(
+            "QTextEdit {"
+            "  border: 1px solid #FFA726;"
+            "  border-radius: 6px;"
+            "  padding: 2px 6px;"
+            "  background: #FFF8E1;"
+            "}"
+            "QTextEdit:focus {"
+            "  border: 1px solid #FB8C00;"
+            "}"
+        )
+        # Clear linked sense — manual repair creates a new sense on save.
+        if self._active_meaning_expr is not None:
+            self._sense_ids[self._active_meaning_expr] = None
+            if hasattr(self, "_sense_source_label"):
+                self._sense_source_label.setText(
+                    "Manual repair — will create/match sense on Save."
+                )
+        QTextEdit.mouseDoubleClickEvent(edit, event)
+
+    def _update_sense_source_label(self, expr: str) -> None:
+        if not hasattr(self, "_sense_source_label"):
+            return
+        sid = self._sense_ids.get(expr)
+        meaning = (self._meanings.get(expr) or "").strip()
+        if sid is not None:
+            self._sense_source_label.setText(
+                f"Sense #{sid}" + (" (linked)" if meaning else "")
+            )
+        elif meaning:
+            self._sense_source_label.setText(
+                "Meaning set — sense will be resolved on Save."
+            )
+        else:
+            self._sense_source_label.setText(
+                "No meaning yet — click Generate Meaning."
+            )
+
     def _on_active_meaning_changed(self) -> None:
-        """Keep the store in sync as the user types."""
+        """Keep the store in sync when the user repairs meaning manually."""
         if self._active_meaning_expr is None or not self._meaning_widgets:
             return
         expr, edit = self._meaning_widgets[0]
         if expr == self._active_meaning_expr:
             self._meanings[expr] = edit.toPlainText()
+            # Manual edit detaches prior sense link.
+            self._sense_ids[expr] = None
 
     # ------------------------------------------------------------------
     # AI generation (nonblocking, selected item only)
     # ------------------------------------------------------------------
 
+    def _prior_senses_for(self, expr: str) -> list[tuple[int, str]]:
+        """Load prior (sense_id, meaning) pairs from the sentence DB."""
+        if self._conn is None:
+            return []
+        try:
+            senses = list_senses_for_expression(self._conn, expr)
+        except Exception:
+            return []
+        return [(s.id, s.meaning) for s in senses]
+
     def _generate_ai_meanings(self):
-        """Start nonblocking AI generation for the selected item's meaning."""
+        """Assign a sense for the selected item: reuse prior or create new."""
         expr = self._selected_expression()
         if not expr:
             self._ai_status.setText("Select one unfamiliar item first.")
@@ -574,9 +668,14 @@ class SentenceCardDialog(QDialog):
         self._persist_active_meaning()
 
         explanation = self._settings.get("explanation_language", "Chinese")
-        # Prompt is contextual: sentence + this one expression only.
-        prompt = build_sentence_prompt(
-            sentence, [expr], explanation_language=explanation)
+        prior = self._prior_senses_for(expr)
+        prior_ids = [sid for sid, _ in prior]
+        prompt = build_sense_assignment_prompt(
+            sentence,
+            expr,
+            prior,
+            explanation_language=explanation,
+        )
 
         # Disable controls during generation
         self._generate_btn.setEnabled(False)
@@ -587,7 +686,14 @@ class SentenceCardDialog(QDialog):
         self._save_btn.setEnabled(False)
         self._cancel_btn.setEnabled(False)
         self._ai_progress.setVisible(True)
-        self._ai_status.setText(f"Generating meaning for '{expr}'…")
+        if prior:
+            self._ai_status.setText(
+                f"Checking {len(prior)} prior sense(s) for '{expr}'…"
+            )
+        else:
+            self._ai_status.setText(
+                f"Creating first sense for '{expr}'…"
+            )
         self._ai_status.setStyleSheet("color: #666;")
 
         self._ai_worker = _AIGenerateWorker(ai_config, prompt)
@@ -595,19 +701,65 @@ class SentenceCardDialog(QDialog):
 
         def on_finished(raw_text):
             try:
-                meanings = parse_sentence_meanings(raw_text, [target_expr])
-                if meanings:
-                    text = meanings[0].contextual_meaning
-                    self._meanings[target_expr] = text
-                    # Refresh visible editor if still on this item.
-                    if (
-                        self._active_meaning_expr == target_expr
-                        and self._meaning_widgets
-                    ):
-                        self._meaning_widgets[0][1].setPlainText(text)
-                self._ai_status.setText(
-                    f"Generated meaning for '{target_expr}'. Ready to save."
+                assignment = parse_sense_assignment(
+                    raw_text, target_expr, prior_ids
                 )
+                if assignment.action == "reuse" and assignment.sense_id is not None:
+                    sense = None
+                    if self._conn is not None:
+                        sense = get_sense(self._conn, assignment.sense_id)
+                    if sense is None:
+                        # Fall back to prior list text
+                        meaning_text = next(
+                            (m for sid, m in prior if sid == assignment.sense_id),
+                            "",
+                        )
+                    else:
+                        meaning_text = sense.meaning
+                    if not meaning_text:
+                        raise AIValidationError(
+                            f"Reused sense #{assignment.sense_id} has no meaning text"
+                        )
+                    self._meanings[target_expr] = meaning_text
+                    self._sense_ids[target_expr] = assignment.sense_id
+                    status = (
+                        f"Reused sense #{assignment.sense_id} for "
+                        f"'{target_expr}'."
+                    )
+                else:
+                    # create
+                    meaning_text = assignment.meaning.strip()
+                    if not meaning_text:
+                        raise AIValidationError("Create action returned empty meaning")
+                    # Materialize sense in inventory when DB is available.
+                    sense_id = None
+                    if self._conn is not None:
+                        sense = create_or_get_sense(
+                            self._conn, target_expr, meaning_text
+                        )
+                        sense_id = sense.id
+                        meaning_text = sense.meaning
+                    self._meanings[target_expr] = meaning_text
+                    self._sense_ids[target_expr] = sense_id
+                    if sense_id is not None:
+                        status = (
+                            f"Created sense #{sense_id} for '{target_expr}'."
+                        )
+                    else:
+                        status = (
+                            f"Created new meaning for '{target_expr}' "
+                            f"(will link on Save)."
+                        )
+
+                if (
+                    self._active_meaning_expr == target_expr
+                    and self._meaning_widgets
+                ):
+                    edit = self._meaning_widgets[0][1]
+                    edit.setReadOnly(True)
+                    edit.setPlainText(self._meanings[target_expr])
+                self._update_sense_source_label(target_expr)
+                self._ai_status.setText(status + " Ready to save.")
                 self._ai_status.setStyleSheet("color: #393;")
             except (AIParseError, AIValidationError) as e:
                 self._ai_status.setText(f"AI parse error: {e}")
@@ -824,13 +976,14 @@ class SentenceCardDialog(QDialog):
         """Finalize Save after membership validation has passed."""
         self._persist_active_meaning()
 
-        result_items: list[tuple[str, str]] = []
+        result_items: list[tuple[str, str, int | None]] = []
         for expr in items:
             meaning = (self._meanings.get(expr) or "").strip()
             if not meaning:
                 QMessageBox.warning(
                     self, "Validation",
-                    f"Enter a contextual meaning for '{expr}' before saving."
+                    f"Generate a meaning for '{expr}' before saving.\n\n"
+                    f"Select the item and click Generate Meaning."
                 )
                 # Focus the incomplete item so the user can fill it.
                 for i in range(self._items_list.count()):
@@ -840,13 +993,14 @@ class SentenceCardDialog(QDialog):
                         break
                 self._on_item_selection_changed()
                 return
-            result_items.append((expr, meaning))
+            sense_id = self._sense_ids.get(expr)
+            result_items.append((expr, meaning, sense_id))
 
         self._result_sentence = sentence
         self._result_items = result_items
         # Back is derived from structured meanings (no separate editor).
         self._result_back = "\n\n".join(
-            f"**{expr}**: {meaning}" for expr, meaning in result_items
+            f"**{expr}**: {meaning}" for expr, meaning, _sid in result_items
         )
         self.accept()
 
