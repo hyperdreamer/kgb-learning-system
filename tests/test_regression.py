@@ -275,6 +275,35 @@ class TestFinalFormRegressions:
         assert dialog._meaning_widgets[0][1].toPlainText() == "salutation"
         dialog.close()
 
+    def test_card_dialogs_use_ui_font_from_settings(self):
+        """Edit dialogs apply Appearance → UI Font (family + size)."""
+        _qt_app()
+        from PyQt6.QtWidgets import QWidget
+        from kgb_srs.forms import SentenceCardDialog, WordPhraseCardDialog
+
+        settings = {"font_family": "DejaVu Sans", "font_size": 19}
+        parent = QWidget()
+        parent.setFont(parent.font())  # ensure a parent exists
+
+        s_dialog = SentenceCardDialog(
+            parent=parent,
+            sentence="Hello world",
+            items=["Hello"],
+            settings=settings,
+        )
+        assert s_dialog.font().family() == "DejaVu Sans"
+        assert s_dialog.font().pointSize() == 19
+        s_dialog.close()
+
+        w_dialog = WordPhraseCardDialog(
+            parent=parent,
+            front="bank",
+            settings=settings,
+        )
+        assert w_dialog.font().family() == "DejaVu Sans"
+        assert w_dialog.font().pointSize() == 19
+        w_dialog.close()
+
     def test_word_dialog_does_not_drop_partial_second_row(self, monkeypatch):
         _qt_app()
         from PyQt6.QtWidgets import QMessageBox

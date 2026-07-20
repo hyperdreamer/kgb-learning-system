@@ -191,7 +191,7 @@ Configure:
 | Category | Settings |
 |----------|----------|
 | **General** | Database Directory (root folder), Default Database (file) |
-| **Appearance** | Window size, UI font, content font |
+| **Appearance** | Window size, UI font (app chrome + card edit dialogs), content font (study card HTML) |
 | **Audio & Speech** | TTS voice (language/gender/search filters, row preview) |
 | **AI Provider** | Base URL, model, API key, timeout, explanation language, Test |
 

@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QToolButton,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
-from PyQt6.QtGui import QPainter, QPen, QColor, QPixmap, QIcon
+from PyQt6.QtGui import QPainter, QPen, QColor, QPixmap, QIcon, QFont
 
 from .catalog import DatabaseType
 from .validation import (
@@ -59,6 +59,26 @@ from .ai_parser import (
 )
 import json
 import urllib.error
+
+
+def _apply_ui_font(widget, settings: dict | None, parent=None) -> None:
+    """Apply Appearance → UI Font to a dialog/widget.
+
+    Prefer explicit settings (font_family / font_size). Fall back to the
+    parent widget font when settings are incomplete so card editors still
+    track the main window chrome font.
+    """
+    settings = settings or {}
+    family = settings.get("font_family")
+    size = settings.get("font_size")
+    if family and size:
+        try:
+            widget.setFont(QFont(str(family), int(size)))
+            return
+        except (TypeError, ValueError):
+            pass
+    if parent is not None:
+        widget.setFont(parent.font())
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +145,7 @@ class SentenceCardDialog(QDialog):
         self._result_items: list = []
         self._result_back = ""
         self._settings = settings or {}
+        _apply_ui_font(self, self._settings, parent)
         self._ai_worker: _AIGenerateWorker | None = None
         # `back` is accepted for API compatibility with main_window but is
         # not shown or edited; meanings come from items pairs only.
@@ -801,6 +822,7 @@ class WordPhraseCardDialog(QDialog):
         self._result_front = ""
         self._result_meanings: list[tuple[str, str]] = []
         self._settings = settings or {}
+        _apply_ui_font(self, self._settings, parent)
         self._ai_worker: _AIGenerateWorker | None = None
         # [{meaning_edit, example_edit, page}]
         self._meaning_rows: list[dict] = []
@@ -936,7 +958,8 @@ class WordPhraseCardDialog(QDialog):
         page_layout.setSpacing(6)
 
         meaning_label = QLabel("Meaning")
-        meaning_label.setStyleSheet("color: #607D8B; font-size: 12px;")
+        # Color only — do not hard-code font-size so UI Font applies.
+        meaning_label.setStyleSheet("color: #607D8B;")
         page_layout.addWidget(meaning_label)
         meaning_edit = self._make_meaning_field(
             "Meaning in your explanation language...", min_height=72
@@ -945,7 +968,7 @@ class WordPhraseCardDialog(QDialog):
         page_layout.addWidget(meaning_edit, stretch=1)
 
         example_label = QLabel("Example sentence")
-        example_label.setStyleSheet("color: #607D8B; font-size: 12px;")
+        example_label.setStyleSheet("color: #607D8B;")
         page_layout.addWidget(example_label)
         example_edit = self._make_meaning_field(
             "Example sentence showing usage...", min_height=72
