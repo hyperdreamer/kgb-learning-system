@@ -152,13 +152,29 @@ class SettingsDialog(QDialog):
         self.font_family_input.setObjectName("fontFamilyInput")
         self.font_family_input.addItems(QFontDatabase.families())
         self.font_family_input.setCurrentText(self.settings["font_family"])
-        layout.addRow("Font Family:", self.font_family_input)
+        layout.addRow("UI Font Family:", self.font_family_input)
 
         self.font_size_input = QSpinBox()
         self.font_size_input.setObjectName("fontSizeInput")
         self.font_size_input.setRange(8, 36)
         self.font_size_input.setValue(self.settings["font_size"])
-        layout.addRow("Font Size:", self.font_size_input)
+        layout.addRow("UI Font Size:", self.font_size_input)
+
+        self.content_font_family_input = QComboBox()
+        self.content_font_family_input.setObjectName("contentFontFamilyInput")
+        self.content_font_family_input.addItems(QFontDatabase.families())
+        self.content_font_family_input.setCurrentText(
+            self.settings.get("content_font_family", "Arial")
+        )
+        layout.addRow("Content Font Family:", self.content_font_family_input)
+
+        self.content_font_size_input = QSpinBox()
+        self.content_font_size_input.setObjectName("contentFontSizeInput")
+        self.content_font_size_input.setRange(8, 48)
+        self.content_font_size_input.setValue(
+            int(self.settings.get("content_font_size", 18))
+        )
+        layout.addRow("Content Font Size:", self.content_font_size_input)
         self.pages.addWidget(page)
 
     def _build_audio_page(self):
@@ -264,6 +280,10 @@ class SettingsDialog(QDialog):
         staged["height"] = self.window_height_input.value()
         staged["font_family"] = self.font_family_input.currentText()
         staged["font_size"] = self.font_size_input.value()
+        staged["content_font_family"] = (
+            self.content_font_family_input.currentText()
+        )
+        staged["content_font_size"] = self.content_font_size_input.value()
         staged["default_database"] = (
             self.default_database_input.text().strip()
         )

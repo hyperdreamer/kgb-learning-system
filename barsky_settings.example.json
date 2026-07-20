@@ -3,6 +3,8 @@
   "height": 700,
   "font_family": "Arial",
   "font_size": 14,
+  "content_font_family": "Arial",
+  "content_font_size": 18,
   "default_database": "",
   "tts_voice": "en-US-AvaMultilingualNeural",
   "default_language": "English",

@@ -2032,6 +2032,116 @@ class TestReviewControls:
 
         w.close()
 
+    def test_drop_zone_html_includes_ui_font(self):
+        """Correct/Incorrect drop zone HTML injects UI font-family and size."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+
+        w = BarskyApp()
+        w.settings["font_family"] = "Courier New"
+        w.settings["font_size"] = 19
+        w.resize(900, 700)
+        w.show()
+        _qt_app().processEvents()
+        w.redraw_canvas()
+        _qt_app().processEvents()
+
+        for zone_name in ("incorrect_zone", "correct_zone"):
+            zone = getattr(w, zone_name)
+            html = zone.text_item.toHtml()
+            assert "Courier New" in html or "font-family" in html.lower(), (
+                f"{zone_name} HTML must include UI font-family, got: {html[:200]!r}"
+            )
+            # Qt may rewrite style attributes; check either inline style or
+            # that font-size 19 is present somewhere in the HTML.
+            assert (
+                "font-size: 19" in html
+                or "font-size:19" in html
+                or 'font-size="19' in html
+                or "19pt" in html
+                or "19px" in html
+            ), f"{zone_name} HTML must include UI font-size 19, got: {html[:300]!r}"
+            assert "Courier" in html, (
+                f"{zone_name} HTML must mention Courier font family"
+            )
+
+        w.close()
+
+    def test_browse_dialog_inherits_ui_font(self, monkeypatch):
+        """Browse Cards dialog receives main window UI font via setFont."""
+        _qt_app()
+        import inspect
+
+        from PyQt6.QtWidgets import QDialog
+        from kgb_srs.main_window import BarskyApp
+
+        w = BarskyApp()
+        w.settings["font_family"] = "Arial"
+        w.settings["font_size"] = 21
+        w.apply_font_settings()
+
+        # Source-level contract: browse_cards must set dialog font from self
+        source = inspect.getsource(BarskyApp.browse_cards)
+        assert "setFont" in source and "self.font()" in source, (
+            "browse_cards must call dialog.setFont(self.font())"
+        )
+
+        class FakeCursor:
+            def execute(self, *a, **k):
+                return self
+
+            def fetchall(self):
+                return []
+
+        class FakeConn:
+            def cursor(self):
+                return FakeCursor()
+
+        w.conn = FakeConn()
+        w.current_lang = "Test"
+        w._db_type = None
+
+        captured = {}
+
+        def fake_exec(self):
+            captured["font_size"] = self.font().pointSize()
+            captured["font_family"] = self.font().family()
+            return QDialog.DialogCode.Rejected
+
+        monkeypatch.setattr(QDialog, "exec", fake_exec)
+        w.browse_cards()
+
+        assert captured.get("font_size") == 21, (
+            f"Browse dialog must inherit UI font size 21, got {captured}"
+        )
+        assert captured.get("font_family"), "Browse dialog must have a font family"
+        w.close()
+
+    def test_apply_font_settings_styles_toolbar_chrome(self):
+        """Toolbar buttons get UI font in stylesheets from apply_font_settings."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+
+        w = BarskyApp()
+        w.settings["font_family"] = "Arial"
+        w.settings["font_size"] = 17
+        w.apply_font_settings()
+
+        for btn_name in ("db_btn", "new_db_btn", "add_entry_btn"):
+            btn = getattr(w, btn_name)
+            ss = btn.styleSheet()
+            assert ss, f"{btn_name} must have a stylesheet"
+            assert "font-size: 17px" in ss or f"font-size:{17}px" in ss, (
+                f"{btn_name} stylesheet must include UI font-size, got: {ss!r}"
+            )
+            assert "Arial" in ss, (
+                f"{btn_name} stylesheet must include UI font-family, got: {ss!r}"
+            )
+
+        # Shuffle checkbox and Database label inherit window font
+        assert w.random_checkbox.font().pointSize() == 17
+        w.close()
+
 
     # -- finding #1: button visibility after DB load ----------------------
 

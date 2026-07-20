@@ -17,6 +17,9 @@ DEFAULT_SETTINGS = {
     "height": 700,
     "font_family": "Arial",
     "font_size": 14,
+    # Flashcard study content (separate from UI chrome)
+    "content_font_family": "Arial",
+    "content_font_size": 18,
     "default_database": "",
     "tts_voice": "en-US-AvaMultilingualNeural",
     # AI provider defaults (non-secret)

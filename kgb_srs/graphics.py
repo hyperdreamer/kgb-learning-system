@@ -246,13 +246,13 @@ class FlashCardItem(QGraphicsRectItem):
         if text_to_speak:
             self.speech_text = text_to_speak
 
-        font_fam = self.app_ref.settings.get("font_family", "Arial")
-        font_sz = self.app_ref.settings.get("font_size", 14)
+        font_fam = self.app_ref.settings.get("content_font_family", "Arial")
+        font_sz = self.app_ref.settings.get("content_font_size", 18)
 
         html_template = build_review_html(
             display_text,
             font_family=font_fam,
-            font_size=font_sz + 4,
+            font_size=font_sz,
             include_mathjax=HAS_WEBENGINE,
         )
 

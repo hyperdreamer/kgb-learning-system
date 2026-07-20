@@ -258,6 +258,69 @@ class BarskyApp(QMainWindow):
             )
         )
 
+        # Toolbar chrome: re-apply stylesheets with explicit UI font so
+        # size/family stay in sync when stylesheets would otherwise freeze
+        # appearance independent of the window font.
+        self._apply_toolbar_font_styles(font_family, font_size)
+
+    def _toolbar_button_style(self, kind, font_family, font_size):
+        """Build a toolbar button stylesheet that includes UI font."""
+        font_bits = (
+            f"font-family: '{font_family}'; "
+            f"font-size: {font_size}px; "
+            f"font-weight: bold;"
+        )
+        if kind == "db":
+            return (
+                "QPushButton {"
+                f"  text-align: left; padding: 6px 14px; {font_bits}"
+                "  background-color: #FFFFFF; border: 1px solid #CFD8DC;"
+                "  border-radius: 6px;"
+                "}"
+                "QPushButton:hover { background-color: #F5F5F5; }"
+            )
+        if kind == "new_db":
+            return (
+                "QPushButton {"
+                "  background-color: #43A047; color: white; padding: 6px 14px;"
+                f"  {font_bits} border: none; border-radius: 6px;"
+                "}"
+                "QPushButton:hover { background-color: #66BB6A; }"
+            )
+        # generic action button (Add Entry, Browse, Settings, etc.)
+        return (
+            "QPushButton {"
+            "  background-color: transparent; border: 1px solid #B0BEC5;"
+            f"  border-radius: 6px; padding: 6px 12px; {font_bits}"
+            "}"
+            "QPushButton:hover { background-color: #ECEFF1; }"
+        )
+
+    def _apply_toolbar_font_styles(self, font_family, font_size):
+        """Re-apply toolbar button stylesheets with current UI font."""
+        if hasattr(self, "db_btn"):
+            self.db_btn.setStyleSheet(
+                self._toolbar_button_style("db", font_family, font_size)
+            )
+        if hasattr(self, "new_db_btn"):
+            self.new_db_btn.setStyleSheet(
+                self._toolbar_button_style("new_db", font_family, font_size)
+            )
+        for attr in ("add_entry_btn", "browse_btn", "settings_btn"):
+            btn = getattr(self, attr, None)
+            if btn is not None:
+                btn.setStyleSheet(
+                    self._toolbar_button_style("action", font_family, font_size)
+                )
+        # Parent stylesheets (top bar) can break font inheritance; set
+        # explicitly on non-styled chrome widgets.
+        font = QFont(font_family, font_size)
+        for attr in ("db_label", "random_checkbox"):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.setFont(font)
+        # delete_entry_btn already styled as review-control red button above.
+
     # ------------------------------------------------------------------
     # Database Menu
     # ------------------------------------------------------------------
@@ -342,7 +405,8 @@ class BarskyApp(QMainWindow):
         top_layout.setContentsMargins(10, 6, 10, 6)
         top_layout.setSpacing(8)
 
-        top_layout.addWidget(QLabel("Database:"))
+        self.db_label = QLabel("Database:")
+        top_layout.addWidget(self.db_label)
 
         self.db_btn = QPushButton("📂 Select Database")
         self.db_btn.setIcon(self._icon("drive-harddisk"))
@@ -399,12 +463,12 @@ class BarskyApp(QMainWindow):
         self.delete_entry_btn.setEnabled(False)
         top_layout.addWidget(self.delete_entry_btn)
 
-        top_layout.addWidget(
-            action_btn(" Browse", "edit-find", self.browse_cards)
+        self.browse_btn = action_btn(" Browse", "edit-find", self.browse_cards)
+        top_layout.addWidget(self.browse_btn)
+        self.settings_btn = action_btn(
+            " Settings", "preferences-system", self.open_settings_window
         )
-        top_layout.addWidget(
-            action_btn(" Settings", "preferences-system", self.open_settings_window)
-        )
+        top_layout.addWidget(self.settings_btn)
         main_layout.addWidget(top_frame)
 
         # --- Canvas ---
@@ -723,6 +787,14 @@ class BarskyApp(QMainWindow):
         max_zone_w = max(100, (w - 3 * margin) / 2)
         zone_w = min(max(260, int(w * 0.3)), int(max_zone_w))
 
+        ui_font_family = self.settings.get("font_family", "Arial")
+        ui_font_size = self.settings.get("font_size", 14)
+        # Escape quotes for safe inline CSS
+        safe_ui_font = str(ui_font_family).replace("\\", "\\\\").replace("'", "\\'")
+        zone_font_style = (
+            f"font-family: '{safe_ui_font}'; font-size: {ui_font_size}px;"
+        )
+
         self.incorrect_zone = DropZoneItem(
             margin,
             zone_y,
@@ -730,9 +802,10 @@ class BarskyApp(QMainWindow):
             zone_h,
             QPen(QColor("red")),
             QBrush(QColor("#ffcccc")),
-            "<div align='center'><b>Click or Drop Here</b><br>"
-            "if <span style='color:red;'>INCORRECT</span><br>"
-            "(Drops to Box 1 or 3)</div>",
+            f"<div align='center' style=\"{zone_font_style}\">"
+            f"<b>Click or Drop Here</b><br>"
+            f"if <span style='color:red;'>INCORRECT</span><br>"
+            f"(Drops to Box 1 or 3)</div>",
             False,
             self,
         )
@@ -745,9 +818,10 @@ class BarskyApp(QMainWindow):
             zone_h,
             QPen(QColor("green")),
             QBrush(QColor("#ccffcc")),
-            "<div align='center'><b>Click or Drop Here</b><br>"
-            "if <span style='color:green;'>CORRECT</span><br>"
-            "(Advances 1 Box)</div>",
+            f"<div align='center' style=\"{zone_font_style}\">"
+            f"<b>Click or Drop Here</b><br>"
+            f"if <span style='color:green;'>CORRECT</span><br>"
+            f"(Advances 1 Box)</div>",
             True,
             self,
         )
@@ -1126,6 +1200,7 @@ class BarskyApp(QMainWindow):
 
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Browse Cards: {self.current_lang}")
+        dialog.setFont(self.font())
         dialog.resize(800, 500)
 
         layout = QVBoxLayout(dialog)
@@ -1742,3 +1817,6 @@ class BarskyApp(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.resize(self.settings["width"], self.settings["height"])
             self.apply_font_settings()
+            # Refresh drop-zone HTML and study-card content fonts even when
+            # window size is unchanged (resizeEvent would not fire).
+            self.redraw_canvas()

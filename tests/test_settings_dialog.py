@@ -52,6 +52,8 @@ def settings():
         "height": 700,
         "font_family": "Arial",
         "font_size": 14,
+        "content_font_family": "Arial",
+        "content_font_size": 18,
         "default_database": "",
         "tts_voice": "en-US-AvaMultilingualNeural",
         "ai_base_url": "https://api.openai.com/v1",
@@ -93,6 +95,8 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "windowHeightInput": 1,
         "fontFamilyInput": 1,
         "fontSizeInput": 1,
+        "contentFontFamilyInput": 1,
+        "contentFontSizeInput": 1,
         "ttsVoiceInput": 2,
         "aiBaseUrlInput": 3,
         "aiModelInput": 3,
@@ -289,6 +293,9 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
         def apply_font_settings(self):
             calls.append(("font",))
 
+        def redraw_canvas(self):
+            calls.append(("redraw",))
+
     calls = []
     window = WindowStub()
 
@@ -297,7 +304,7 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
     assert window.voice_worker is not None
     assert FakeDialog.current_sizes == [(1111, 888)]
     module.BarskyApp.open_settings_window(window)
-    assert calls == [("resize", 777, 555), ("font",)]
+    assert calls == [("resize", 777, 555), ("font",), ("redraw",)]
     assert FakeDialog.current_sizes == [(1111, 888), (1111, 888)]
 
 
@@ -323,6 +330,10 @@ def test_font_settings_are_scoped_to_main_window_and_owned_dialog(monkeypatch, s
             setattr(window, name, QPushButton(window))
         window.settings = {"font_family": "Arial", "font_size": 23}
         window._button_style = BarskyApp._button_style
+        window._toolbar_button_style = BarskyApp._toolbar_button_style
+        window._apply_toolbar_font_styles = (
+            lambda ff, fs: BarskyApp._apply_toolbar_font_styles(window, ff, fs)
+        )
 
         BarskyApp.apply_font_settings(window)
         dialog = module.SettingsDialog(
@@ -350,4 +361,74 @@ def test_cancel_button_rejects_without_saving(monkeypatch, settings):
     assert saved == []
     assert settings == original
     assert dialog.result() == dialog.DialogCode.Rejected
+
+
+def test_appearance_page_has_ui_and_content_font_controls(monkeypatch, settings):
+    """Appearance page exposes separate UI and content font controls."""
+    from PyQt6.QtWidgets import QFormLayout, QLabel
+
+    dialog, _ = _dialog(monkeypatch, settings)
+    pages = dialog.findChild(QStackedWidget, "settingsPages")
+    appearance = pages.widget(1)
+    layout = appearance.layout()
+    assert isinstance(layout, QFormLayout)
+
+    labels = {}
+    for row in range(layout.rowCount()):
+        label_item = layout.itemAt(row, QFormLayout.ItemRole.LabelRole)
+        field_item = layout.itemAt(row, QFormLayout.ItemRole.FieldRole)
+        if label_item is None or field_item is None:
+            continue
+        label_w = label_item.widget()
+        field_w = field_item.widget()
+        if isinstance(label_w, QLabel) and field_w is not None:
+            labels[label_w.text().rstrip(":")] = field_w.objectName()
+
+    assert labels.get("UI Font Family") == "fontFamilyInput"
+    assert labels.get("UI Font Size") == "fontSizeInput"
+    assert labels.get("Content Font Family") == "contentFontFamilyInput"
+    assert labels.get("Content Font Size") == "contentFontSizeInput"
+
+    # QComboBox may not resolve missing families; value() / staged path is
+    # the source of truth. Check size control and that family control exists.
+    assert dialog.content_font_size_input.value() == settings["content_font_size"]
+    assert dialog.content_font_size_input.minimum() <= 8
+    assert dialog.content_font_size_input.maximum() >= 36
+    assert dialog.content_font_family_input.count() > 0
+    dialog.reject()
+
+
+def test_content_font_settings_are_staged_and_saved(monkeypatch, settings):
+    """Save stages and persists content_font_family / content_font_size."""
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+
+    # Prefer a family that exists in the combobox
+    families = [
+        dialog.content_font_family_input.itemText(i)
+        for i in range(dialog.content_font_family_input.count())
+    ]
+    target_family = "Courier New" if "Courier New" in families else (
+        families[1] if len(families) > 1 else families[0]
+    )
+    dialog.content_font_family_input.setCurrentText(target_family)
+    dialog.content_font_size_input.setValue(24)
+
+    dialog.save_button.click()
+
+    assert len(saved) == 1
+    assert saved[0]["content_font_family"] == target_family
+    assert saved[0]["content_font_size"] == 24
+    assert settings["content_font_family"] == target_family
+    assert settings["content_font_size"] == 24
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+
+def test_default_settings_include_content_font_keys():
+    from kgb_srs.config import DEFAULT_SETTINGS
+
+    assert DEFAULT_SETTINGS["content_font_family"] == "Arial"
+    assert DEFAULT_SETTINGS["content_font_size"] == 18
 
