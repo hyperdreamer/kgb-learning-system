@@ -191,6 +191,36 @@ class TestValidateUnfamiliarItems:
         assert result.valid is False
         assert "go" in result.missing
 
+    def test_choose_chose_chosen_irregular(self):
+        """Irregular choose/chose/chosen share a lemma family."""
+        assert validate_unfamiliar_items(
+            "She chose a book.", ["choose"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "He has chosen wisely.", ["choose"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "They are choosing now.", ["choose"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "She chooses carefully.", ["choose"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "I choose tea.", ["chose"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "I choose tea.", ["chosen"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "She chose a book.", ["choose a book"]
+        ).valid
+        # Unrelated word must still fail.
+        result = validate_unfamiliar_items(
+            "The chocolate is sweet.", ["choose"]
+        )
+        assert result.valid is False
+        assert "choose" in result.missing
+
 
 # ---------------------------------------------------------------------------
 # deduplicate_unfamiliar_items
