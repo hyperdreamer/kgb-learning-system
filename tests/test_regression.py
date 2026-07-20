@@ -1941,6 +1941,98 @@ class TestReviewControls:
         assert "#F44336" in style
         assert "QPushButton:hover" in style
 
+    # -- stylesheet: font-size + dynamic padding must be inside QPushButton ---
+
+    def test_button_style_font_size_and_padding_inside_qpushbutton(self):
+        """_button_style(..., extra="font-size: 16px; padding: 10px;")
+        must place those declarations INSIDE the QPushButton {{...}} rule,
+        not after the closing brace."""
+        from kgb_srs.main_window import BarskyApp
+        style = BarskyApp._button_style(
+            "#43A047", "#66BB6A",
+            extra="font-size: 16px; padding: 10px;",
+        )
+        import re
+        m = re.search(r"QPushButton\s*\{([^}]*)\}", style)
+        assert m is not None, (
+            "QPushButton rule must exist in the stylesheet"
+        )
+        block = m.group(1)
+        assert "font-size: 16px" in block, (
+            "font-size must be INSIDE the QPushButton rule block"
+        )
+        assert "padding: 10px" in block, (
+            "padding must be INSIDE the QPushButton rule block"
+        )
+        trailing = style.rsplit("}", 1)[-1].strip()
+        assert trailing == "", (
+            f"No declarations allowed outside CSS rules, got: {trailing!r}"
+        )
+
+    def test_apply_font_settings_stylesheet_has_correct_padding_and_size(self):
+        """apply_font_settings() must produce a stylesheet where the
+        dynamic padding and font-size are inside a QPushButton rule."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+        w = BarskyApp()
+        w.settings["font_size"] = 20
+        w.settings["font_family"] = "Arial"
+        w.apply_font_settings()
+
+        expected_fs = 22      # font_size + 2
+        expected_pad = max(10, int(20 * 0.8))  # 16
+
+        for btn_name in ("start_btn", "restart_review_btn",
+                         "previous_review_btn", "delete_entry_btn"):
+            btn = getattr(w, btn_name)
+            ss = btn.styleSheet()
+            assert ss, f"{btn_name} stylesheet must not be empty"
+            import re
+            m = re.search(r"QPushButton\s*\{([^}]*)\}", ss)
+            assert m is not None, (
+                f"{btn_name}: QPushButton rule must exist"
+            )
+            block = m.group(1)
+            assert f"font-size: {expected_fs}px" in block, (
+                f"{btn_name}: font-size: {expected_fs}px must be in "
+                f"QPushButton block, got: {block!r}"
+            )
+            assert f"padding: {expected_pad}px" in block, (
+                f"{btn_name}: padding: {expected_pad}px must be in "
+                f"QPushButton block, got: {block!r}"
+            )
+
+        w.close()
+
+    def test_changing_font_size_changes_button_font_metrics(self):
+        """Changing Settings font_size must change actual button font
+        metrics / size hints."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+        w = BarskyApp()
+
+        w.settings["font_size"] = 14
+        w.apply_font_settings()
+        small_hint = w.start_btn.sizeHint().height()
+        small_font_height = w.start_btn.fontMetrics().height()
+
+        w.settings["font_size"] = 28
+        w.apply_font_settings()
+        large_hint = w.start_btn.sizeHint().height()
+        large_font_height = w.start_btn.fontMetrics().height()
+
+        assert large_hint > small_hint, (
+            f"Button sizeHint must grow with font_size: "
+            f"{large_hint} not > {small_hint}"
+        )
+        assert large_font_height > small_font_height, (
+            f"Button font metrics must grow with font_size: "
+            f"{large_font_height} not > {small_font_height}"
+        )
+
+        w.close()
+
+
     # -- finding #1: button visibility after DB load ----------------------
 
     def test_buttons_after_db_load(self):

@@ -301,12 +301,13 @@ class BarskyApp(QMainWindow):
     # Font / Styling
     # ------------------------------------------------------------------
     @staticmethod
-    def _button_style(bg, hover=None):
+    def _button_style(bg, hover=None, extra=""):
         hover = hover or bg
         return (
             f"QPushButton {{"
             f"  background-color: {bg}; color: white; border: none; "
             f"  border-radius: 6px; padding: 8px 16px; font-weight: bold; "
+            f"  {extra}"
             f"}}"
             f"QPushButton:hover {{ background-color: {hover}; }}"
             f"QPushButton:pressed {{ background-color: {bg}; }}"
@@ -326,21 +327,29 @@ class BarskyApp(QMainWindow):
         fs = font_size + 2
 
         self.start_btn.setStyleSheet(
-            self._button_style("#43A047", "#66BB6A") +
-            f"padding: {dyn_pad}px; font-size: {fs}px;"
+            self._button_style(
+                "#43A047", "#66BB6A",
+                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
+            )
         )
         self.restart_review_btn.setStyleSheet(
-            self._button_style("#1E88E5", "#42A5F5") +
-            f"padding: {dyn_pad}px; font-size: {fs}px;"
+            self._button_style(
+                "#1E88E5", "#42A5F5",
+                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
+            )
         )
         self.previous_review_btn.setStyleSheet(
-            self._button_style("#E53935", "#EF5350") +
-            f"padding: {dyn_pad}px; font-size: {fs}px;"
+            self._button_style(
+                "#E53935", "#EF5350",
+                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
+            )
         )
 
         self.delete_entry_btn.setStyleSheet(
-            self._button_style("#D32F2F", "#F44336") +
-            f"padding: {dyn_pad}px; font-size: {fs}px;"
+            self._button_style(
+                "#D32F2F", "#F44336",
+                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
+            )
         )
 
     # ------------------------------------------------------------------
