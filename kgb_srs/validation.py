@@ -468,6 +468,142 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     )
 
 
+def _ws_tokens_with_spans(text: str) -> list[tuple[str, int, int]]:
+    """Whitespace-split *text* into (token, start, end) original spans."""
+    tokens: list[tuple[str, int, int]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        j = i
+        while j < n and not text[j].isspace():
+            j += 1
+        tokens.append((text[i:j], i, j))
+        i = j
+    return tokens
+
+
+def locate_item_surface_span(sentence: str, item: str) -> tuple[int, int] | None:
+    """Return ``(start, end)`` of the first surface match for *item* in *sentence*.
+
+    Uses the same local matching ideas as validation:
+    1. Inflection-tolerant consecutive whitespace tokens (English phrases)
+    2. Case-insensitive literal substring (CJK / continuous / exact)
+
+    Offsets are into the original *sentence* string (not normalized).
+    """
+    if not sentence or not item:
+        return None
+
+    item_tokens = _tokenize(normalize_sentence(item))
+    sent_tokens = _ws_tokens_with_spans(sentence)
+
+    # Path 1: consecutive token flex match → original span covering the window.
+    if item_tokens and sent_tokens and len(item_tokens) <= len(sent_tokens):
+        k = len(item_tokens)
+        for i in range(0, len(sent_tokens) - k + 1):
+            window = sent_tokens[i : i + k]
+            if all(
+                _tokens_flex_equal(it, st)
+                for it, (st, _a, _b) in zip(item_tokens, window)
+            ):
+                start = window[0][1]
+                end = window[-1][2]
+                return (start, end)
+
+    # Path 2: case-insensitive literal substring of the raw item text.
+    # Useful for continuous scripts and multi-word/punct spans.
+    # Single alphabetic English lemmas must NOT substring-match inside
+    # longer words (go ⊂ cargo) — those use whole-token path 3.
+    raw = item.strip()
+    if not raw:
+        return None
+    norm_item = normalize_sentence(item)
+    single_alpha = bool(re.fullmatch(r"[a-z]+", norm_item))
+    if not single_alpha:
+        m = re.search(re.escape(raw), sentence, flags=re.IGNORECASE)
+        if m is not None:
+            return (m.start(), m.end())
+
+    # Path 3: whole-token match for single alphabetic lemmas (exact or flex).
+    if single_alpha:
+        for tok, start, end in sent_tokens:
+            core = _strip_token_punct(tok)
+            if core.casefold() == norm_item:
+                return (start, end)
+            if _tokens_flex_equal(norm_item, core):
+                return (start, end)
+    return None
+
+
+def locate_unfamiliar_spans(
+    sentence: str,
+    items: list[str],
+) -> list[tuple[int, int]]:
+    """Locate non-overlapping surface spans for *items* in *sentence*.
+
+    Longer spans win over shorter overlapping ones; earlier items win ties.
+    Returns sorted ``(start, end)`` pairs.
+    """
+    candidates: list[tuple[int, int, int]] = []  # start, end, -length
+    for item in items:
+        if not item:
+            continue
+        span = locate_item_surface_span(sentence, item)
+        if span is None:
+            continue
+        start, end = span
+        if start < 0 or end <= start or end > len(sentence):
+            continue
+        candidates.append((start, end, start - end))  # third key: prefer longer
+
+    # Prefer earlier start, then longer span.
+    candidates.sort(key=lambda t: (t[0], t[2]))
+    chosen: list[tuple[int, int]] = []
+    for start, end, _neg_len in candidates:
+        if any(not (end <= cs or start >= ce) for cs, ce in chosen):
+            continue
+        chosen.append((start, end))
+    chosen.sort(key=lambda t: t[0])
+    return chosen
+
+
+def highlight_unfamiliar_in_sentence(
+    sentence: str,
+    items: list[str],
+) -> str:
+    """Return Markdown with matched unfamiliar surface spans wrapped in ``**bold**``.
+
+    The rest of the sentence stays normal weight. If no span is found for an
+    item, that item is simply not highlighted (the sentence text is preserved).
+    """
+    if not sentence:
+        return ""
+    exprs = [str(i) for i in items if i]
+    spans = locate_unfamiliar_spans(sentence, exprs)
+    if not spans:
+        return sentence
+
+    parts: list[str] = []
+    pos = 0
+    for start, end in spans:
+        if start < pos:
+            continue
+        parts.append(sentence[pos:start])
+        surface = sentence[start:end]
+        # Avoid nested markdown if the surface already starts/ends with **.
+        if surface.startswith("**") and surface.endswith("**") and len(surface) >= 4:
+            parts.append(surface)
+        else:
+            parts.append(f"**{surface}**")
+        pos = end
+    parts.append(sentence[pos:])
+    return "".join(parts)
+
+
 def apply_ai_membership_claims(
     sentence: str,
     missing_items: list[str],

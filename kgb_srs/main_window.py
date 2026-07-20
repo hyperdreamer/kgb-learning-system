@@ -136,6 +136,12 @@ def _expression_labels(items):
     """Return expression text from structured or legacy child items."""
     return [item[0] if isinstance(item, (tuple, list)) else item for item in items]
 
+
+def _highlight_sentence_for_items(sentence, items):
+    """Bold matched surface forms of unfamiliar items inside *sentence*."""
+    from .validation import highlight_unfamiliar_in_sentence
+    return highlight_unfamiliar_in_sentence(sentence, _expression_labels(items))
+
 # ---------------------------------------------------------------------------
 # BarskyApp
 # ---------------------------------------------------------------------------
@@ -1749,11 +1755,19 @@ class BarskyApp(QMainWindow):
         self._update_button_visibility()
 
     def _build_sentence_card_display(self, card_id, sentence, back, flipped, metadata):
-        """Build display content for a sentence-based card."""
+        """Build display content for a sentence-based card.
+
+        Front: sentence with matched surface forms bolded in place
+        (e.g. lemma ``insist on`` → bold ``insists on``). No separate
+        Unfamiliar list — the mark is the list.
+
+        Back: same highlighted sentence, then per-item meanings.
+        """
         items = _fetch_expressions_for_card(self.conn, card_id)
+        highlighted = _highlight_sentence_for_items(sentence, items)
 
         if flipped:
-            lines = [metadata, "", f"**{sentence}**", ""]
+            lines = [metadata, "", highlighted, ""]
             for item in items:
                 expr = item[0] if isinstance(item, tuple) else item
                 meaning = item[1] if isinstance(item, tuple) and len(item) > 1 else ""
@@ -1762,14 +1776,13 @@ class BarskyApp(QMainWindow):
                 else:
                     lines.append(f"- **{expr}**")
             if back:
+                # Back field is a derived cache; meanings above are authoritative.
+                # Keep only if it adds content beyond expression list noise.
                 lines.extend(["", "---", "", back])
             return "\n".join(lines)
-        else:
-            lines = [metadata, "", f"**{sentence}**", "", "Unfamiliar:"]
-            for item in items:
-                expr = item[0] if isinstance(item, tuple) else item
-                lines.append(f"- *{expr}*")
-            return "\n".join(lines)
+
+        # Front: focus on the sentence; bold only the learning targets.
+        return f"{metadata}\n\n{highlighted}"
 
     def flip_card(self):
         if not self.current_card:

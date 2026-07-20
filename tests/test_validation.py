@@ -279,6 +279,58 @@ class TestValidateUnfamiliarItems:
 
 
 # ---------------------------------------------------------------------------
+# Surface location + in-sentence highlight
+# ---------------------------------------------------------------------------
+
+class TestHighlightUnfamiliarInSentence:
+    def test_bold_inflected_surface_not_lemma(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+        out = highlight_unfamiliar_in_sentence(
+            "He insists on speaking himself.",
+            ["insist on"],
+        )
+        assert out == "He **insists on** speaking himself."
+        assert "Unfamiliar" not in out
+        # Whole sentence must not be bolded.
+        assert not out.startswith("**He")
+
+    def test_bold_irregular_surface(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+        assert highlight_unfamiliar_in_sentence(
+            "He has gone home.", ["go"]
+        ) == "He has **gone** home."
+        assert highlight_unfamiliar_in_sentence(
+            "She chose a book.", ["choose"]
+        ) == "She **chose** a book."
+
+    def test_multiple_items(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+        out = highlight_unfamiliar_in_sentence(
+            "She went home and bought milk.",
+            ["go", "buy"],
+        )
+        assert out == "She **went** home and **bought** milk."
+
+    def test_no_match_returns_original(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+        s = "The cargo ship left."
+        assert highlight_unfamiliar_in_sentence(s, ["go"]) == s
+
+    def test_locate_item_surface_span(self):
+        from kgb_srs.validation import locate_item_surface_span
+        s = "He insists on speaking himself."
+        span = locate_item_surface_span(s, "insist on")
+        assert span is not None
+        assert s[span[0]:span[1]] == "insists on"
+
+    def test_japanese_literal_highlight(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+        s = "私は日本語を勉強しています"
+        out = highlight_unfamiliar_in_sentence(s, ["日本語"])
+        assert out == "私は**日本語**を勉強しています"
+
+
+# ---------------------------------------------------------------------------
 # deduplicate_unfamiliar_items
 # ---------------------------------------------------------------------------
 
