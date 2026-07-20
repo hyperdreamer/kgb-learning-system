@@ -402,6 +402,136 @@ class TestFinalFormRegressions:
         assert dialog.result_items == []
         dialog.close()
 
+    def test_sentence_dialog_has_no_back_editor(self):
+        """Sentence dialog no longer exposes a separate back QTextEdit."""
+        _qt_app()
+        from PyQt6.QtWidgets import QLabel, QTextEdit
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(
+            sentence="He insists on speaking himself.",
+            items=[("insist on", "to demand")],
+            back="**insist on**: to demand",
+        )
+        assert not hasattr(dialog, "_back_edit")
+        # No user-facing Back label for a rendered/cache editor.
+        labels = dialog.findChildren(QLabel)
+        assert not any(
+            "Back (contextual" in (lab.text() or "") for lab in labels
+        )
+        # Meaning fields still exist as QTextEdit widgets.
+        assert dialog._meaning_widgets
+        assert all(isinstance(w, QTextEdit) for _, w in dialog._meaning_widgets)
+        dialog.close()
+
+    def test_sentence_dialog_ai_success_status_is_ready_to_save(self, monkeypatch):
+        """AI success status should not force a review/edit theater message."""
+        _qt_app()
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
+
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+        )
+
+        started = []
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+                self._config = config
+                self._prompt = prompt
+
+            def start(self):
+                started.append(True)
+
+        monkeypatch.setattr("kgb_srs.forms._AIGenerateWorker", FakeWorker)
+        dialog._generate_ai_meanings()
+        assert started
+        assert dialog._ai_worker is not None
+
+        # Valid AI JSON payload matching parse_sentence_meanings shape.
+        raw = (
+            '{"items": [{"expression": "Hello", '
+            '"contextual_meaning": "a greeting"}]}'
+        )
+        dialog._ai_worker.result.emit(raw)
+        QApplication.processEvents()
+
+        status = dialog._ai_status.text()
+        assert "Review and edit" not in status
+        assert "Generated 1 meaning" in status
+        assert "Ready to save" in status
+        assert dialog._meaning_widgets[0][1].toPlainText() == "a greeting"
+        dialog.close()
+
+    def test_sentence_dialog_result_back_derived_from_meanings(self, monkeypatch):
+        """On accept, result_back is the markdown join of expression+meaning pairs."""
+        _qt_app()
+        from PyQt6.QtWidgets import QMessageBox
+        from kgb_srs.forms import SentenceCardDialog
+
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: None)
+
+        dialog = SentenceCardDialog(
+            sentence="Hello world again",
+            items=[("Hello", "greeting"), ("world", "earth")],
+        )
+        dialog._accept()
+
+        assert dialog.result_items == [
+            ("Hello", "greeting"),
+            ("world", "earth"),
+        ]
+        assert dialog.result_back == (
+            "**Hello**: greeting\n\n**world**: earth"
+        )
+        dialog.close()
+
+    def test_sentence_dialog_empty_meanings_section(self):
+        """No items → empty-state label, no meaning widgets, no crash."""
+        _qt_app()
+        from PyQt6.QtWidgets import QLabel
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello world", items=None)
+        assert dialog._meaning_widgets == []
+        labels = [
+            lab.text()
+            for lab in dialog._meanings_container.findChildren(QLabel)
+        ]
+        assert any("Add unfamiliar" in t for t in labels)
+        dialog.close()
+
+    def test_sentence_dialog_meaning_field_chrome_and_preserve(self):
+        """Meaning fields are QTextEdit cards; content survives rebuild."""
+        _qt_app()
+        from PyQt6.QtWidgets import QTextEdit
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(
+            sentence="Hello world again",
+            items=[("Hello", "greeting")],
+        )
+        assert len(dialog._meaning_widgets) == 1
+        expr, edit = dialog._meaning_widgets[0]
+        assert expr == "Hello"
+        assert isinstance(edit, QTextEdit)
+        assert edit.toPlainText() == "greeting"
+        assert edit.minimumHeight() >= 48
+
+        edit.setPlainText("salutation")
+        dialog._item_entry.setText("world")
+        dialog._add_item()
+
+        by_expr = {e: w.toPlainText() for e, w in dialog._meaning_widgets}
+        assert by_expr["Hello"] == "salutation"
+        assert "world" in by_expr
+        dialog.close()
+
 
 # ============================================================================
 # Finding #1: Sentence data model — meaning column

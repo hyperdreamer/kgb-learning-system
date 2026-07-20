@@ -104,9 +104,9 @@ class SentenceCardDialog(QDialog):
          - Use "Add selected text" to add highlighted text from the sentence.
       3. Optionally auto-generate meanings via AI with a Generate button.
          The dialog stays open; generation is nonblocking (QThread).
-         On completion, meanings are populated in editable fields.
+         On completion, meaning fields are populated — Save is next.
       4. Validate that all unfamiliar items are in the sentence.
-      5. Save is a separate user action after preview/edit.
+      5. Save is a separate user action; back text is derived from meanings.
     """
 
     def __init__(self, parent=None, title="Add Sentence Card",
@@ -114,12 +114,15 @@ class SentenceCardDialog(QDialog):
                  settings: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumSize(560, 550)
+        self.setMinimumSize(560, 520)
         self._result_sentence = ""
         self._result_items: list = []
         self._result_back = ""
         self._settings = settings or {}
         self._ai_worker: _AIGenerateWorker | None = None
+        # `back` is accepted for API compatibility with main_window but is
+        # not shown or edited; meanings come from items pairs only.
+        _ = back
         # Parse items for initial meanings
         # items may be list[str] or list[tuple[str, str]]
         self._initial_meanings: dict[str, str] = {}
@@ -131,6 +134,7 @@ class SentenceCardDialog(QDialog):
                     self._initial_meanings[str(item)] = ""
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(8)
 
         # --- Sentence ---
         layout.addWidget(QLabel("Sentence:"))
@@ -158,6 +162,7 @@ class SentenceCardDialog(QDialog):
         self._items_list = QListWidget()
         self._items_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._items_list.setMaximumHeight(120)
         layout.addWidget(self._items_list)
 
         # Manual entry
@@ -190,45 +195,37 @@ class SentenceCardDialog(QDialog):
         self._status_label.setStyleSheet("color: #888;")
         layout.addWidget(self._status_label)
 
-        # --- AI Generation controls ---
-        ai_group = QGroupBox("AI Meaning Generation")
-        ai_layout = QVBoxLayout(ai_group)
-
+        # --- AI controls (compact row, matches WordPhraseCardDialog) ---
+        ai_row = QHBoxLayout()
+        self._ai_status = QLabel("")
+        self._ai_status.setStyleSheet("color: #666;")
+        ai_row.addWidget(self._ai_status, stretch=1)
         self._generate_btn = QPushButton("🤖 Generate Meanings")
         self._generate_btn.setToolTip(
             "Uses AI to generate contextual meanings for each unfamiliar item."
         )
         self._generate_btn.clicked.connect(self._generate_ai_meanings)
         self._generate_btn.setEnabled(False)
-        ai_layout.addWidget(self._generate_btn)
-
+        ai_row.addWidget(self._generate_btn)
         self._ai_progress = QProgressBar()
         self._ai_progress.setRange(0, 0)  # indeterminate
         self._ai_progress.setVisible(False)
-        self._ai_progress.setMaximumHeight(18)
-        ai_layout.addWidget(self._ai_progress)
+        self._ai_progress.setMaximumHeight(14)
+        ai_row.addWidget(self._ai_progress)
+        layout.addLayout(ai_row)
 
-        self._ai_status = QLabel("")
-        self._ai_status.setStyleSheet("color: #666;")
-        ai_layout.addWidget(self._ai_status)
-
-        layout.addWidget(ai_group)
-
-        # --- Per-item meaning editors ---
-        layout.addWidget(QLabel("Meanings (editable):"))
+        # --- Meanings (compact cards; quiet manual escape hatch) ---
+        layout.addWidget(QLabel("<b>Meanings</b>"))
         self._meanings_layout = QVBoxLayout()
+        self._meanings_layout.setSpacing(8)
+        self._meanings_layout.setContentsMargins(0, 0, 0, 0)
         self._meaning_widgets: list[tuple[str, QTextEdit]] = []
         self._meanings_container = QWidget()
         self._meanings_container.setLayout(self._meanings_layout)
+        self._meanings_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         layout.addWidget(self._meanings_container)
-
-        # --- Back (rendered/cache) ---
-        layout.addWidget(QLabel("Back (contextual meanings — rendered):"))
-        self._back_edit = QTextEdit()
-        self._back_edit.setPlainText(back)
-        self._back_edit.setAcceptRichText(False)
-        self._back_edit.setMaximumHeight(100)
-        layout.addWidget(self._back_edit)
 
         # --- Buttons ---
         btn_layout = QHBoxLayout()
@@ -238,21 +235,22 @@ class SentenceCardDialog(QDialog):
 
         btn_layout.addStretch()
 
-        self._save_btn = QPushButton("Save")
-        self._save_btn.setStyleSheet(
-            "background-color: #ccffcc; font-weight: bold; padding: 10px;")
-        self._save_btn.clicked.connect(self._accept)
-        btn_layout.addWidget(self._save_btn)
-
         self._cancel_btn = QPushButton("Cancel")
-        self._cancel_btn.setStyleSheet("padding: 10px;")
         self._cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self._cancel_btn)
+
+        self._save_btn = QPushButton("Save")
+        self._save_btn.setStyleSheet(
+            "background-color: #43A047; color: white; "
+            "font-weight: bold; padding: 8px 20px;"
+        )
+        self._save_btn.clicked.connect(self._accept)
+        btn_layout.addWidget(self._save_btn)
         layout.addLayout(btn_layout)
 
         if parent:
             w = min(max(580, int(parent.width() * 0.6)), 850)
-            h = min(max(550, int(parent.height() * 0.75)), 750)
+            h = min(max(520, int(parent.height() * 0.75)), 750)
             self.resize(w, h)
 
         # Connect double-click on list to removal
@@ -339,8 +337,36 @@ class SentenceCardDialog(QDialog):
     # Meaning editors
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _make_meaning_field(placeholder: str, min_height: int = 52) -> QTextEdit:
+        """Soft-bordered multi-line field matching WordPhrase chrome."""
+        edit = QTextEdit()
+        edit.setAcceptRichText(False)
+        edit.setMinimumHeight(min_height)
+        edit.setMaximumHeight(72)
+        edit.setPlaceholderText(placeholder)
+        edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        edit.setTabChangesFocus(True)
+        doc = edit.document()
+        if doc is not None:
+            doc.setDocumentMargin(6)
+        edit.setStyleSheet(
+            "QTextEdit {"
+            "  border: 1px solid #CFD8DC;"
+            "  border-radius: 6px;"
+            "  padding: 2px 6px;"
+            "  background: #FFFFFF;"
+            "}"
+            "QTextEdit:focus {"
+            "  border: 1px solid #42A5F5;"
+            "}"
+        )
+        return edit
+
     def _rebuild_meaning_editors(self):
-        """Rebuild per-item meaning editor widgets, preserving existing content."""
+        """Rebuild per-item meaning cards, preserving existing content."""
         # Save current editor content keyed by expression
         saved: dict[str, str] = {}
         for expr, edit in self._meaning_widgets:
@@ -355,16 +381,40 @@ class SentenceCardDialog(QDialog):
         self._meaning_widgets.clear()
 
         items = self._get_items()
-        for i, expr in enumerate(items):
-            row_layout = QHBoxLayout()
-            label = QLabel(f"{expr}:")
-            label.setMinimumWidth(100)
-            row_layout.addWidget(label)
+        if not items:
+            empty = QLabel("Add unfamiliar words/phrases to generate meanings.")
+            empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
+            empty.setWordWrap(True)
+            self._meanings_layout.addWidget(empty)
+            self._meanings_layout.addStretch()
+            return
 
-            edit = QTextEdit()
-            edit.setAcceptRichText(False)
-            edit.setMaximumHeight(60)
-            edit.setPlaceholderText(f"Meaning for '{expr}'...")
+        for expr in items:
+            card = QWidget()
+            card.setObjectName("sentenceMeaningCard")
+            # Needed so background/border QSS paints under all styles.
+            card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            card.setStyleSheet(
+                "QWidget#sentenceMeaningCard {"
+                "  background: #FAFBFC;"
+                "  border: 1px solid #E0E6EA;"
+                "  border-radius: 8px;"
+                "}"
+            )
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 8, 10, 8)
+            card_layout.setSpacing(4)
+
+            expr_label = QLabel(expr)
+            font = expr_label.font()
+            font.setBold(True)
+            expr_label.setFont(font)
+            expr_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            card_layout.addWidget(expr_label)
+
+            edit = self._make_meaning_field(f"Meaning for '{expr}'...")
 
             # Restore from saved, or from initial meanings, or blank
             existing = saved.get(expr)
@@ -373,11 +423,8 @@ class SentenceCardDialog(QDialog):
             elif expr in self._initial_meanings:
                 edit.setPlainText(self._initial_meanings[expr])
 
-            row_layout.addWidget(edit, stretch=1)
-
-            container = QWidget()
-            container.setLayout(row_layout)
-            self._meanings_layout.addWidget(container)
+            card_layout.addWidget(edit)
+            self._meanings_layout.addWidget(card)
             self._meaning_widgets.append((expr, edit))
 
         # Add spacer at bottom
@@ -428,19 +475,14 @@ class SentenceCardDialog(QDialog):
         def on_finished(raw_text):
             try:
                 meanings = parse_sentence_meanings(raw_text, items)
-                # Populate per-item meaning editors
+                # Populate per-item meaning fields
                 for i, (expr, edit) in enumerate(self._meaning_widgets):
                     if i < len(meanings):
                         edit.setPlainText(
                             meanings[i].contextual_meaning)
-                # Also update back field
-                formatted = "\n\n".join(
-                    f"**{m.expression}**: {m.contextual_meaning}"
-                    for m in meanings
-                )
-                self._back_edit.setPlainText(formatted)
                 self._ai_status.setText(
-                    f"Generated {len(meanings)} meaning(s). Review and edit before saving.")
+                    f"Generated {len(meanings)} meaning(s). Ready to save."
+                )
                 self._ai_status.setStyleSheet("color: #393;")
             except (AIParseError, AIValidationError) as e:
                 self._ai_status.setText(f"AI parse error: {e}")
@@ -461,6 +503,7 @@ class SentenceCardDialog(QDialog):
         if self._ai_worker is worker:
             self._ai_worker = None
             self._restore_ui_after_ai()
+
     def _restore_ui_after_ai(self):
         """Restore UI controls after AI generation completes/errors."""
         self._generate_btn.setEnabled(True)
@@ -549,7 +592,7 @@ class SentenceCardDialog(QDialog):
 
         self._result_sentence = sentence
         self._result_items = result_items
-        # Keep the legacy/cache back field synchronized with structured rows.
+        # Back is derived from structured meanings (no separate editor).
         self._result_back = "\n\n".join(
             f"**{expr}**: {meaning}" for expr, meaning in result_items
         )
@@ -579,10 +622,6 @@ class SentenceCardDialog(QDialog):
         if self._ai_worker is not None and self._ai_worker.isRunning():
             return
         super().reject()
-
-    def set_back_text(self, text: str):
-        """Set the back/meaning text (e.g., after AI generation)."""
-        self._back_edit.setPlainText(text)
 
 
 # ---------------------------------------------------------------------------

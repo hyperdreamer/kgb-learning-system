@@ -44,8 +44,8 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 - **Front**: A sentence plus one or more unfamiliar words or phrases.
 - **Validation**: Every unfamiliar item must appear literally in the sentence (Unicode-safe, case-insensitive, whitespace-normalized). Regex metacharacters are treated as literal text.
-- **AI generation**: In-dialog nonblocking AI generation. A **Generate** button starts a background QThread; controls are disabled during generation; on completion, per-item meaning fields are populated and editable. **Save** is a separate user action.
-- **Review**: The front shows the sentence with unfamiliar items listed. The back shows each expression with its AI-generated contextual meaning.
+- **AI generation**: In-dialog nonblocking AI generation. A **Generate** button starts a background QThread; controls are disabled during generation; on completion, per-item meaning fields are populated. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor in the dialog). Manual meaning edits remain available as a quiet escape hatch when AI is offline or a single meaning needs a fix.
+- **Review**: The front shows the sentence with unfamiliar items listed. The back shows each expression with its contextual meaning.
 - **TTS**: Reads the sentence aloud.
 - **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
 - **Duplicate detection**: A new card with the same normalized sentence and same normalized ordered list of expressions triggers an edit-offer rather than a silent duplicate.
@@ -101,8 +101,8 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 1. Create/open the **Add Sentence Card** dialog.
 2. Enter the sentence and unfamiliar items (type manually or use **Add selected text** to add highlighted text from the sentence).
 3. Click **Generate Meanings** — the button disables while AI runs in the background (no busy-waiting).
-4. On completion, per-item meaning fields are populated and editable.
-5. **Validate** to verify all items appear in the sentence.
+4. On completion, meaning fields are populated. Back text is derived automatically from those pairs (there is no separate back editor).
+5. **Validate** (optional) to verify all items appear in the sentence.
 6. **Save** commits the card with expression+meaning pairs.
 
 ---
@@ -159,7 +159,7 @@ The currently loaded database is marked with **●**. Legacy databases appear un
 
 Click **Add Entry**. The dialog adapts to the database type:
 
-- **Sentence-based**: Full dialog with sentence input, unfamiliar item management, selected-text addition, in-dialog AI generation, validation, and per-item meaning editing.
+- **Sentence-based**: Full dialog with sentence input, unfamiliar item management, selected-text addition, in-dialog AI generation, validation, and compact per-item meaning fields (back is auto-derived on Save).
 - **Word/Phrase-based**: Front/back entry with optional AI generation for meanings.
 - **Knowledge-based**: Simple front/back entry with no AI prompts — preserves original generic behavior.
 
