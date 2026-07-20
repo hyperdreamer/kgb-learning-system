@@ -266,13 +266,18 @@ class TestFinalFormRegressions:
             sentence="Hello world again",
             items=[("Hello", "greeting"), ("world", "earth")],
         )
+        # First item is auto-selected; only its meaning is visible.
+        assert dialog._active_meaning_expr == "Hello"
         assert [w.toPlainText() for _, w in dialog._meaning_widgets] == [
-            "greeting", "earth"
+            "greeting"
         ]
         dialog._meaning_widgets[0][1].setPlainText("salutation")
+        assert dialog._meanings["Hello"] == "salutation"
         dialog._item_entry.setText("again")
         dialog._add_item()
-        assert dialog._meaning_widgets[0][1].toPlainText() == "salutation"
+        # Newly added item becomes selected; prior meaning stays in store.
+        assert dialog._meanings["Hello"] == "salutation"
+        assert dialog._active_meaning_expr == "again"
         dialog.close()
 
     def test_card_dialogs_use_ui_font_from_settings(self):
@@ -303,6 +308,32 @@ class TestFinalFormRegressions:
         assert w_dialog.font().family() == "DejaVu Sans"
         assert w_dialog.font().pointSize() == 19
         w_dialog.close()
+
+    def test_sentence_dialog_meaning_shows_selected_only(self):
+        """Meaning panel lists only the selected unfamiliar item."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(
+            sentence="He insists on speaking himself.",
+            items=[
+                ("insist on", "to demand"),
+                ("speak", ""),
+            ],
+        )
+        assert dialog._generate_btn.text() == "🤖 Generate Meaning"
+        assert dialog._active_meaning_expr == "insist on"
+        assert len(dialog._meaning_widgets) == 1
+        assert dialog._meaning_widgets[0][0] == "insist on"
+        assert dialog._meaning_widgets[0][1].toPlainText() == "to demand"
+
+        dialog._items_list.setCurrentRow(1)
+        assert dialog._active_meaning_expr == "speak"
+        assert len(dialog._meaning_widgets) == 1
+        assert dialog._meaning_widgets[0][0] == "speak"
+        # Previous meaning preserved in store, not shown.
+        assert dialog._meanings["insist on"] == "to demand"
+        dialog.close()
 
     def test_word_dialog_does_not_drop_partial_second_row(self, monkeypatch):
         _qt_app()
@@ -467,12 +498,14 @@ class TestFinalFormRegressions:
         )
 
         started = []
+        prompts = []
 
         class FakeWorker(_AIGenerateWorker):
             def __init__(self, config, prompt):
                 QThread.__init__(self)
                 self._config = config
                 self._prompt = prompt
+                prompts.append(prompt)
 
             def start(self):
                 started.append(True)
@@ -481,6 +514,9 @@ class TestFinalFormRegressions:
         dialog._generate_ai_meanings()
         assert started
         assert dialog._ai_worker is not None
+        # Prompt is for the selected item only (not every list item).
+        assert "Hello" in prompts[0]
+        assert "Unfamiliar items:" in prompts[0]
 
         # Valid AI JSON payload matching parse_sentence_meanings shape.
         raw = (
@@ -492,8 +528,9 @@ class TestFinalFormRegressions:
 
         status = dialog._ai_status.text()
         assert "Review and edit" not in status
-        assert "Generated 1 meaning" in status
+        assert "Generated meaning for 'Hello'" in status
         assert "Ready to save" in status
+        assert dialog._meanings["Hello"] == "a greeting"
         assert dialog._meaning_widgets[0][1].toPlainText() == "a greeting"
         dialog.close()
 
@@ -556,9 +593,11 @@ class TestFinalFormRegressions:
         dialog._item_entry.setText("world")
         dialog._add_item()
 
-        by_expr = {e: w.toPlainText() for e, w in dialog._meaning_widgets}
-        assert by_expr["Hello"] == "salutation"
-        assert "world" in by_expr
+        # Only the newly selected item is shown; Hello stays in store.
+        assert dialog._meanings["Hello"] == "salutation"
+        assert dialog._active_meaning_expr == "world"
+        assert len(dialog._meaning_widgets) == 1
+        assert dialog._meaning_widgets[0][0] == "world"
         dialog.close()
 
 
@@ -1691,10 +1730,14 @@ class TestQThreadLifecycle:
         from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
         from PyQt6.QtCore import QThread
 
-        dialog = SentenceCardDialog(sentence='Hello world', items=['Hello'])
+        dialog = SentenceCardDialog(
+            sentence='Hello world',
+            items=['Hello'],
+            settings={'ai_api_key': 'test-key', 'ai_model': 'test-model'},
+        )
         dialog._generate_ai_meanings = lambda: None  # no-op
 
-        # Ensure controls start enabled
+        # Ensure controls start enabled (AI configured + item selected)
         dialog._restore_ui_after_ai()
         assert dialog._generate_btn.isEnabled()
 
@@ -1734,7 +1777,11 @@ class TestQThreadLifecycle:
         from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
         from PyQt6.QtCore import QThread
 
-        dialog = SentenceCardDialog(sentence='Hello', items=['Hello'])
+        dialog = SentenceCardDialog(
+            sentence='Hello',
+            items=['Hello'],
+            settings={'ai_api_key': 'test-key', 'ai_model': 'test-model'},
+        )
         dialog._generate_ai_meanings = lambda: None
 
         dialog._restore_ui_after_ai()

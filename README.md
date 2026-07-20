@@ -44,7 +44,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 - **Front**: The sentence only, with matched unfamiliar surface forms **bolded in place** (e.g. stored lemma `insist on` highlights surface `insists on`). No separate Unfamiliar bullet list on the front.
 - **Validation**: Every unfamiliar item must appear in the sentence (Unicode-safe, case-insensitive, whitespace-normalized). Literal match is tried first; if that fails, a local inflection-tolerant check accepts common tense/number forms and a comprehensive irregular-verb map (e.g. `insist on` ↔ `insists on`, `go` ↔ `went`/`gone`, `choose` ↔ `chose`/`chosen`). Multi-word phrases must still match consecutive tokens. Continuous scripts without spaces stay on the literal path. Regex metacharacters in items are treated as literal text. **AI is not used for the local path.** If Save still has residual misses and an AI provider is configured, the dialog may optionally ask AI only for those leftovers; any AI `found=true` claim must include a surface span that is re-verified to exist in the sentence.
-- **AI generation**: In-dialog nonblocking AI generation. A **Generate** button starts a background QThread; controls are disabled during generation; on completion, per-item meaning fields are populated. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor in the dialog). Manual meaning edits remain available as a quiet escape hatch when AI is offline or a single meaning needs a fix.
+- **AI generation**: In-dialog nonblocking AI generation for the **selected** unfamiliar item only. A **Generate Meaning** button starts a background QThread with the sentence + that one expression; controls are disabled during generation; on completion, that item's meaning field is filled. Meanings are always **contextual to the sentence**. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor). Manual meaning edits remain available as a quiet escape hatch when AI is offline or a single meaning needs a fix. The Meaning panel shows only the currently selected list item (not every item at once).
 - **Review**: The front shows the sentence with target surface spans in bold. The back shows the same highlighted sentence, a horizontal rule, then each expression with its contextual meaning once (no bullet list; the derived `cards.back` cache is not re-appended).
 - **TTS**: Reads the sentence aloud.
 - **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
@@ -100,10 +100,11 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 
 1. Create/open the **Add Sentence Card** dialog.
 2. Enter the sentence and unfamiliar items (type manually or use **Add selected text** to add highlighted text from the sentence).
-3. Click **Generate Meanings** — the button disables while AI runs in the background (no busy-waiting).
-4. On completion, meaning fields are populated. Back text is derived automatically from those pairs (there is no separate back editor).
-5. **Validate** (optional) to verify all items appear in the sentence.
-6. **Save** commits the card with expression+meaning pairs.
+3. Select one item in the list. The **Meaning** panel shows only that item.
+4. Click **Generate Meaning** — AI fills that item's contextual meaning for this sentence (button disables while AI runs; no busy-waiting).
+5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
+6. **Validate** (optional) to verify all items appear in the sentence.
+7. **Save** commits the card with expression+meaning pairs.
 
 ---
 
