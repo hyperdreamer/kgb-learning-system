@@ -47,6 +47,7 @@ from .ai_parser import (
     parse_word_phrase_meanings,
     AIParseError,
     AIValidationError,
+    MAX_WORD_PHRASE_MEANINGS,
 )
 import json
 import urllib.error
@@ -591,16 +592,17 @@ class WordPhraseCardDialog(QDialog):
 
     Features:
       1. Enter the word/phrase (front) in a single text field.
-      2. Up to 2 meanings as tabs, each with meaning text and example text.
-         At least 1 non‑empty meaning AND example is required.
+      2. Up to MAX_WORD_PHRASE_MEANINGS meanings as tabs, each with meaning
+         text and example text. At least 1 non‑empty meaning AND example
+         is required.
       3. Optionally auto‑generate meanings via AI with a Generate button.
          The dialog stays open; generation is nonblocking (QThread).
          On completion, meanings populate editable tabs.
-      4. Manual users can edit meaning/example fields, add a second meaning
-         tab, or close a tab (keeping at least one).
+      4. Manual users can edit meaning/example fields, add more meaning
+         tabs, or close a tab (keeping at least one).
       5. Save is only accepted when:
          - At least 1 tab has non‑empty meaning AND non‑empty example.
-         - At most 2 tabs exist.
+         - At most MAX_WORD_PHRASE_MEANINGS tabs exist.
     """
 
     def __init__(self, parent=None, title="Add Word/Phrase",
@@ -649,7 +651,9 @@ class WordPhraseCardDialog(QDialog):
         header_row = QHBoxLayout()
         header_row.addWidget(QLabel("<b>Meanings</b>"), stretch=1)
         self._add_meaning_btn = QPushButton("+ Add Meaning")
-        self._add_meaning_btn.setToolTip("Add a second meaning tab (max 2).")
+        self._add_meaning_btn.setToolTip(
+            f"Add another meaning tab (max {MAX_WORD_PHRASE_MEANINGS})."
+        )
         # clicked emits a bool; wrap so it is not bound to meaning=
         self._add_meaning_btn.clicked.connect(
             lambda _checked=False: self._add_meaning_row()
@@ -735,7 +739,7 @@ class WordPhraseCardDialog(QDialog):
 
     def _add_meaning_row(self, meaning="", example=""):
         """Add a meaning tab with meaning + example fields."""
-        if len(self._meaning_rows) >= 2:
+        if len(self._meaning_rows) >= MAX_WORD_PHRASE_MEANINGS:
             return
 
         page = QWidget()
@@ -792,8 +796,8 @@ class WordPhraseCardDialog(QDialog):
     def _update_meaning_controls(self):
         """Sync Add button and tab-close affordance with current count."""
         count = len(self._meaning_rows)
-        self._add_meaning_btn.setEnabled(count < 2)
-        # Only allow closing when a second meaning exists.
+        self._add_meaning_btn.setEnabled(count < MAX_WORD_PHRASE_MEANINGS)
+        # Only allow closing when more than one meaning exists.
         self._meanings_tabs.setTabsClosable(count > 1)
         bar = self._meanings_tabs.tabBar()
         if bar is None:
@@ -920,7 +924,9 @@ class WordPhraseCardDialog(QDialog):
     def _set_controls_enabled(self, enabled: bool):
         """Enable/disable all controls during AI generation or close."""
         self._front_edit.setEnabled(enabled)
-        self._add_meaning_btn.setEnabled(enabled and len(self._meaning_rows) < 2)
+        self._add_meaning_btn.setEnabled(
+            enabled and len(self._meaning_rows) < MAX_WORD_PHRASE_MEANINGS
+        )
         self._meanings_tabs.setEnabled(enabled)
         self._validate_btn.setEnabled(enabled)
         self._save_btn.setEnabled(enabled)

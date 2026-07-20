@@ -175,9 +175,12 @@ class TestBuildWordPhrasePrompt:
         assert "meanings" in prompt
         assert "example" in prompt
 
-    def test_up_to_two_meanings(self):
+    def test_mentions_max_meanings(self):
+        from kgb_srs.ai_parser import MAX_WORD_PHRASE_MEANINGS
+
         prompt = build_word_phrase_prompt(word="test")
-        assert "up to 2" in prompt.lower() or "two" in prompt.lower()
+        assert str(MAX_WORD_PHRASE_MEANINGS) in prompt
+        assert "up to" in prompt.lower()
 
 
 # ---------------------------------------------------------------------------

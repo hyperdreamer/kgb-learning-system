@@ -56,9 +56,9 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 ### Word/Phrase-based (`language_word_phrase`)
 
 - **Front**: A word or phrase.
-- **Dialog**: The **WordPhraseCardDialog** provides inline editing of 1-2 meaning rows, each with a meaning text and example sentence. At least one non-empty meaning+example row is required on Save.
-- **AI generation**: In-dialog nonblocking AI generation via a **Generate Meanings** button. Up to 2 common modern meanings are produced, each with a non-empty example sentence. Responses with missing/empty examples or more than 2 meanings are rejected with a visible error. Controls are disabled during generation; on completion, rows are populated and editable.
-- **Manual editing**: Users may add/remove the second row, edit meaning and example fields, and validate before saving.
+- **Dialog**: The **WordPhraseCardDialog** provides tabbed editing of 1–5 meanings, each with a meaning text and example sentence. At least one non-empty meaning+example is required on Save.
+- **AI generation**: In-dialog nonblocking AI generation via a **Generate Meanings** button. Up to 5 common modern meanings are produced, each with a non-empty example sentence. Responses with missing/empty examples or more than 5 meanings are rejected with a visible error. Controls are disabled during generation; on completion, tabs are populated and editable.
+- **Manual editing**: Users may add/close meaning tabs (keeping at least one), edit meaning and example fields, and validate before saving.
 - **Review**: Standard front/back flip card with Markdown and MathJax rendering.
 - **Search**: Searches front and back (meanings/examples) fields.
 

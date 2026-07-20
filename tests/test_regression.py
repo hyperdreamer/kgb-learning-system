@@ -34,6 +34,7 @@ from kgb_srs.ai_parser import (
     parse_word_phrase_meanings,
     AIParseError,
     AIValidationError,
+    MAX_WORD_PHRASE_MEANINGS,
 )
 from kgb_srs.search import (
     parse_search_tokens,
@@ -334,7 +335,7 @@ class TestFinalFormRegressions:
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert dialog._meanings_tabs.tabText(1) == "Meaning 2"
         assert dialog._meanings_tabs.tabsClosable()
-        assert not dialog._add_meaning_btn.isEnabled()
+        assert dialog._add_meaning_btn.isEnabled()
         # Newly added tab is active
         assert dialog._meanings_tabs.currentIndex() == 1
 
@@ -344,6 +345,24 @@ class TestFinalFormRegressions:
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert not dialog._meanings_tabs.tabsClosable()
         assert dialog._add_meaning_btn.isEnabled()
+        dialog.close()
+
+    def test_word_dialog_allows_up_to_max_meaning_tabs(self):
+        """Users can add up to MAX_WORD_PHRASE_MEANINGS meaning tabs."""
+        _qt_app()
+        from kgb_srs.forms import WordPhraseCardDialog
+
+        dialog = WordPhraseCardDialog(front="bank")
+        for n in range(2, MAX_WORD_PHRASE_MEANINGS + 1):
+            assert dialog._add_meaning_btn.isEnabled()
+            dialog._add_meaning_btn.click()
+            assert dialog._meanings_tabs.count() == n
+            assert dialog._meanings_tabs.tabText(n - 1) == f"Meaning {n}"
+
+        assert not dialog._add_meaning_btn.isEnabled()
+        # Cap is hard: extra add is ignored
+        dialog._add_meaning_row()
+        assert dialog._meanings_tabs.count() == MAX_WORD_PHRASE_MEANINGS
         dialog.close()
 
     def test_sentence_dialog_rejects_blank_meaning_before_accept(self, monkeypatch):
@@ -605,16 +624,17 @@ class TestWordParserValidation:
         with pytest.raises(AIValidationError, match="example"):
             parse_word_phrase_meanings(response)
 
-    def test_over_two_meanings_rejected(self):
-        """More than 2 meanings must reject the entire response."""
+    def test_over_max_meanings_rejected(self):
+        """More than MAX_WORD_PHRASE_MEANINGS must reject the response."""
         response = json.dumps({
             "meanings": [
-                {"meaning": "m1", "example": "e1"},
-                {"meaning": "m2", "example": "e2"},
-                {"meaning": "m3", "example": "e3"},
+                {"meaning": f"m{i}", "example": f"e{i}"}
+                for i in range(1, MAX_WORD_PHRASE_MEANINGS + 2)
             ]
         })
-        with pytest.raises(AIValidationError, match="2|two|many"):
+        with pytest.raises(
+            AIValidationError, match=str(MAX_WORD_PHRASE_MEANINGS)
+        ):
             parse_word_phrase_meanings(response)
 
     def test_valid_with_examples(self):

@@ -9,6 +9,7 @@ from kgb_srs.ai_parser import (
     MeaningResult,
     AIParseError,
     AIValidationError,
+    MAX_WORD_PHRASE_MEANINGS,
 )
 
 
@@ -163,16 +164,28 @@ class TestParseWordPhraseMeanings:
         with pytest.raises(AIValidationError, match="'example'"):
             parse_word_phrase_meanings(json.dumps(response))
 
-    def test_more_than_two_rejected(self):
-        """More than 2 meanings rejects the entire response."""
+    def test_at_max_meanings_accepted(self):
+        """Exactly MAX_WORD_PHRASE_MEANINGS meanings is accepted."""
         response = {
             "meanings": [
-                {"meaning": "m1", "example": "e1"},
-                {"meaning": "m2", "example": "e2"},
-                {"meaning": "m3", "example": "e3"},
+                {"meaning": f"m{i}", "example": f"e{i}"}
+                for i in range(1, MAX_WORD_PHRASE_MEANINGS + 1)
             ]
         }
-        with pytest.raises(AIValidationError, match="2"):
+        result = parse_word_phrase_meanings(json.dumps(response))
+        assert len(result) == MAX_WORD_PHRASE_MEANINGS
+
+    def test_more_than_max_rejected(self):
+        """More than MAX_WORD_PHRASE_MEANINGS meanings rejects the response."""
+        response = {
+            "meanings": [
+                {"meaning": f"m{i}", "example": f"e{i}"}
+                for i in range(1, MAX_WORD_PHRASE_MEANINGS + 2)
+            ]
+        }
+        with pytest.raises(
+            AIValidationError, match=str(MAX_WORD_PHRASE_MEANINGS)
+        ):
             parse_word_phrase_meanings(json.dumps(response))
 
     def test_code_fence_stripping(self):

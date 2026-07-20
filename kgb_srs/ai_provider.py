@@ -95,16 +95,18 @@ def build_sentence_prompt(
 
 
 _WORD_PHRASE_PROMPT_TEMPLATE = """\
-You are a language learning assistant. Given a word or phrase, provide up to 2
-common modern meanings, each with an example sentence showing typical usage.
+You are a language learning assistant. Given a word or phrase, provide up to
+{max_meanings} common modern meanings, each with an example sentence showing
+typical usage.
 
 Word/Phrase: {word}
 
 Respond in {explanation_language} with a JSON object:
 {{"meanings": [{{"meaning": "...", "example": "..."}}]}}
 
-- Provide at most 2 meanings.  It is acceptable to provide only 1.
-- Do NOT invent a second meaning if only one is common.
+- Provide at most {max_meanings} meanings. Prefer the most common ones.
+- It is acceptable to provide only 1 meaning.
+- Do NOT invent extra meanings if fewer are common.
 - Each example should be a natural sentence using the word/phrase."""
 
 
@@ -113,9 +115,12 @@ def build_word_phrase_prompt(
     explanation_language: str = "Chinese",
 ) -> str:
     """Build the prompt for word/phrase-based AI generation."""
+    from .ai_parser import MAX_WORD_PHRASE_MEANINGS
+
     return _WORD_PHRASE_PROMPT_TEMPLATE.format(
         word=word,
         explanation_language=explanation_language,
+        max_meanings=MAX_WORD_PHRASE_MEANINGS,
     )
 
 

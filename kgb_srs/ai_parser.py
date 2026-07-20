@@ -35,6 +35,10 @@ class AIValidationError(Exception):
     """The AI response JSON had the wrong shape or content."""
 
 
+# Max meanings for word/phrase cards (UI tabs + AI generation).
+MAX_WORD_PHRASE_MEANINGS = 5
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -159,8 +163,8 @@ def parse_word_phrase_meanings(
         {"meanings": [{"meaning": "...", "example": "..."}, ...]}
 
     Validates:
-      - At least 1 meaning is required; at most 2 are accepted.
-      - More than 2 meanings → rejects the entire response.
+      - At least 1 meaning is required; at most MAX_WORD_PHRASE_MEANINGS.
+      - More than the max → rejects the entire response.
       - Every meaning must have a non-empty 'meaning' field.
       - Every meaning must have a non-empty 'example' field.
 
@@ -187,10 +191,11 @@ def parse_word_phrase_meanings(
     if len(meanings) == 0:
         raise AIValidationError("AI response must contain at least one meaning")
 
-    # Reject over-limit: more than 2 meanings is malformed, not truncated.
-    if len(meanings) > 2:
+    # Reject over-limit: more than max meanings is malformed, not truncated.
+    if len(meanings) > MAX_WORD_PHRASE_MEANINGS:
         raise AIValidationError(
-            f"AI returned {len(meanings)} meanings — at most 2 are accepted. "
+            f"AI returned {len(meanings)} meanings — at most "
+            f"{MAX_WORD_PHRASE_MEANINGS} are accepted. "
             "The response is malformed; rejecting the entire output."
         )
 
