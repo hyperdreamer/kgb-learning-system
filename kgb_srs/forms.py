@@ -650,7 +650,8 @@ class WordPhraseCardDialog(QDialog):
         header_row.addWidget(QLabel("<b>Meanings</b>"), stretch=1)
         self._add_row_btn = QPushButton("+ Add Row")
         self._add_row_btn.setToolTip("Add a second meaning row (max 2).")
-        self._add_row_btn.clicked.connect(self._add_meaning_row)
+        # clicked emits a bool; wrap so it is not bound to meaning=
+        self._add_row_btn.clicked.connect(lambda _checked=False: self._add_meaning_row())
         header_row.addWidget(self._add_row_btn)
         layout.addLayout(header_row)
 

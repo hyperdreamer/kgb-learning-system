@@ -296,6 +296,22 @@ class TestFinalFormRegressions:
         assert dialog.result_meanings == []
         dialog.close()
 
+    def test_word_dialog_add_row_button_does_not_pass_clicked_bool(self):
+        """QPushButton.clicked emits a bool; must not become meaning text."""
+        _qt_app()
+        from kgb_srs.forms import WordPhraseCardDialog
+
+        dialog = WordPhraseCardDialog(front="bank")
+        assert len(dialog._meaning_rows) == 1
+
+        dialog._add_row_btn.click()
+
+        assert len(dialog._meaning_rows) == 2
+        second = dialog._meaning_rows[1]
+        assert second["meaning_edit"].toPlainText() == ""
+        assert second["example_edit"].toPlainText() == ""
+        dialog.close()
+
     def test_sentence_dialog_rejects_blank_meaning_before_accept(self, monkeypatch):
         _qt_app()
         from PyQt6.QtWidgets import QMessageBox
