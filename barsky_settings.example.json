@@ -7,6 +7,7 @@
   "content_font_size": 18,
   "default_database": "",
   "tts_voice": "en-US-AvaMultilingualNeural",
+  "tts_language": "",
   "default_language": "English",
   "review_card_width_ratio": 0.75,
   "review_card_height_ratio": 0.88,

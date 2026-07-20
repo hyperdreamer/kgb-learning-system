@@ -106,6 +106,7 @@ def settings():
         "content_font_size": 18,
         "default_database": "",
         "tts_voice": "en-US-AvaMultilingualNeural",
+        "tts_language": "",
         "ai_base_url": "https://api.openai.com/v1",
         "ai_model": "gpt-4o-mini",
         "ai_api_key": "secret",
@@ -176,9 +177,6 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "ttsGenderFemale": 2,
         "ttsVoiceSearch": 2,
         "ttsVoiceList": 2,
-        "ttsSelectedName": 2,
-        "ttsSelectedMeta": 2,
-        "ttsPreviewButton": 2,
         "aiBaseUrlInput": 3,
         "aiModelInput": 3,
         "aiApiKeyInput": 3,
@@ -192,6 +190,10 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         assert control is not None, object_name
         assert pages.widget(page_index).isAncestorOf(control), object_name
     assert dialog.findChild(QObject, "ttsVoiceInput") is None
+    assert dialog.findChild(QObject, "ttsSelectedSummary") is None
+    assert dialog.findChild(QObject, "ttsSelectedName") is None
+    assert dialog.findChild(QObject, "ttsSelectedMeta") is None
+    assert dialog.findChild(QObject, "ttsPreviewButton") is None
     assert dialog.findChild(QObject, "saveSettingsButton") is not None
     assert dialog.findChild(QObject, "cancelSettingsButton") is not None
     assert worker.started
@@ -295,7 +297,6 @@ def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeyp
     _app().processEvents()
 
     assert dialog.current_voice == settings["tts_voice"]
-    assert dialog.tts_selected_name.text() == settings["tts_voice"]
     assert settings["tts_voice"] in _voice_names(dialog)
     assert dialog.tts_voice_list.currentItem().data(
         Qt.ItemDataRole.UserRole
@@ -521,6 +522,7 @@ def test_default_settings_include_content_font_keys():
 
     assert DEFAULT_SETTINGS["content_font_family"] == "Arial"
     assert DEFAULT_SETTINGS["content_font_size"] == 18
+    assert DEFAULT_SETTINGS["tts_language"] == ""
 
 
 def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatch, settings):
@@ -684,8 +686,6 @@ def test_selecting_list_item_stages_voice_short_name(monkeypatch, settings):
     _app().processEvents()
 
     assert dialog.current_voice == target
-    assert dialog.tts_selected_name.text() == target
-    assert "Male" in dialog.tts_selected_meta.text()
     assert dialog._staged_settings()["tts_voice"] == target
     assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"  # not saved yet
 
@@ -700,37 +700,37 @@ def test_initial_configured_voice_remains_selected_after_voices_ready(
     settings["tts_voice"] = "zh-CN-YunxiNeural"
     dialog, worker = _dialog(monkeypatch, settings)
     assert dialog.current_voice == "zh-CN-YunxiNeural"
-    assert dialog.tts_selected_name.text() == "zh-CN-YunxiNeural"
 
     _emit_voices(dialog, worker)
 
     assert dialog.current_voice == "zh-CN-YunxiNeural"
-    assert dialog.tts_selected_name.text() == "zh-CN-YunxiNeural"
     assert dialog.tts_voice_list.currentItem().data(
         Qt.ItemDataRole.UserRole
     ) == "zh-CN-YunxiNeural"
-    assert "Male" in dialog.tts_selected_meta.text()
-    assert "zh-CN" in dialog.tts_selected_meta.text()
     dialog.reject()
 
 
-def test_preview_starts_tts_worker_without_saving(monkeypatch, settings):
+def test_preview_row_button_starts_tts_worker_without_saving(monkeypatch, settings):
     saved = []
     dialog, worker = _dialog(
         monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
     )
     _emit_voices(dialog, worker)
 
-    # Select a non-default voice, then preview
+    # Select a non-default voice, then preview via its row button
     target = "en-GB-SoniaNeural"
+    preview_btn = None
     for i in range(dialog.tts_voice_list.count()):
         item = dialog.tts_voice_list.item(i)
         if item.data(Qt.ItemDataRole.UserRole) == target:
             dialog.tts_voice_list.setCurrentRow(i)
+            row = dialog.tts_voice_list.itemWidget(item)
+            preview_btn = row.preview_button
             break
     _app().processEvents()
+    assert preview_btn is not None
 
-    dialog.tts_preview_button.click()
+    preview_btn.click()
     _app().processEvents()
 
     assert len(FakeTTSWorker.instances) == 1
@@ -738,13 +738,13 @@ def test_preview_starts_tts_worker_without_saving(monkeypatch, settings):
     assert tts.started
     assert tts.voice == target
     assert "preview" in tts.text.lower() or "Hello" in tts.text
-    assert dialog.tts_preview_button.isEnabled() is False
+    assert preview_btn.isEnabled() is False
     assert saved == []
     assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"
 
     tts.finished.emit("/tmp/fake-preview.mp3")
     _app().processEvents()
-    assert dialog.tts_preview_button.isEnabled() is True
+    assert preview_btn.isEnabled() is True
     assert dialog.preview_tts_worker is None
     assert saved == []
     dialog.reject()
@@ -772,6 +772,34 @@ def test_filters_do_not_save_settings(monkeypatch, settings):
     dialog.reject()
 
 
+def test_language_filter_is_remembered_on_save_and_restore(monkeypatch, settings):
+    saved = []
+    settings["tts_language"] = "zh-CN"
+    dialog, worker = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    _emit_voices(dialog, worker)
+
+    assert dialog.current_language == "zh-CN"
+    assert dialog.tts_language_filter.currentData() == "zh-CN"
+    assert _voice_names(dialog) == [
+        "zh-CN-XiaoxiaoNeural",
+        "zh-CN-YunxiNeural",
+    ]
+
+    # Change language filter, then save
+    en_index = dialog.tts_language_filter.findData("en-US")
+    dialog.tts_language_filter.setCurrentIndex(en_index)
+    _app().processEvents()
+    assert dialog.current_language == "en-US"
+    assert dialog._staged_settings()["tts_language"] == "en-US"
+    assert settings["tts_language"] == "zh-CN"  # not saved yet
+
+    dialog.save_button.click()
+    assert saved[0]["tts_language"] == "en-US"
+    assert settings["tts_language"] == "en-US"
+
+
 def test_empty_voice_list_still_allows_save_of_current_voice(monkeypatch, settings):
     saved = []
     dialog, worker = _dialog(
@@ -781,8 +809,8 @@ def test_empty_voice_list_still_allows_save_of_current_voice(monkeypatch, settin
     _app().processEvents()
 
     assert dialog.current_voice == settings["tts_voice"]
-    assert dialog.tts_selected_name.text() == settings["tts_voice"]
     assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
+    assert dialog._staged_settings()["tts_language"] == ""
 
     dialog.save_button.click()
     assert saved[0]["tts_voice"] == settings["tts_voice"]

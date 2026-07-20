@@ -22,6 +22,8 @@ DEFAULT_SETTINGS = {
     "content_font_size": 18,
     "default_database": "",
     "tts_voice": "en-US-AvaMultilingualNeural",
+    # Audio page language filter ("" = All languages)
+    "tts_language": "",
     # AI provider defaults (non-secret)
     "ai_base_url": "https://api.openai.com/v1",
     "ai_model": "gpt-4o-mini",
