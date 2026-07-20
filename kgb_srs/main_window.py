@@ -1768,7 +1768,7 @@ class BarskyApp(QMainWindow):
         highlighted = _highlight_sentence_for_items(sentence, items)
 
         if flipped:
-            lines = [metadata, "", highlighted, ""]
+            lines = [metadata, "", highlighted, "", "---", ""]
             for item in items:
                 expr = item[0] if isinstance(item, tuple) else item
                 meaning = item[1] if isinstance(item, tuple) and len(item) > 1 else ""
@@ -1777,7 +1777,7 @@ class BarskyApp(QMainWindow):
                 else:
                     lines.append(f"**{expr}**")
             # cards.back is a derived cache of the same expression+meaning
-            # pairs — do not append it again under a separator.
+            # pairs — do not append it again under a second separator.
             return "\n".join(lines)
 
         # Front: focus on the sentence; bold only the learning targets.
