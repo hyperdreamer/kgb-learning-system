@@ -208,7 +208,9 @@ Empty `database_root` keeps the portable project default (`db/`).
 **Default Database** may only be chosen inside the Database Directory. The
 setting is stored as a path relative to that root (for example
 `Language-based/Word-Phrase-based/English_barsky.db`), and is resolved back to
-an absolute path when the app opens the default database.
+an absolute path when the app opens the default database. The Default Database
+file picker uses Qt's non-native dialog so navigation cannot leave the root
+(sidebar is limited to that directory; leaving it snaps back).
 
 ---
 

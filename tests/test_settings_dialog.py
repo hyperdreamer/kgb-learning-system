@@ -276,9 +276,6 @@ def test_save_failure_keeps_live_settings_and_dialog_open(monkeypatch, settings)
 def test_database_browser_stages_relative_path_under_root(
     monkeypatch, settings, tmp_path
 ):
-    import kgb_srs.settings_dialog as module
-    from kgb_srs.config import DIR_DB
-
     dialog, _ = _dialog(monkeypatch, settings)
     # Point staged root at tmp so we control the under-root path.
     root = tmp_path / "dbs"
@@ -289,11 +286,12 @@ def test_database_browser_stages_relative_path_under_root(
     dialog.database_root_input.setText(str(root))
 
     calls = []
-    monkeypatch.setattr(
-        module.QFileDialog,
-        "getOpenFileName",
-        lambda *args: (calls.append(args) or (str(chosen), "")),
-    )
+
+    def _fake_pick(root_path, start):
+        calls.append((root_path, start))
+        return str(chosen)
+
+    monkeypatch.setattr(dialog, "_pick_file_under_root", _fake_pick)
 
     dialog.database_browse_button.click()
 
@@ -304,6 +302,7 @@ def test_database_browser_stages_relative_path_under_root(
     assert not os.path.isabs(dialog.default_database_input.text())
     assert settings["default_database"] == ""
     assert calls
+    assert calls[0][0] == str(root)
     dialog.reject()
 
 
@@ -320,9 +319,9 @@ def test_database_browser_rejects_path_outside_root(monkeypatch, settings):
         ),
     )
     monkeypatch.setattr(
-        module.QFileDialog,
-        "getOpenFileName",
-        lambda *args: ("/tmp/chosen.barsky", ""),
+        dialog,
+        "_pick_file_under_root",
+        lambda root_path, start: "/tmp/chosen.barsky",
     )
 
     dialog.database_browse_button.click()
@@ -331,6 +330,89 @@ def test_database_browser_rejects_path_outside_root(monkeypatch, settings):
     assert settings["default_database"] == ""
     assert len(warnings) == 1
     assert warnings[0][1] == "Default Database"
+    dialog.reject()
+
+
+def test_pick_file_under_root_clamps_navigation_outside_root(
+    monkeypatch, settings, tmp_path
+):
+    """Non-native dialog snaps back when the user navigates above the root."""
+    import kgb_srs.settings_dialog as module
+    from PyQt6.QtCore import QUrl
+
+    root = tmp_path / "dbs"
+    root.mkdir()
+    outside = tmp_path / "other"
+    outside.mkdir()
+    dialog, _ = _dialog(monkeypatch, settings)
+
+    created = {}
+
+    class _EnteredSignal:
+        def connect(self, slot):
+            created["clamp"] = slot
+
+    class FakeFileDialog:
+        Option = module.QFileDialog.Option
+        FileMode = module.QFileDialog.FileMode
+        AcceptMode = module.QFileDialog.AcceptMode
+
+        def __init__(self, parent, title, start):
+            self.parent = parent
+            self.title = title
+            self.start = start
+            self._directory = start
+            self._sidebar = []
+            self._name_filters = []
+            self._options = set()
+            self._file_mode = None
+            self._accept_mode = None
+            self.directoryEntered = _EnteredSignal()
+            created["dialog"] = self
+
+        def setOption(self, option, on=True):
+            if on:
+                self._options.add(option)
+            else:
+                self._options.discard(option)
+
+        def setFileMode(self, mode):
+            self._file_mode = mode
+
+        def setAcceptMode(self, mode):
+            self._accept_mode = mode
+
+        def setNameFilters(self, filters):
+            self._name_filters = list(filters)
+
+        def setSidebarUrls(self, urls):
+            self._sidebar = list(urls)
+
+        def setDirectory(self, path):
+            self._directory = path
+
+        def exec(self):
+            clamp = created["clamp"]
+            # Leaving the root snaps back.
+            clamp(str(outside))
+            assert self._directory == str(root)
+            # Staying under the root does not force setDirectory.
+            before = self._directory
+            clamp(str(root / "Language-based"))
+            assert self._directory == before
+            return module.QDialog.DialogCode.Accepted
+
+        def selectedFiles(self):
+            return [str(root / "Language-based" / "English_barsky.db")]
+
+    monkeypatch.setattr(module, "QFileDialog", FakeFileDialog)
+
+    path = dialog._pick_file_under_root(str(root), str(root))
+
+    assert path == str(root / "Language-based" / "English_barsky.db")
+    fake = created["dialog"]
+    assert FakeFileDialog.Option.DontUseNativeDialog in fake._options
+    assert fake._sidebar == [QUrl.fromLocalFile(str(root))]
     dialog.reject()
 
 

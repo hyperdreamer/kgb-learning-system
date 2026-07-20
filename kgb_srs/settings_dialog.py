@@ -439,15 +439,45 @@ class SettingsDialog(QDialog):
         if not normalize_default_database(current, root):
             self.default_database_input.clear()
 
+    def _pick_file_under_root(self, root: str, start: str) -> str:
+        """Open a non-native file dialog that cannot navigate outside *root*.
+
+        The system (native) file manager cannot be constrained; Qt's own dialog
+        can. Sidebar is limited to the root, and directoryEntered snaps back
+        when the user tries to leave it. Final selection is still validated by
+        the caller.
+        """
+        root = os.path.abspath(os.path.expanduser(root))
+        start = os.path.abspath(os.path.expanduser(start))
+        if not is_path_under_root(start, root) or not os.path.isdir(start):
+            start = root
+
+        dialog = QFileDialog(self, "Select Default Database", start)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dialog.setNameFilters(
+            [f"Barsky DB (*{DB_SUFFIX})", "All Files (*)"]
+        )
+        # Hide places that let the user jump outside the root.
+        dialog.setSidebarUrls([QUrl.fromLocalFile(root)])
+        dialog.setDirectory(start)
+
+        def _clamp_to_root(path: str) -> None:
+            if not is_path_under_root(path, root):
+                dialog.setDirectory(root)
+
+        dialog.directoryEntered.connect(_clamp_to_root)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return ""
+        selected = dialog.selectedFiles()
+        return selected[0] if selected else ""
+
     def browse_database(self):
         root = self._staged_root_path()
         start = root if os.path.isdir(root) else DIR_DB
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Default Database",
-            start,
-            f"Barsky DB (*{DB_SUFFIX});;All Files (*)",
-        )
+        path = self._pick_file_under_root(root, start)
         if not path:
             return
         if not is_path_under_root(path, root):
