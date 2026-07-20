@@ -29,8 +29,10 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QSizePolicy,
     QTabWidget,
+    QToolButton,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
+from PyQt6.QtGui import QPainter, QPen, QColor, QPixmap, QIcon
 
 from .catalog import DatabaseType
 from .validation import validate_unfamiliar_items, deduplicate_unfamiliar_items
@@ -659,26 +661,17 @@ class WordPhraseCardDialog(QDialog):
             lambda _checked=False: self._add_meaning_row()
         )
         header_row.addWidget(self._add_meaning_btn)
-        self._remove_meaning_btn = QPushButton("Remove")
-        self._remove_meaning_btn.setToolTip("Remove the current meaning tab.")
-        self._remove_meaning_btn.clicked.connect(
-            lambda _checked=False: self._remove_current_meaning()
-        )
-        header_row.addWidget(self._remove_meaning_btn)
         layout.addLayout(header_row)
 
         self._meanings_tabs = QTabWidget()
         self._meanings_tabs.setDocumentMode(True)
         self._meanings_tabs.setMovable(False)
-        # Avoid native per-tab close buttons: Plasma/Fusion styles can paint
-        # a double/ghost X. Remove is a single explicit header control.
+        # Closable via owned per-tab X buttons (not the style's default
+        # close widget, which can double-paint under Plasma/Breeze).
         self._meanings_tabs.setTabsClosable(False)
         self._meanings_tabs.setMinimumHeight(220)
         self._meanings_tabs.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self._meanings_tabs.currentChanged.connect(
-            lambda _idx: self._update_meaning_controls()
         )
         layout.addWidget(self._meanings_tabs, stretch=1)
 
@@ -798,23 +791,101 @@ class WordPhraseCardDialog(QDialog):
         self._rebuild_tab_labels()
         self._update_meaning_controls()
 
-    def _remove_current_meaning(self):
-        """Remove the currently selected meaning tab."""
-        self._on_tab_close_requested(self._meanings_tabs.currentIndex())
-
     def _rebuild_tab_labels(self):
         """Refresh Meaning N tab titles after add/remove."""
         for idx in range(self._meanings_tabs.count()):
             self._meanings_tabs.setTabText(idx, f"Meaning {idx + 1}")
 
+    @staticmethod
+    def _make_tab_close_button() -> QToolButton:
+        """Flat X control we own (avoids style double-paint of default close)."""
+        btn = QToolButton()
+        btn.setObjectName("meaningTabClose")
+        btn.setAutoRaise(True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFixedSize(16, 16)
+        btn.setIconSize(QSize(10, 10))
+        btn.setToolTip("Close this meaning")
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Draw a simple monochrome X so styles cannot add a second glyph.
+        pix = QPixmap(10, 10)
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor("#546E7A"))
+        pen.setWidth(1)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(2, 2, 8, 8)
+        painter.drawLine(8, 2, 2, 8)
+        painter.end()
+        btn.setIcon(QIcon(pix))
+        btn.setStyleSheet(
+            "QToolButton#meaningTabClose {"
+            "  border: none;"
+            "  background: transparent;"
+            "  padding: 0;"
+            "  margin: 0;"
+            "}"
+            "QToolButton#meaningTabClose:hover {"
+            "  background: rgba(0, 0, 0, 0.10);"
+            "  border-radius: 3px;"
+            "}"
+            "QToolButton#meaningTabClose:pressed {"
+            "  background: rgba(0, 0, 0, 0.16);"
+            "}"
+        )
+        return btn
+
+    def _attach_owned_close_button(self, index: int):
+        """Install one owned close X on tab *index* (replaces any style button)."""
+        bar = self._meanings_tabs.tabBar()
+        if bar is None or index < 0 or index >= self._meanings_tabs.count():
+            return
+        # Clear left-side slot so styles cannot leave a ghost close there.
+        bar.setTabButton(index, bar.ButtonPosition.LeftSide, None)
+
+        close_btn = self._make_tab_close_button()
+        # Capture index at click time via the bar, not a stale default.
+        close_btn.clicked.connect(
+            lambda _checked=False, b=close_btn: self._on_owned_close_clicked(b)
+        )
+        bar.setTabButton(index, bar.ButtonPosition.RightSide, close_btn)
+
+    def _on_owned_close_clicked(self, button: QToolButton):
+        """Map an owned close button back to its current tab index."""
+        bar = self._meanings_tabs.tabBar()
+        if bar is None:
+            return
+        for idx in range(self._meanings_tabs.count()):
+            if bar.tabButton(idx, bar.ButtonPosition.RightSide) is button:
+                self._on_tab_close_requested(idx)
+                return
+
     def _update_meaning_controls(self):
-        """Sync Add/Remove buttons with current tab count."""
+        """Sync Add button and owned per-tab close X with current count."""
         count = len(self._meaning_rows)
         self._add_meaning_btn.setEnabled(count < MAX_WORD_PHRASE_MEANINGS)
-        # Keep at least one meaning tab.
-        self._remove_meaning_btn.setEnabled(count > 1)
-        # Never use native close widgets (style-dependent double-X artifacts).
+        # Keep setTabsClosable(False) so Qt never installs its own close
+        # widgets (those can double-paint under Plasma/Breeze). We own the X.
         self._meanings_tabs.setTabsClosable(False)
+
+        bar = self._meanings_tabs.tabBar()
+        if bar is None:
+            return
+
+        show_close = count > 1
+        for idx in range(self._meanings_tabs.count()):
+            if show_close:
+                existing = bar.tabButton(idx, bar.ButtonPosition.RightSide)
+                if existing is None or not isinstance(existing, QToolButton):
+                    self._attach_owned_close_button(idx)
+                else:
+                    existing.setVisible(True)
+            else:
+                # Sole tab: no close control at all.
+                bar.setTabButton(idx, bar.ButtonPosition.RightSide, None)
+                bar.setTabButton(idx, bar.ButtonPosition.LeftSide, None)
 
     # ------------------------------------------------------------------
     # AI availability
@@ -936,9 +1007,6 @@ class WordPhraseCardDialog(QDialog):
         self._add_meaning_btn.setEnabled(
             enabled and len(self._meaning_rows) < MAX_WORD_PHRASE_MEANINGS
         )
-        self._remove_meaning_btn.setEnabled(
-            enabled and len(self._meaning_rows) > 1
-        )
         self._meanings_tabs.setEnabled(enabled)
         self._validate_btn.setEnabled(enabled)
         self._save_btn.setEnabled(enabled)
@@ -946,6 +1014,9 @@ class WordPhraseCardDialog(QDialog):
         for row in self._meaning_rows:
             row["meaning_edit"].setEnabled(enabled)
             row["example_edit"].setEnabled(enabled)
+        # Close buttons follow tab enabled state via parent; re-sync ownership.
+        if enabled:
+            self._update_meaning_controls()
 
     def _restore_ui_after_ai(self):
         """Restore controls; worker reference clears on thread termination."""

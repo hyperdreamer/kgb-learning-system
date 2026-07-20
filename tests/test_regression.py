@@ -315,9 +315,9 @@ class TestFinalFormRegressions:
         dialog.close()
 
     def test_word_dialog_meanings_use_tabs(self):
-        """Meanings are tab pages labeled Meaning N; Remove keeps one tab."""
+        """Meanings are tab pages labeled Meaning N; owned close X keeps one tab."""
         _qt_app()
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication, QToolButton
         from kgb_srs.forms import WordPhraseCardDialog
 
         dialog = WordPhraseCardDialog(front="bank")
@@ -325,7 +325,11 @@ class TestFinalFormRegressions:
         assert dialog._meanings_tabs.count() == 1
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert not dialog._meanings_tabs.tabsClosable()
-        assert not dialog._remove_meaning_btn.isEnabled()
+        bar = dialog._meanings_tabs.tabBar()
+        assert bar is not None
+        # Sole tab has no close control
+        assert bar.tabButton(0, bar.ButtonPosition.RightSide) is None
+        assert bar.tabButton(0, bar.ButtonPosition.LeftSide) is None
 
         dialog._add_meaning_btn.click()
         dialog.resize(560, 520)
@@ -337,23 +341,27 @@ class TestFinalFormRegressions:
         assert dialog._meanings_tabs.tabText(1) == "Meaning 2"
         assert not dialog._meanings_tabs.tabsClosable()
         assert dialog._add_meaning_btn.isEnabled()
-        assert dialog._remove_meaning_btn.isEnabled()
         # Newly added tab is active
         assert dialog._meanings_tabs.currentIndex() == 1
-        # No native per-tab close buttons (avoids double-X style artifacts)
-        bar = dialog._meanings_tabs.tabBar()
-        assert bar is not None
+        # Exactly one owned close X per tab; no left-side ghost close
         for i in range(dialog._meanings_tabs.count()):
-            assert bar.tabButton(i, bar.ButtonPosition.RightSide) is None
-            assert bar.tabButton(i, bar.ButtonPosition.LeftSide) is None
+            right = bar.tabButton(i, bar.ButtonPosition.RightSide)
+            left = bar.tabButton(i, bar.ButtonPosition.LeftSide)
+            assert left is None
+            assert isinstance(right, QToolButton)
+            assert right.objectName() == "meaningTabClose"
+            assert right.isVisible()
 
-        dialog._remove_meaning_btn.click()
+        # Close Meaning 2 (active) via its owned button
+        close2 = bar.tabButton(1, bar.ButtonPosition.RightSide)
+        assert isinstance(close2, QToolButton)
+        close2.click()
         QApplication.processEvents()
         assert dialog._meanings_tabs.count() == 1
         assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
         assert not dialog._meanings_tabs.tabsClosable()
         assert dialog._add_meaning_btn.isEnabled()
-        assert not dialog._remove_meaning_btn.isEnabled()
+        assert bar.tabButton(0, bar.ButtonPosition.RightSide) is None
         dialog.close()
 
     def test_word_dialog_allows_up_to_max_meaning_tabs(self):
