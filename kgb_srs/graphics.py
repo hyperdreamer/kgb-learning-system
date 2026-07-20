@@ -33,6 +33,30 @@ except ImportError:
 from .markdown_utils import build_review_html
 
 
+# ── Reusable button stylesheet helper ────────────────────────────────────────
+
+def _button_stylesheet(object_name, base_color, hover_color, pressed_color,
+                       font_fam, font_sz, dyn_pad):
+    """Return a full QPushButton stylesheet covering normal, hover, pressed,
+    and disabled states."""
+    shared = (
+        f"color: white; "
+        f"padding: {dyn_pad}px; "
+        f"font-family: '{font_fam}'; "
+        f"font-size: {font_sz}px; "
+        f"font-weight: bold; "
+        f"border-radius: 5px;"
+    )
+
+    return (
+        f"QPushButton#{object_name} {{ background-color: {base_color}; {shared} }}\n"
+        f"QPushButton#{object_name}:hover {{ background-color: {hover_color}; }}\n"
+        f"QPushButton#{object_name}:pressed {{ background-color: {pressed_color}; }}\n"
+        f"QPushButton#{object_name}:disabled "
+        f"{{ background-color: #CFD8DC; color: #78909C; }}"
+    )
+
+
 class DropZoneItem(QGraphicsRectItem):
     """A rounded drop zone (correct/incorrect) at the bottom of the canvas."""
 
@@ -162,19 +186,23 @@ class FlashCardItem(QGraphicsRectItem):
 
         self.tts_btn = QPushButton(" Listen")
         self.tts_btn.setIcon(QIcon.fromTheme("audio-volume-high"))
+        self.tts_btn.setObjectName("ttsBtn")
         self.tts_btn.setStyleSheet(
-            f"background-color: #9C27B0; color: white; padding: {dyn_pad}px; "
-            f"font-family: '{font_fam}'; font-size: {font_sz}px; "
-            f"font-weight: bold; border-radius: 5px;"
+            _button_stylesheet(
+                "ttsBtn", "#9C27B0", "#AB47BC", "#8E24AA",
+                font_fam, font_sz, dyn_pad,
+            )
         )
         self.tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tts_btn.clicked.connect(self.trigger_tts)
 
         self.flip_btn = QPushButton(" Reveal Answer")
+        self.flip_btn.setObjectName("revealBtn")
         self.flip_btn.setStyleSheet(
-            f"background-color: #2196F3; color: white; padding: {dyn_pad}px; "
-            f"font-family: '{font_fam}'; font-size: {font_sz}px; "
-            f"font-weight: bold; border-radius: 5px;"
+            _button_stylesheet(
+                "revealBtn", "#2196F3", "#42A5F5", "#1E88E5",
+                font_fam, font_sz, dyn_pad,
+            )
         )
         self.flip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flip_btn.clicked.connect(self.app_ref.flip_card)
