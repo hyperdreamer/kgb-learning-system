@@ -35,18 +35,24 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QPainter, QPen, QColor, QPixmap, QIcon
 
 from .catalog import DatabaseType
-from .validation import validate_unfamiliar_items, deduplicate_unfamiliar_items
+from .validation import (
+    validate_unfamiliar_items,
+    deduplicate_unfamiliar_items,
+    apply_ai_membership_claims,
+)
 from .ai_provider import (
     AIProviderConfig,
     AIClient,
     _make_http_call,
     build_sentence_prompt,
     build_word_phrase_prompt,
+    build_membership_prompt,
     AIMissingConfigError,
 )
 from .ai_parser import (
     parse_sentence_meanings,
     parse_word_phrase_meanings,
+    parse_membership_claims,
     AIParseError,
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
@@ -232,6 +238,7 @@ class SentenceCardDialog(QDialog):
         validate_btn = QPushButton("Validate")
         validate_btn.clicked.connect(self._validate)
         btn_layout.addWidget(validate_btn)
+        self._validate_btn = validate_btn
 
         btn_layout.addStretch()
 
@@ -539,11 +546,18 @@ class SentenceCardDialog(QDialog):
             self._status_label.setText(
                 f"✅ All {len(items)} items found in the sentence.")
             self._status_label.setStyleSheet("color: #393;")
+            return
+
+        missing_str = ", ".join(result.missing)
+        ai_config = AIProviderConfig.from_settings(self._settings)
+        if ai_config.configured:
+            self._status_label.setText(
+                f"❌ Local check missed: {missing_str}  "
+                f"(Save can ask AI for residual forms)")
         else:
-            missing_str = ", ".join(result.missing)
             self._status_label.setText(
                 f"❌ Not found in sentence: {missing_str}")
-            self._status_label.setStyleSheet("color: #c00;")
+        self._status_label.setStyleSheet("color: #c00;")
 
     def _accept(self):
         sentence = self._sentence_edit.toPlainText().strip()
@@ -564,8 +578,14 @@ class SentenceCardDialog(QDialog):
             return
 
         result = validate_unfamiliar_items(sentence, items)
-        if not result.valid:
-            missing_str = ", ".join(result.missing)
+        if result.valid:
+            self._finish_accept(sentence, items)
+            return
+
+        # Local-first residual: optional AI only for items local rules missed.
+        ai_config = AIProviderConfig.from_settings(self._settings)
+        missing_str = ", ".join(result.missing)
+        if not ai_config.configured:
             QMessageBox.warning(
                 self, "Validation",
                 f"These items were not found in the sentence:\n\n"
@@ -574,7 +594,118 @@ class SentenceCardDialog(QDialog):
             )
             return
 
-        # Build items with meanings from editors
+        reply = QMessageBox.question(
+            self,
+            "Local check incomplete",
+            f"Local rules could not match:\n\n{missing_str}\n\n"
+            "Ask the AI provider to check residual inflected / irregular "
+            "forms?\n\n(AI claims are verified against the sentence text.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._start_membership_ai_check(sentence, items, result.missing, ai_config)
+
+    def _start_membership_ai_check(
+        self,
+        sentence: str,
+        items: list[str],
+        missing: list[str],
+        ai_config: AIProviderConfig,
+    ) -> None:
+        """Run AI membership fallback for residual missing items only."""
+        if getattr(self, "_membership_worker", None) is not None:
+            return
+
+        prompt = build_membership_prompt(sentence, missing)
+        self._membership_sentence = sentence
+        self._membership_items = items
+        self._membership_missing = list(missing)
+
+        self._status_label.setText(
+            f"🤖 AI checking {len(missing)} residual item(s)…")
+        self._status_label.setStyleSheet("color: #666;")
+        self._ai_progress.setVisible(True)
+        self._ai_progress.setRange(0, 0)
+        self._save_btn.setEnabled(False)
+        self._validate_btn.setEnabled(False)
+        self._generate_btn.setEnabled(False)
+
+        worker = _AIGenerateWorker(ai_config, prompt)
+        worker.result.connect(self._on_membership_ai_result)
+        worker.error.connect(self._on_membership_ai_error)
+        worker.finished.connect(self._on_membership_ai_finished)
+        self._membership_worker = worker
+        worker.start()
+
+    def _on_membership_ai_result(self, response_text: str) -> None:
+        sentence = getattr(self, "_membership_sentence", "")
+        items = getattr(self, "_membership_items", [])
+        missing = getattr(self, "_membership_missing", [])
+        try:
+            claims = parse_membership_claims(response_text, missing)
+            residual = apply_ai_membership_claims(sentence, missing, claims)
+        except (AIParseError, AIValidationError) as e:
+            QMessageBox.warning(
+                self, "AI membership check",
+                f"Could not use AI residual check:\n{e}\n\n"
+                f"Still unmatched: {', '.join(missing)}"
+            )
+            return
+        except Exception as e:
+            QMessageBox.warning(
+                self, "AI membership check",
+                f"Unexpected error in AI residual check:\n{e}"
+            )
+            return
+
+        if not residual.valid:
+            missing_str = ", ".join(residual.missing)
+            QMessageBox.warning(
+                self, "Validation",
+                f"These items were still not found after AI check:\n\n"
+                f"{missing_str}\n\n"
+                "Please remove them or fix the sentence before saving."
+            )
+            self._status_label.setText(
+                f"❌ Still not found: {missing_str}")
+            self._status_label.setStyleSheet("color: #c00;")
+            return
+
+        recovered = len(missing)
+        self._status_label.setText(
+            f"✅ AI residual check accepted {recovered} item(s).")
+        self._status_label.setStyleSheet("color: #393;")
+        self._finish_accept(sentence, items)
+
+    def _on_membership_ai_error(self, message: str) -> None:
+        missing = getattr(self, "_membership_missing", [])
+        missing_str = ", ".join(missing) if missing else "(unknown)"
+        QMessageBox.warning(
+            self, "AI membership check",
+            f"AI residual check failed:\n{message}\n\n"
+            f"Still unmatched: {missing_str}"
+        )
+        self._status_label.setText(
+            f"❌ AI residual check failed; still missing: {missing_str}")
+        self._status_label.setStyleSheet("color: #c00;")
+
+    def _on_membership_ai_finished(self) -> None:
+        worker = getattr(self, "_membership_worker", None)
+        self._membership_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._ai_progress.setVisible(False)
+        self._save_btn.setEnabled(True)
+        self._validate_btn.setEnabled(True)
+        # Re-enable generate only if AI is configured.
+        ai_config = AIProviderConfig.from_settings(self._settings)
+        self._generate_btn.setEnabled(ai_config.configured)
+
+    def _finish_accept(self, sentence: str, items: list[str]) -> None:
+        """Finalize Save after membership validation has passed."""
         result_items: list[tuple[str, str]] = []
         for (expr, edit) in self._meaning_widgets:
             meaning = edit.toPlainText().strip()

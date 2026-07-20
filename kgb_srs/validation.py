@@ -6,7 +6,8 @@ token-sequence path accepts common English inflections (tense / number)
 so a lemma like ``insist on`` matches surface forms such as ``insists on``.
 
 All matching treats item text as literal content (regex metacharacters are
-escaped on the literal path). No network / AI is used.
+escaped on the literal path). Local matching uses no network; optional AI
+fallback lives outside this module and only runs when local matching fails.
 """
 
 from __future__ import annotations
@@ -35,67 +36,199 @@ _RE_ESCAPE_RE = re.compile(r"([.^$*+?{}[\]\\|()])")
 # Leading/trailing punctuation stripped from tokens for flex matching.
 _PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…—–-«»"
 
-# Common irregular English verb forms → shared lemma.
-# Keep this small and high-value; regular -s/-ed/-ing stay on the stemmer.
+# Comprehensive irregular English verb / modal forms → shared lemma family.
+# Regular -s/-ed/-ing still handled by the stemmer; this map covers forms
+# that suffix rules cannot link (go/went/gone, choose/chose/chosen, ...).
+# Overlapping spellings that would false-merge distinct lemmas are avoided
+# where practical (e.g. recline-lie omits past "lay" to keep lay/laid separate).
 _IRREGULAR_VERB_GROUPS: tuple[frozenset[str], ...] = (
-    frozenset({"be", "am", "is", "are", "was", "were", "been", "being"}),
-    frozenset({"have", "has", "had", "having"}),
-    frozenset({"do", "does", "did", "done", "doing"}),
-    frozenset({"go", "goes", "going", "went", "gone"}),
-    frozenset({"come", "comes", "coming", "came"}),
-    frozenset({"see", "sees", "seeing", "saw", "seen"}),
-    frozenset({"get", "gets", "getting", "got", "gotten"}),
-    frozenset({"make", "makes", "making", "made"}),
-    frozenset({"take", "takes", "taking", "took", "taken"}),
-    frozenset({"give", "gives", "giving", "gave", "given"}),
-    frozenset({"find", "finds", "finding", "found"}),
-    frozenset({"think", "thinks", "thinking", "thought"}),
-    frozenset({"say", "says", "saying", "said"}),
-    frozenset({"tell", "tells", "telling", "told"}),
-    frozenset({"know", "knows", "knowing", "knew", "known"}),
-    frozenset({"feel", "feels", "feeling", "felt"}),
-    frozenset({"leave", "leaves", "leaving", "left"}),
-    frozenset({"keep", "keeps", "keeping", "kept"}),
-    frozenset({"begin", "begins", "beginning", "began", "begun"}),
-    frozenset({"run", "runs", "running", "ran"}),
-    frozenset({"write", "writes", "writing", "wrote", "written"}),
-    frozenset({"speak", "speaks", "speaking", "spoke", "spoken"}),
-    frozenset({"break", "breaks", "breaking", "broke", "broken"}),
-    frozenset({"choose", "chooses", "choosing", "chose", "chosen"}),
-    frozenset({"drive", "drives", "driving", "drove", "driven"}),
-    frozenset({"eat", "eats", "eating", "ate", "eaten"}),
-    frozenset({"fall", "falls", "falling", "fell", "fallen"}),
-    frozenset({"fly", "flies", "flying", "flew", "flown"}),
-    frozenset({"grow", "grows", "growing", "grew", "grown"}),
-    frozenset({"hide", "hides", "hiding", "hid", "hidden"}),
-    frozenset({"hold", "holds", "holding", "held"}),
-    frozenset({"read", "reads", "reading"}),  # past "read" same spelling
-    frozenset({"rise", "rises", "rising", "rose", "risen"}),
-    frozenset({"send", "sends", "sending", "sent"}),
-    frozenset({"sing", "sings", "singing", "sang", "sung"}),
-    frozenset({"sit", "sits", "sitting", "sat"}),
-    frozenset({"sleep", "sleeps", "sleeping", "slept"}),
-    frozenset({"stand", "stands", "standing", "stood"}),
-    frozenset({"swim", "swims", "swimming", "swam", "swum"}),
-    frozenset({"teach", "teaches", "teaching", "taught"}),
-    frozenset({"throw", "throws", "throwing", "threw", "thrown"}),
-    frozenset({"understand", "understands", "understanding", "understood"}),
-    frozenset({"wear", "wears", "wearing", "wore", "worn"}),
-    frozenset({"win", "wins", "winning", "won"}),
-    frozenset({"buy", "buys", "buying", "bought"}),
-    frozenset({"bring", "brings", "bringing", "brought"}),
-    frozenset({"build", "builds", "building", "built"}),
+    frozenset({"abide", "abided", "abides", "abiding", "abode"}),
+    frozenset({"am", "are", "be", "been", "being", "is", "was", "were"}),
+    frozenset({"ate", "eat", "eaten", "eating", "eats"}),
+    frozenset({"bear", "bearing", "bears", "bore", "born", "borne", "forbear", "forbearing", "forbears", "forbore", "forborne"}),
+    frozenset({"beat", "beaten", "beating", "beats"}),
+    frozenset({"began", "begin", "beginning", "begins", "begun"}),
+    frozenset({"beget", "begets", "begetting", "begot", "begotten"}),
+    frozenset({"bend", "bending", "bends", "bent"}),
+    frozenset({"bereave", "bereaved", "bereaves", "bereaving", "bereft"}),
+    frozenset({"bet", "bets", "betting"}),
+    frozenset({"bade", "bid", "bidden", "bidding", "bids", "forbade", "forbid", "forbidden", "forbidding", "forbids", "outbid", "outbidding", "outbids", "rebid", "rebidding", "rebids", "underbid", "underbidding", "underbids"}),
+    frozenset({"bind", "binding", "binds", "bound", "unbind", "unbinding", "unbinds", "unbound"}),
+    frozenset({"bit", "bite", "bites", "biting", "bitten"}),
+    frozenset({"bled", "bleed", "bleeding", "bleeds"}),
+    frozenset({"blend", "blended", "blending", "blends", "blent"}),
+    frozenset({"blew", "blow", "blowing", "blown", "blows"}),
+    frozenset({"break", "breaking", "breaks", "broke", "broken"}),
+    frozenset({"bred", "breed", "breeding", "breeds"}),
+    frozenset({"bring", "bringing", "brings", "brought"}),
+    frozenset({"build", "building", "builds", "built", "rebuild", "rebuilding", "rebuilds", "rebuilt"}),
+    frozenset({"burn", "burned", "burning", "burns", "burnt"}),
+    frozenset({"burst", "bursting", "bursts"}),
+    frozenset({"bust", "busted", "busting", "busts"}),
+    frozenset({"bought", "buy", "buying", "buys"}),
+    frozenset({"became", "become", "becomes", "becoming", "came", "come", "comes", "coming", "overcame", "overcome", "overcomes", "overcoming"}),
+    frozenset({"can", "could"}),
+    frozenset({"broadcast", "broadcasting", "broadcasts", "cast", "casting", "casts", "forecast", "forecasting", "forecasts", "telecast", "telecasting", "telecasts"}),
     frozenset({"catch", "catches", "catching", "caught"}),
-    frozenset({"draw", "draws", "drawing", "drew", "drawn"}),
-    frozenset({"drink", "drinks", "drinking", "drank", "drunk"}),
+    frozenset({"chid", "chidden", "chide", "chided", "chides", "chiding"}),
+    frozenset({"choose", "chooses", "choosing", "chose", "chosen"}),
+    frozenset({"clad", "clothe", "clothed", "clothes", "clothing"}),
+    frozenset({"cleave", "cleaved", "cleaves", "cleaving", "cleft", "clove", "cloven"}),
+    frozenset({"cling", "clinging", "clings", "clung"}),
+    frozenset({"cost", "costing", "costs"}),
+    frozenset({"creep", "creeping", "creeps", "crept"}),
+    frozenset({"cut", "cuts", "cutting", "undercut", "undercuts", "undercutting"}),
+    frozenset({"deal", "dealing", "deals", "dealt"}),
+    frozenset({"dig", "digging", "digs", "dug"}),
+    frozenset({"dive", "dived", "dives", "diving", "dove"}),
+    frozenset({"did", "do", "does", "doing", "done", "outdid", "outdo", "outdoes", "outdoing", "outdone", "overdid", "overdo", "overdoes", "overdoing", "overdone", "redid", "redo", "redoes", "redoing", "redone", "undid", "undo", "undoes", "undoing", "undone"}),
+    frozenset({"drank", "drink", "drinking", "drinks", "drunk"}),
+    frozenset({"draw", "drawing", "drawn", "draws", "drew", "overdraw", "overdrawing", "overdrawn", "overdraws", "overdrew", "withdraw", "withdrawing", "withdrawn", "withdraws", "withdrew"}),
+    frozenset({"dream", "dreamed", "dreaming", "dreams", "dreamt"}),
+    frozenset({"drive", "driven", "drives", "driving", "drove"}),
+    frozenset({"dwell", "dwelled", "dwelling", "dwells", "dwelt"}),
+    frozenset({"befall", "befallen", "befalling", "befalls", "befell", "fall", "fallen", "falling", "falls", "fell"}),
+    frozenset({"fed", "feed", "feeding", "feeds"}),
+    frozenset({"feel", "feeling", "feels", "felt"}),
+    frozenset({"fight", "fighting", "fights", "fought", "outfight", "outfighting", "outfights", "outfought"}),
+    frozenset({"find", "finding", "finds", "found"}),
+    frozenset({"fit", "fits", "fitted", "fitting"}),
+    frozenset({"fled", "flee", "fleeing", "flees"}),
+    frozenset({"fling", "flinging", "flings", "flung"}),
+    frozenset({"flew", "flies", "flown", "fly", "flying"}),
+    frozenset({"forgave", "forgive", "forgiven", "forgives", "forgiving"}),
     frozenset({"forget", "forgets", "forgetting", "forgot", "forgotten"}),
-    frozenset({"forgive", "forgives", "forgiving", "forgave", "forgiven"}),
-    frozenset({"hear", "hears", "hearing", "heard"}),
-    frozenset({"pay", "pays", "paying", "paid"}),
-    frozenset({"sell", "sells", "selling", "sold"}),
+    frozenset({"freeze", "freezes", "freezing", "froze", "frozen"}),
+    frozenset({"gave", "give", "given", "gives", "giving"}),
+    frozenset({"get", "gets", "getting", "got", "gotten"}),
+    frozenset({"gild", "gilded", "gilding", "gilds", "gilt"}),
+    frozenset({"gird", "girded", "girding", "girds", "girt"}),
+    frozenset({"forego", "foregoes", "foregoing", "foregone", "forewent", "forgo", "forgoes", "forgoing", "forgone", "forwent", "go", "goes", "going", "gone", "undergo", "undergoes", "undergoing", "undergone", "underwent", "went"}),
+    frozenset({"grew", "grow", "growing", "grown", "grows", "outgrew", "outgrow", "outgrowing", "outgrown", "outgrows"}),
+    frozenset({"grind", "grinding", "grinds", "ground"}),
+    frozenset({"had", "has", "have", "having"}),
+    frozenset({"hang", "hanged", "hanging", "hangs", "hung"}),
+    frozenset({"hear", "heard", "hearing", "hears", "overhear", "overheard", "overhearing", "overhears"}),
+    frozenset({"beheld", "behold", "beholding", "beholds", "held", "hold", "holding", "holds", "upheld", "uphold", "upholding", "upholds", "withheld", "withhold", "withholding", "withholds"}),
+    frozenset({"hew", "hewed", "hewing", "hewn", "hews"}),
+    frozenset({"hid", "hidden", "hide", "hides", "hiding"}),
+    frozenset({"hit", "hits", "hitting"}),
+    frozenset({"heave", "heaved", "heaves", "heaving", "hove"}),
+    frozenset({"hurt", "hurting", "hurts"}),
+    frozenset({"keep", "keeping", "keeps", "kept"}),
+    frozenset({"kneel", "kneeled", "kneeling", "kneels", "knelt"}),
+    frozenset({"knew", "know", "knowing", "known", "knows"}),
+    frozenset({"knit", "knits", "knitted", "knitting"}),
+    frozenset({"lade", "laded", "laden", "lades", "lading", "load", "loaded", "loading", "loads"}),
+    frozenset({"inlaid", "inlay", "inlaying", "inlays", "laid", "lay", "laying", "lays", "mislaid", "mislay", "mislaying", "mislays", "waylaid", "waylay", "waylaying", "waylays"}),
+    frozenset({"lean", "leaned", "leaning", "leans", "leant"}),
+    frozenset({"leap", "leaped", "leaping", "leaps", "leapt"}),
+    frozenset({"learn", "learned", "learning", "learns", "learnt"}),
+    frozenset({"lead", "leading", "leads", "led", "mislead", "misleading", "misleads", "misled"}),
+    frozenset({"leave", "leaves", "leaving", "left"}),
+    frozenset({"lend", "lending", "lends", "lent"}),
+    frozenset({"let", "lets", "letting", "sublet", "sublets", "subletting"}),
+    frozenset({"lain", "lie", "lies", "lying"}),
+    frozenset({"alight", "alighted", "alighting", "alights", "alit", "light", "lighted", "lighting", "lights", "lit", "relight", "relighted", "relighting", "relights", "relit"}),
+    frozenset({"lose", "loses", "losing", "lost"}),
+    frozenset({"made", "make", "makes", "making", "remade", "remake", "remakes", "remaking"}),
+    frozenset({"may", "might"}),
+    frozenset({"mean", "meaning", "means", "meant"}),
+    frozenset({"melt", "melted", "melting", "melts", "molten"}),
+    frozenset({"meet", "meeting", "meets", "met"}),
+    frozenset({"mow", "mowed", "mowing", "mown", "mows"}),
+    frozenset({"must"}),
+    frozenset({"paid", "pay", "paying", "pays", "repaid", "repay", "repaying", "repays"}),
+    frozenset({"pen", "penned", "penning", "pens", "pent"}),
+    frozenset({"plead", "pleaded", "pleading", "pleads", "pled"}),
+    frozenset({"prove", "proved", "proven", "proves", "proving"}),
+    frozenset({"input", "inputs", "inputting", "output", "outputs", "outputting", "put", "puts", "putting"}),
+    frozenset({"quit", "quits", "quitting"}),
+    frozenset({"ran", "run", "running", "runs"}),
+    frozenset({"rang", "ring", "ringing", "rings", "rung"}),
+    frozenset({"read", "reading", "reads"}),
+    frozenset({"rend", "rending", "rends", "rent"}),
+    frozenset({"rid", "ridding", "rids"}),
+    frozenset({"overridden", "override", "overrides", "overriding", "overrode", "ridden", "ride", "rides", "riding", "rode"}),
+    frozenset({"arise", "arisen", "arises", "arising", "arose", "rise", "risen", "rises", "rising", "rose"}),
+    frozenset({"sang", "sing", "singing", "sings", "sung"}),
+    frozenset({"sank", "sink", "sinking", "sinks", "sunk"}),
+    frozenset({"sat", "sit", "sits", "sitting"}),
+    frozenset({"foresaw", "foresee", "foreseeing", "foreseen", "foresees", "oversaw", "oversee", "overseeing", "overseen", "oversees", "saw", "see", "seeing", "seen", "sees"}),
+    frozenset({"said", "say", "saying", "says", "unsaid", "unsay", "unsaying", "unsays"}),
+    frozenset({"beseech", "beseeched", "beseeches", "beseeching", "besought", "seek", "seeking", "seeks", "sought"}),
+    frozenset({"resell", "reselling", "resells", "resold", "sell", "selling", "sells", "sold"}),
+    frozenset({"send", "sending", "sends", "sent"}),
+    frozenset({"inset", "insets", "insetting", "offset", "offsets", "offsetting", "reset", "resets", "resetting", "set", "sets", "setting", "typeset", "typesets", "typesetting", "upset", "upsets", "upsetting"}),
+    frozenset({"sew", "sewed", "sewing", "sewn", "sews"}),
+    frozenset({"shake", "shaken", "shakes", "shaking", "shook"}),
+    frozenset({"shall", "should"}),
+    frozenset({"shave", "shaved", "shaven", "shaves", "shaving"}),
+    frozenset({"shear", "sheared", "shearing", "shears", "shore", "shorn"}),
+    frozenset({"shed", "shedding", "sheds"}),
+    frozenset({"shine", "shined", "shines", "shining", "shone"}),
+    frozenset({"shoot", "shooting", "shoots", "shot"}),
+    frozenset({"show", "showed", "showing", "shown", "shows"}),
+    frozenset({"shrank", "shrink", "shrinking", "shrinks", "shrunk"}),
     frozenset({"shut", "shuts", "shutting"}),
-    frozenset({"spend", "spends", "spending", "spent"}),
-    frozenset({"wake", "wakes", "waking", "woke", "woken", "awake", "awoke"}),
+    frozenset({"slain", "slay", "slaying", "slays", "slew"}),
+    frozenset({"sleep", "sleeping", "sleeps", "slept"}),
+    frozenset({"slid", "slide", "slides", "sliding"}),
+    frozenset({"sling", "slinging", "slings", "slung"}),
+    frozenset({"slit", "slits", "slitting"}),
+    frozenset({"smell", "smelled", "smelling", "smells", "smelt"}),
+    frozenset({"smite", "smites", "smiting", "smitten", "smote"}),
+    frozenset({"sneak", "sneaked", "sneaking", "sneaks", "snuck"}),
+    frozenset({"sow", "sowed", "sowing", "sown", "sows"}),
+    frozenset({"spat", "spit", "spits", "spitting"}),
+    frozenset({"bespeak", "bespeaking", "bespeaks", "bespoke", "bespoken", "speak", "speaking", "speaks", "spoke", "spoken"}),
+    frozenset({"sped", "speed", "speeded", "speeding", "speeds"}),
+    frozenset({"spell", "spelled", "spelling", "spells", "spelt"}),
+    frozenset({"spend", "spending", "spends", "spent"}),
+    frozenset({"spill", "spilled", "spilling", "spills", "spilt"}),
+    frozenset({"spin", "spinning", "spins", "spun"}),
+    frozenset({"split", "splits", "splitting"}),
+    frozenset({"spoil", "spoiled", "spoiling", "spoils", "spoilt"}),
+    frozenset({"sprang", "spring", "springing", "springs", "sprung"}),
+    frozenset({"spread", "spreading", "spreads"}),
+    frozenset({"misunderstand", "misunderstanding", "misunderstands", "misunderstood", "stand", "standing", "stands", "stood", "understand", "understanding", "understands", "understood", "withstand", "withstanding", "withstands", "withstood"}),
+    frozenset({"stank", "stink", "stinking", "stinks", "stunk"}),
+    frozenset({"steal", "stealing", "steals", "stole", "stolen"}),
+    frozenset({"stick", "sticking", "sticks", "stuck"}),
+    frozenset({"sting", "stinging", "stings", "stung"}),
+    frozenset({"strew", "strewed", "strewing", "strewn", "strews"}),
+    frozenset({"stridden", "stride", "strides", "striding", "strode"}),
+    frozenset({"stricken", "strike", "strikes", "striking", "struck"}),
+    frozenset({"string", "stringing", "strings", "strung"}),
+    frozenset({"strive", "strived", "striven", "strives", "striving", "strove"}),
+    frozenset({"swam", "swim", "swimming", "swims", "swum"}),
+    frozenset({"forswear", "forswearing", "forswears", "forswore", "forsworn", "swear", "swearing", "swears", "swore", "sworn"}),
+    frozenset({"sweat", "sweated", "sweating", "sweats"}),
+    frozenset({"sweep", "sweeping", "sweeps", "swept"}),
+    frozenset({"swell", "swelled", "swelling", "swells", "swollen"}),
+    frozenset({"swing", "swinging", "swings", "swung"}),
+    frozenset({"forsake", "forsaken", "forsakes", "forsaking", "forsook", "mistake", "mistaken", "mistakes", "mistaking", "mistook", "overtake", "overtaken", "overtakes", "overtaking", "overtook", "partake", "partaken", "partakes", "partaking", "partook", "retake", "retaken", "retakes", "retaking", "retook", "take", "taken", "takes", "taking", "took", "undertake", "undertaken", "undertakes", "undertaking", "undertook"}),
+    frozenset({"taught", "teach", "teaches", "teaching"}),
+    frozenset({"tear", "tearing", "tears", "tore", "torn"}),
+    frozenset({"foretell", "foretelling", "foretells", "foretold", "retell", "retelling", "retells", "retold", "tell", "telling", "tells", "told"}),
+    frozenset({"rethink", "rethinking", "rethinks", "rethought", "think", "thinking", "thinks", "thought"}),
+    frozenset({"threw", "throw", "throwing", "thrown", "throws"}),
+    frozenset({"thrive", "thrived", "thriven", "thrives", "thriving", "throve"}),
+    frozenset({"thrust", "thrusting", "thrusts"}),
+    frozenset({"tread", "treading", "treads", "trod", "trodden"}),
+    frozenset({"vex", "vexed", "vexes", "vexing", "vext"}),
+    frozenset({"awake", "awakes", "awaking", "awoke", "awoken", "wake", "wakes", "waking", "woke", "woken"}),
+    frozenset({"outwear", "outwearing", "outwears", "outwore", "outworn", "wear", "wearing", "wears", "wore", "worn"}),
+    frozenset({"wed", "wedded", "wedding", "weds"}),
+    frozenset({"weep", "weeping", "weeps", "wept"}),
+    frozenset({"wet", "wets", "wetted", "wetting"}),
+    frozenset({"will", "would"}),
+    frozenset({"win", "winning", "wins", "won"}),
+    frozenset({"rewind", "rewinding", "rewinds", "rewound", "unwind", "unwinding", "unwinds", "unwound", "wind", "winding", "winds", "wound"}),
+    frozenset({"work", "worked", "working", "works", "wreak", "wreaked", "wreaking", "wreaks", "wrought"}),
+    frozenset({"weave", "weaves", "weaving", "wove", "woven"}),
+    frozenset({"wring", "wringing", "wrings", "wrung"}),
+    frozenset({"rewrite", "rewrites", "rewriting", "rewritten", "rewrote", "underwrite", "underwrites", "underwriting", "underwritten", "underwrote", "write", "writes", "writing", "written", "wrote"}),
 )
 
 _IRREGULAR_LOOKUP: dict[str, frozenset[str]] = {
@@ -283,8 +416,12 @@ def validate_unfamiliar_items(
     - Whitespace-collapsed
     - Literal substring first (regex metacharacters in items are escaped)
     - Then inflection-tolerant consecutive token match for spaced languages
-      (e.g. ``insist on`` ↔ ``insists on``)
+      (e.g. ``insist on`` ↔ ``insists on``), including irregular verb families
     - Continuous scripts without spaces stay on the literal path
+
+    Local only — no network / AI. Optional AI residual checks belong in the
+    UI layer and must re-verify any claimed surface form with
+    :func:`surface_form_in_sentence`.
 
     Returns a ValidationResult with .valid and .missing fields.
     """
@@ -307,6 +444,72 @@ def validate_unfamiliar_items(
     return ValidationResult(
         valid=len(missing) == 0,
         missing=missing,
+    )
+
+
+def surface_form_in_sentence(sentence: str, surface: str) -> bool:
+    """True if *surface* occurs in *sentence* as a real span.
+
+    Used to verify AI membership claims. Prefers whole-token / phrase
+    presence after normalization; does not run the full inflection map
+    (the AI already proposed the surface form).
+    """
+    norm_sentence = normalize_sentence(sentence)
+    norm_surface = normalize_sentence(surface)
+    if not norm_surface:
+        return False
+    # Multi-word or punct-bearing: literal substring after escape.
+    if " " in norm_surface or not re.fullmatch(r"[a-z]+", norm_surface):
+        return _literal_find(norm_surface, norm_sentence)
+    # Single alphabetic token: whole-token only.
+    return any(
+        _strip_token_punct(tok) == norm_surface
+        for tok in norm_sentence.split(" ")
+    )
+
+
+def apply_ai_membership_claims(
+    sentence: str,
+    missing_items: list[str],
+    claims: list,
+) -> ValidationResult:
+    """Reduce *missing_items* using AI claims that pass local surface checks.
+
+    *claims* is a sequence of objects with ``.expression``, ``.found``,
+    and ``.surface`` (see ``MembershipClaim``). An item is accepted only when:
+    - the claim's expression matches that missing item under normalization,
+    - found is true,
+    - surface is non-empty and :func:`surface_form_in_sentence` is true.
+
+    AI alone never authorizes acceptance without a verifiable surface span.
+    """
+    if not missing_items:
+        return ValidationResult(valid=True, missing=[])
+
+    # Map normalized expression -> first matching claim
+    claim_by_norm: dict[str, object] = {}
+    for claim in claims:
+        expr = getattr(claim, "expression", "")
+        key = normalize_sentence(str(expr))
+        if key and key not in claim_by_norm:
+            claim_by_norm[key] = claim
+
+    still_missing: list[str] = []
+    for item in missing_items:
+        key = normalize_sentence(item)
+        claim = claim_by_norm.get(key)
+        if claim is None:
+            still_missing.append(item)
+            continue
+        found = bool(getattr(claim, "found", False))
+        surface = str(getattr(claim, "surface", "") or "").strip()
+        if found and surface and surface_form_in_sentence(sentence, surface):
+            continue
+        still_missing.append(item)
+
+    return ValidationResult(
+        valid=len(still_missing) == 0,
+        missing=still_missing,
     )
 
 

@@ -221,6 +221,62 @@ class TestValidateUnfamiliarItems:
         assert result.valid is False
         assert "choose" in result.missing
 
+    def test_expanded_irregular_map_samples(self):
+        """Broader irregular coverage from the comprehensive map."""
+        samples = [
+            ("They stole the car.", "steal"),
+            ("He has stolen it.", "steal"),
+            ("I lost my keys.", "lose"),
+            ("The lake froze overnight.", "freeze"),
+            ("She has frozen the leftovers.", "freeze"),
+            ("He bought a book.", "buy"),
+            ("She taught math.", "teach"),
+            ("They sought help.", "seek"),
+            ("He has written a letter.", "write"),
+            ("She rewrote the essay.", "rewrite"),
+            ("He underwent surgery.", "undergo"),
+            ("They misunderstood the question.", "understand"),
+            ("She overcame her fear.", "overcome"),
+            ("He has forgotten the password.", "forget"),
+            ("They fled the scene.", "flee"),
+            ("The sun shone brightly.", "shine"),
+            ("He knelt down.", "kneel"),
+            ("She dreamt of home.", "dream"),
+            ("He leapt over the fence.", "leap"),
+            ("They forwent dessert.", "forgo"),
+        ]
+        for sentence, item in samples:
+            result = validate_unfamiliar_items(sentence, [item])
+            assert result.valid is True, f"{item!r} should match in {sentence!r}"
+
+    def test_surface_form_in_sentence(self):
+        from kgb_srs.validation import surface_form_in_sentence
+        assert surface_form_in_sentence("He has gone home.", "gone")
+        assert surface_form_in_sentence("He has gone home.", "Gone")
+        assert not surface_form_in_sentence("He has gone home.", "went")
+        assert not surface_form_in_sentence("The cargo ship left.", "go")
+
+    def test_apply_ai_membership_claims_requires_real_surface(self):
+        from kgb_srs.validation import apply_ai_membership_claims
+        from kgb_srs.ai_parser import MembershipClaim
+
+        sentence = "He has gone home."
+        missing = ["go"]
+        # Hallucinated surface must be rejected.
+        bad = [MembershipClaim(expression="go", found=True, surface="went")]
+        r = apply_ai_membership_claims(sentence, missing, bad)
+        assert r.valid is False
+        assert "go" in r.missing
+        # Real surface from the sentence is accepted.
+        good = [MembershipClaim(expression="go", found=True, surface="gone")]
+        r = apply_ai_membership_claims(sentence, missing, good)
+        assert r.valid is True
+        assert r.missing == []
+        # found=false keeps missing.
+        no = [MembershipClaim(expression="go", found=False, surface="")]
+        r = apply_ai_membership_claims(sentence, missing, no)
+        assert r.valid is False
+
 
 # ---------------------------------------------------------------------------
 # deduplicate_unfamiliar_items

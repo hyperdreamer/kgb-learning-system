@@ -151,6 +151,99 @@ def parse_sentence_meanings(
 
 
 # ---------------------------------------------------------------------------
+# Membership fallback (local-first residual)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MembershipClaim:
+    """One AI membership judgment for a residual unfamiliar item."""
+    expression: str
+    found: bool
+    surface: str = ""
+
+
+def parse_membership_claims(
+    response_text: str,
+    expected_expressions: list[str],
+) -> list[MembershipClaim]:
+    """Parse AI membership fallback response.
+
+    Expected shape:
+        {"items": [{"expression": "...", "found": true/false, "surface": "..."}, ...]}
+
+    Validates count, order/identity under normalize_sentence, and types.
+    Does NOT verify that surface actually occurs in the sentence — that is
+    a separate local check (AI cannot be trusted alone).
+    """
+    json_text = _extract_json(response_text)
+    data = _parse_json(json_text)
+
+    if not isinstance(data, dict):
+        raise AIValidationError("AI response must be a JSON object")
+
+    items = data.get("items")
+    if items is None:
+        raise AIValidationError("AI response missing 'items' key")
+    if not isinstance(items, list):
+        raise AIValidationError("'items' must be a list")
+
+    expected_count = len(expected_expressions)
+    if len(items) != expected_count:
+        raise AIValidationError(
+            f"Expected {expected_count} membership item(s) but AI returned {len(items)}"
+        )
+
+    results: list[MembershipClaim] = []
+    norm_expected = [normalize_sentence(e) for e in expected_expressions]
+
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise AIValidationError(f"Item {i} must be a JSON object")
+
+        expr = item.get("expression")
+        if expr is None or not str(expr).strip():
+            raise AIValidationError(
+                f"Item {i} missing required non-empty 'expression' field"
+            )
+
+        norm_returned = normalize_sentence(str(expr))
+        if norm_returned != norm_expected[i]:
+            raise AIValidationError(
+                f"Item {i}: expected expression matching "
+                f"'{expected_expressions[i]}' but got '{expr}'."
+            )
+
+        found_raw = item.get("found")
+        if not isinstance(found_raw, bool):
+            raise AIValidationError(
+                f"Item {i} 'found' must be a boolean"
+            )
+
+        surface = item.get("surface", "")
+        if surface is None:
+            surface = ""
+        if not isinstance(surface, str):
+            raise AIValidationError(
+                f"Item {i} 'surface' must be a string"
+            )
+        surface = surface.strip()
+        if found_raw and not surface:
+            raise AIValidationError(
+                f"Item {i}: found=true requires a non-empty 'surface' span"
+            )
+        if not found_raw:
+            surface = ""
+
+        results.append(MembershipClaim(
+            expression=str(expr),
+            found=found_raw,
+            surface=surface,
+        ))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Word/phrase meanings
 # ---------------------------------------------------------------------------
 

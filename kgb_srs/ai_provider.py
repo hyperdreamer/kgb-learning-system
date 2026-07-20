@@ -124,6 +124,41 @@ def build_word_phrase_prompt(
     )
 
 
+_MEMBERSHIP_PROMPT_TEMPLATE = """\
+You check whether learner items appear in a sentence as the same words or
+as inflected / irregular surface forms (tense, number, participle, etc.).
+
+Sentence:
+{sentence}
+
+Items that a local checker could not match:
+{items}
+
+Respond with JSON only:
+{{"items": [{{"expression": "<item>", "found": true/false, "surface": "<exact span from the sentence or empty>"}}]}}
+
+Rules:
+- The number of items MUST equal {count}.
+- Keep the same order as the list above.
+- found=true only if the item (or a clear inflection/irregular form of it)
+  appears as a consecutive span in the sentence.
+- When found=true, surface MUST be copied exactly from the sentence
+  (same spelling as in the sentence, including that form's tense).
+- When found=false, surface must be "".
+- Do not invent spans that are not in the sentence.
+- Do not translate the sentence."""
+
+
+def build_membership_prompt(sentence: str, missing_items: list[str]) -> str:
+    """Build the prompt for AI membership fallback (local-first residual only)."""
+    items_list = "\n".join(f"  - {item}" for item in missing_items)
+    return _MEMBERSHIP_PROMPT_TEMPLATE.format(
+        sentence=sentence,
+        items=items_list,
+        count=len(missing_items),
+    )
+
+
 # ---------------------------------------------------------------------------
 # HTTP helper (stdlib only — no extra dependency)
 # ---------------------------------------------------------------------------

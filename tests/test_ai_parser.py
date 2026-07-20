@@ -194,3 +194,58 @@ class TestParseWordPhraseMeanings:
         }) + '\n```'
         result = parse_word_phrase_meanings(response)
         assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# parse_membership_claims
+# ---------------------------------------------------------------------------
+
+class TestParseMembershipClaims:
+    def test_valid_response(self):
+        from kgb_srs.ai_parser import parse_membership_claims
+        response = {
+            "items": [
+                {"expression": "go", "found": True, "surface": "gone"},
+                {"expression": "absent", "found": False, "surface": ""},
+            ]
+        }
+        result = parse_membership_claims(
+            json.dumps(response),
+            expected_expressions=["go", "absent"],
+        )
+        assert len(result) == 2
+        assert result[0].found is True
+        assert result[0].surface == "gone"
+        assert result[1].found is False
+        assert result[1].surface == ""
+
+    def test_found_true_requires_surface(self):
+        from kgb_srs.ai_parser import parse_membership_claims
+        response = {
+            "items": [
+                {"expression": "go", "found": True, "surface": ""},
+            ]
+        }
+        with pytest.raises(AIValidationError, match="surface"):
+            parse_membership_claims(json.dumps(response), ["go"])
+
+    def test_wrong_order_rejected(self):
+        from kgb_srs.ai_parser import parse_membership_claims
+        response = {
+            "items": [
+                {"expression": "b", "found": False, "surface": ""},
+                {"expression": "a", "found": False, "surface": ""},
+            ]
+        }
+        with pytest.raises(AIValidationError, match="expected expression"):
+            parse_membership_claims(json.dumps(response), ["a", "b"])
+
+    def test_found_must_be_bool(self):
+        from kgb_srs.ai_parser import parse_membership_claims
+        response = {
+            "items": [
+                {"expression": "go", "found": "yes", "surface": "gone"},
+            ]
+        }
+        with pytest.raises(AIValidationError, match="boolean"):
+            parse_membership_claims(json.dumps(response), ["go"])
