@@ -156,6 +156,41 @@ class TestValidateUnfamiliarItems:
         assert result.valid is False
         assert "insist on" in result.missing
 
+    def test_go_gone_went_irregular(self):
+        """Irregular go/went/gone (and going/goes) share a lemma family."""
+        assert validate_unfamiliar_items(
+            "He has gone home.", ["go"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "They went home early.", ["go"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "She is going home.", ["go"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "He has gone home.", ["go home"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "They went home early.", ["go home"]
+        ).valid
+        # reverse: surface lemma in item, past in sentence already covered;
+        # also item may be the irregular form against a base in sentence
+        assert validate_unfamiliar_items(
+            "I go there every day.", ["gone"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "I go there every day.", ["went"]
+        ).valid
+
+    def test_go_does_not_substring_match_unrelated(self):
+        """Short lemma must not match as a substring inside another word."""
+        # "go" must not match merely because it is letters inside "cargo"
+        # if we only had substring; cargo is unrelated. Token equality fails;
+        # irregular family does not include cargo.
+        result = validate_unfamiliar_items("The cargo ship left.", ["go"])
+        assert result.valid is False
+        assert "go" in result.missing
+
 
 # ---------------------------------------------------------------------------
 # deduplicate_unfamiliar_items

@@ -35,6 +35,73 @@ _RE_ESCAPE_RE = re.compile(r"([.^$*+?{}[\]\\|()])")
 # Leading/trailing punctuation stripped from tokens for flex matching.
 _PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…—–-«»"
 
+# Common irregular English verb forms → shared lemma.
+# Keep this small and high-value; regular -s/-ed/-ing stay on the stemmer.
+_IRREGULAR_VERB_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"be", "am", "is", "are", "was", "were", "been", "being"}),
+    frozenset({"have", "has", "had", "having"}),
+    frozenset({"do", "does", "did", "done", "doing"}),
+    frozenset({"go", "goes", "going", "went", "gone"}),
+    frozenset({"come", "comes", "coming", "came"}),
+    frozenset({"see", "sees", "seeing", "saw", "seen"}),
+    frozenset({"get", "gets", "getting", "got", "gotten"}),
+    frozenset({"make", "makes", "making", "made"}),
+    frozenset({"take", "takes", "taking", "took", "taken"}),
+    frozenset({"give", "gives", "giving", "gave", "given"}),
+    frozenset({"find", "finds", "finding", "found"}),
+    frozenset({"think", "thinks", "thinking", "thought"}),
+    frozenset({"say", "says", "saying", "said"}),
+    frozenset({"tell", "tells", "telling", "told"}),
+    frozenset({"know", "knows", "knowing", "knew", "known"}),
+    frozenset({"feel", "feels", "feeling", "felt"}),
+    frozenset({"leave", "leaves", "leaving", "left"}),
+    frozenset({"keep", "keeps", "keeping", "kept"}),
+    frozenset({"begin", "begins", "beginning", "began", "begun"}),
+    frozenset({"run", "runs", "running", "ran"}),
+    frozenset({"write", "writes", "writing", "wrote", "written"}),
+    frozenset({"speak", "speaks", "speaking", "spoke", "spoken"}),
+    frozenset({"break", "breaks", "breaking", "broke", "broken"}),
+    frozenset({"choose", "chooses", "choosing", "chose", "chosen"}),
+    frozenset({"drive", "drives", "driving", "drove", "driven"}),
+    frozenset({"eat", "eats", "eating", "ate", "eaten"}),
+    frozenset({"fall", "falls", "falling", "fell", "fallen"}),
+    frozenset({"fly", "flies", "flying", "flew", "flown"}),
+    frozenset({"grow", "grows", "growing", "grew", "grown"}),
+    frozenset({"hide", "hides", "hiding", "hid", "hidden"}),
+    frozenset({"hold", "holds", "holding", "held"}),
+    frozenset({"read", "reads", "reading"}),  # past "read" same spelling
+    frozenset({"rise", "rises", "rising", "rose", "risen"}),
+    frozenset({"send", "sends", "sending", "sent"}),
+    frozenset({"sing", "sings", "singing", "sang", "sung"}),
+    frozenset({"sit", "sits", "sitting", "sat"}),
+    frozenset({"sleep", "sleeps", "sleeping", "slept"}),
+    frozenset({"stand", "stands", "standing", "stood"}),
+    frozenset({"swim", "swims", "swimming", "swam", "swum"}),
+    frozenset({"teach", "teaches", "teaching", "taught"}),
+    frozenset({"throw", "throws", "throwing", "threw", "thrown"}),
+    frozenset({"understand", "understands", "understanding", "understood"}),
+    frozenset({"wear", "wears", "wearing", "wore", "worn"}),
+    frozenset({"win", "wins", "winning", "won"}),
+    frozenset({"buy", "buys", "buying", "bought"}),
+    frozenset({"bring", "brings", "bringing", "brought"}),
+    frozenset({"build", "builds", "building", "built"}),
+    frozenset({"catch", "catches", "catching", "caught"}),
+    frozenset({"draw", "draws", "drawing", "drew", "drawn"}),
+    frozenset({"drink", "drinks", "drinking", "drank", "drunk"}),
+    frozenset({"forget", "forgets", "forgetting", "forgot", "forgotten"}),
+    frozenset({"forgive", "forgives", "forgiving", "forgave", "forgiven"}),
+    frozenset({"hear", "hears", "hearing", "heard"}),
+    frozenset({"pay", "pays", "paying", "paid"}),
+    frozenset({"sell", "sells", "selling", "sold"}),
+    frozenset({"shut", "shuts", "shutting"}),
+    frozenset({"spend", "spends", "spending", "spent"}),
+    frozenset({"wake", "wakes", "waking", "woke", "woken", "awake", "awoke"}),
+)
+
+_IRREGULAR_LOOKUP: dict[str, frozenset[str]] = {
+    form: group for group in _IRREGULAR_VERB_GROUPS for form in group
+}
+
 
 def _escape_regex(text: str) -> str:
     """Escape regex metacharacters in *text*."""
@@ -42,9 +109,19 @@ def _escape_regex(text: str) -> str:
 
 
 def _literal_find(pattern: str, haystack: str) -> bool:
-    """Check whether normalized *pattern* occurs literally in *haystack*."""
+    """Check whether normalized *pattern* occurs literally in *haystack*.
+
+    For single-token alphabetic patterns, require whole-token equality so
+    short lemmas like ``go`` do not accidentally match inside ``gone`` /
+    ``going`` via pure substring. Multi-word / non-alpha patterns keep
+    plain substring matching.
+    """
     if not pattern:
         return False
+    # Single simple alphabetic token → whole-token only (not substring).
+    if re.fullmatch(r"[a-z]+", pattern):
+        return any(_strip_token_punct(tok) == pattern for tok in haystack.split(" "))
+    # Phrases and patterns with punctuation/metacharacters: literal substring.
     escaped = _escape_regex(pattern)
     return bool(re.search(escaped, haystack))
 
@@ -57,7 +134,8 @@ def _stem_candidates(token: str) -> set[str]:
     """Return a small set of stem-like candidates for *token*.
 
     Enough for common English tense/number variants; not a full stemmer.
-    Always includes the token itself. Suffix stripping usually requires a
+    Always includes the token itself. Irregular verb groups (go/went/gone)
+    are expanded via a compact lookup. Suffix stripping usually requires a
     base of length ≥ 3; short irregular bases like go/do (from goes/does)
     are allowed at length ≥ 2 for -s/-es only.
     """
@@ -68,9 +146,18 @@ def _stem_candidates(token: str) -> set[str]:
     cands: set[str] = {t}
     n = len(t)
 
+    # Irregular verb family (go ↔ went ↔ gone, etc.)
+    irregular = _IRREGULAR_LOOKUP.get(t)
+    if irregular is not None:
+        cands.update(irregular)
+
     def add_base(base: str, min_len: int = 3) -> None:
         if len(base) >= min_len:
             cands.add(base)
+            # If the derived base is itself irregular, expand that family too.
+            group = _IRREGULAR_LOOKUP.get(base)
+            if group is not None:
+                cands.update(group)
 
     # studies / tries → study / try
     if n >= 5 and t.endswith("ies"):
@@ -132,6 +219,13 @@ def _tokens_flex_equal(a: str, b: str) -> bool:
     if not sa or not sb:
         return False
     if sa == sb:
+        return True
+    # Direct irregular-family membership (fast path).
+    group_a = _IRREGULAR_LOOKUP.get(sa)
+    if group_a is not None and sb in group_a:
+        return True
+    group_b = _IRREGULAR_LOOKUP.get(sb)
+    if group_b is not None and sa in group_b:
         return True
     return bool(_stem_candidates(sa) & _stem_candidates(sb))
 
