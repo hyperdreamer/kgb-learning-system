@@ -79,7 +79,6 @@ In **Settings → AI Provider**, configure:
 | Model | `gpt-4o-mini` | Model name |
 | API Key | *(blank)* | Your API key — **never committed** |
 | Timeout | 30 s | Network timeout |
-| Learned Language | English | Language of the content being studied |
 | Explanation Language | Chinese | Language for AI-generated explanations |
 | **Test** | — | Checks that the staged model/API key are reachable and reports latency |
 

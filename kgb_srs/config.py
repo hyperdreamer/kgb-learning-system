@@ -28,7 +28,6 @@ DEFAULT_SETTINGS = {
     "ai_api_key": "",
     "ai_timeout": 30,
     # Language settings for AI prompts
-    "learned_language": "English",
     "explanation_language": "Chinese",
 }
 

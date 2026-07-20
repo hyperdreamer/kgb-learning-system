@@ -221,12 +221,6 @@ class SettingsDialog(QDialog):
         self.ai_timeout_input.setSuffix(" s")
         layout.addRow("Timeout:", self.ai_timeout_input)
 
-        self.learned_language_input = QLineEdit(
-            self.settings.get("learned_language", "English")
-        )
-        self.learned_language_input.setObjectName("learnedLanguageInput")
-        layout.addRow("Learned Language:", self.learned_language_input)
-
         self.explanation_language_input = QLineEdit(
             self.settings.get("explanation_language", "Chinese")
         )
@@ -343,9 +337,6 @@ class SettingsDialog(QDialog):
         staged["ai_model"] = self.ai_model_input.text().strip()
         staged["ai_api_key"] = self.ai_api_key_input.text().strip()
         staged["ai_timeout"] = self.ai_timeout_input.value()
-        staged["learned_language"] = (
-            self.learned_language_input.text().strip()
-        )
         staged["explanation_language"] = (
             self.explanation_language_input.text().strip()
         )

@@ -1631,8 +1631,7 @@ class TestSettingsStaging:
             "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
             "ai_base_url": "https://api.openai.com/v1",
             "ai_model": "gpt-4o-mini", "ai_api_key": "secret123",
-            "ai_timeout": 30, "learned_language": "English",
-            "explanation_language": "Chinese",
+            "ai_timeout": 30, "explanation_language": "Chinese",
         })
         monkeypatch.setattr(config, "load_settings",
                             lambda: config.load_settings())
@@ -1671,8 +1670,7 @@ class TestSettingsStaging:
             "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
             "ai_base_url": "https://api.openai.com/v1",
             "ai_model": "gpt-4o-mini", "ai_api_key": "secret123",
-            "ai_timeout": 30, "learned_language": "English",
-            "explanation_language": "Chinese",
+            "ai_timeout": 30, "explanation_language": "Chinese",
         })
 
         _qt_app()

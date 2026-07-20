@@ -80,7 +80,6 @@ def settings():
         "ai_model": "gpt-4o-mini",
         "ai_api_key": "secret",
         "ai_timeout": 30,
-        "learned_language": "English",
         "explanation_language": "Chinese",
     }
 
@@ -129,7 +128,6 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "aiModelInput": 3,
         "aiApiKeyInput": 3,
         "aiTimeoutInput": 3,
-        "learnedLanguageInput": 3,
         "explanationLanguageInput": 3,
         "aiTestButton": 3,
         "aiTestStatusLabel": 3,
@@ -176,7 +174,7 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     dialog.window_width_input.setValue(1024)
     dialog.default_database_input.setText(" /tmp/test.barsky ")
     dialog.ai_api_key_input.setText(" new-key ")
-    dialog.learned_language_input.setText(" German ")
+    dialog.explanation_language_input.setText(" German ")
 
     dialog.save_button.click()
 
@@ -184,7 +182,7 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     assert saved[0]["width"] == 1024
     assert saved[0]["default_database"] == "/tmp/test.barsky"
     assert saved[0]["ai_api_key"] == "new-key"
-    assert saved[0]["learned_language"] == "German"
+    assert saved[0]["explanation_language"] == "German"
     assert settings == saved[0]
     assert dialog.result() == dialog.DialogCode.Accepted
 

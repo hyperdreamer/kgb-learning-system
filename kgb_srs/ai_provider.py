@@ -64,9 +64,9 @@ class AIMissingConfigError(Exception):
 # ---------------------------------------------------------------------------
 
 _SENTENCE_PROMPT_TEMPLATE = """\
-You are a language learning assistant. Given a sentence in {learned_language}
-and a list of unfamiliar words or phrases from that sentence, provide the
-contextual meaning of each item as it is used in the sentence.
+You are a language learning assistant. Given a sentence and a list of
+unfamiliar words or phrases from that sentence, provide the contextual
+meaning of each item as it is used in the sentence.
 
 Sentence: {sentence}
 Unfamiliar items: {items}
@@ -82,13 +82,11 @@ Respond in {explanation_language} with a JSON object:
 def build_sentence_prompt(
     sentence: str,
     unfamiliar_items: list[str],
-    learned_language: str = "English",
     explanation_language: str = "Chinese",
 ) -> str:
     """Build the prompt for sentence-based AI generation."""
     items_list = "\n".join(f"  - {item}" for item in unfamiliar_items)
     return _SENTENCE_PROMPT_TEMPLATE.format(
-        learned_language=learned_language,
         sentence=sentence,
         items=items_list,
         explanation_language=explanation_language,
@@ -97,9 +95,8 @@ def build_sentence_prompt(
 
 
 _WORD_PHRASE_PROMPT_TEMPLATE = """\
-You are a language learning assistant. Given a word or phrase in
-{learned_language}, provide up to 2 common modern meanings, each with an
-example sentence showing typical usage.
+You are a language learning assistant. Given a word or phrase, provide up to 2
+common modern meanings, each with an example sentence showing typical usage.
 
 Word/Phrase: {word}
 
@@ -113,12 +110,10 @@ Respond in {explanation_language} with a JSON object:
 
 def build_word_phrase_prompt(
     word: str,
-    learned_language: str = "English",
     explanation_language: str = "Chinese",
 ) -> str:
     """Build the prompt for word/phrase-based AI generation."""
     return _WORD_PHRASE_PROMPT_TEMPLATE.format(
-        learned_language=learned_language,
         word=word,
         explanation_language=explanation_language,
     )

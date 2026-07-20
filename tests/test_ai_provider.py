@@ -148,22 +148,19 @@ class TestBuildSentencePrompt:
         prompt = build_sentence_prompt(
             sentence="Je suis ici.",
             unfamiliar_items=["suis", "ici"],
-            learned_language="French",
             explanation_language="English",
         )
         assert "Je suis ici" in prompt
         assert "suis" in prompt
         assert "ici" in prompt
-        assert "French" in prompt
         assert "English" in prompt
         assert "contextual_meaning" in prompt
 
-    def test_default_languages(self):
+    def test_default_explanation_language(self):
         prompt = build_sentence_prompt(
             sentence="Hello world",
             unfamiliar_items=["world"],
         )
-        assert "English" in prompt  # default learned
         assert "Chinese" in prompt  # default explanation (for barsky)
 
 
@@ -171,11 +168,9 @@ class TestBuildWordPhrasePrompt:
     def test_basic_prompt(self):
         prompt = build_word_phrase_prompt(
             word="café",
-            learned_language="French",
             explanation_language="English",
         )
         assert "café" in prompt
-        assert "French" in prompt
         assert "English" in prompt
         assert "meanings" in prompt
         assert "example" in prompt

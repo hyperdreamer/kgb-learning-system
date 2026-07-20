@@ -400,10 +400,9 @@ class SentenceCardDialog(QDialog):
             self._ai_status.setStyleSheet("color: #c00;")
             return
 
-        learned = self._settings.get("learned_language", "English")
         explanation = self._settings.get("explanation_language", "Chinese")
         prompt = build_sentence_prompt(
-            sentence, items, learned, explanation)
+            sentence, items, explanation_language=explanation)
 
         # Disable controls during generation
         self._generate_btn.setEnabled(False)
@@ -803,9 +802,9 @@ class WordPhraseCardDialog(QDialog):
             self._ai_status.setStyleSheet("color: #c00;")
             return
 
-        learned = self._settings.get("learned_language", "English")
         explanation = self._settings.get("explanation_language", "Chinese")
-        prompt = build_word_phrase_prompt(front, learned, explanation)
+        prompt = build_word_phrase_prompt(
+            front, explanation_language=explanation)
 
         # Disable controls during generation
         self._set_controls_enabled(False)
