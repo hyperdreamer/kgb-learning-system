@@ -1761,7 +1761,8 @@ class BarskyApp(QMainWindow):
         (e.g. lemma ``insist on`` → bold ``insists on``). No separate
         Unfamiliar list — the mark is the list.
 
-        Back: same highlighted sentence, then per-item meanings.
+        Back: same highlighted sentence, then each expression with its
+        contextual meaning once (no bullet list, no duplicate derived back).
         """
         items = _fetch_expressions_for_card(self.conn, card_id)
         highlighted = _highlight_sentence_for_items(sentence, items)
@@ -1772,13 +1773,11 @@ class BarskyApp(QMainWindow):
                 expr = item[0] if isinstance(item, tuple) else item
                 meaning = item[1] if isinstance(item, tuple) and len(item) > 1 else ""
                 if meaning:
-                    lines.append(f"- **{expr}**: {meaning}")
+                    lines.append(f"**{expr}**: {meaning}")
                 else:
-                    lines.append(f"- **{expr}**")
-            if back:
-                # Back field is a derived cache; meanings above are authoritative.
-                # Keep only if it adds content beyond expression list noise.
-                lines.extend(["", "---", "", back])
+                    lines.append(f"**{expr}**")
+            # cards.back is a derived cache of the same expression+meaning
+            # pairs — do not append it again under a separator.
             return "\n".join(lines)
 
         # Front: focus on the sentence; bold only the learning targets.
