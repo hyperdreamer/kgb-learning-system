@@ -254,6 +254,15 @@ class BarskyApp(QMainWindow):
         self._paused_review_card = None
         self._paused_review_mode = ""
 
+        # Daily-review session state
+        self._daily_review_history = []       # cards graded this session
+        self._daily_queue_snapshot = []       # full original due queue (Restart)
+
+        # Paused-session deep state (preserved across close/resume)
+        self._paused_cards_due = []
+        self._paused_daily_queue = []
+        self._paused_review_history = []
+
         self.tts_worker = None
         self.voice_worker = None
 
@@ -320,15 +329,11 @@ class BarskyApp(QMainWindow):
             self._button_style("#43A047", "#66BB6A") +
             f"padding: {dyn_pad}px; font-size: {fs}px;"
         )
-        self.force_seq_btn.setStyleSheet(
-            self._button_style("#FB8C00", "#FFA726") +
-            f"padding: {dyn_pad}px; font-size: {fs}px;"
-        )
         self.restart_review_btn.setStyleSheet(
             self._button_style("#1E88E5", "#42A5F5") +
             f"padding: {dyn_pad}px; font-size: {fs}px;"
         )
-        self.force_rev_btn.setStyleSheet(
+        self.previous_review_btn.setStyleSheet(
             self._button_style("#E53935", "#EF5350") +
             f"padding: {dyn_pad}px; font-size: {fs}px;"
         )
@@ -515,34 +520,24 @@ class BarskyApp(QMainWindow):
         self.start_btn = QPushButton(" Start Daily Review")
         self.start_btn.setIcon(self._icon("media-playback-start"))
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.start_btn.clicked.connect(self.start_review)
+        self.start_btn.clicked.connect(self._on_primary_button_clicked)
         main_layout.addWidget(self.start_btn)
 
-        forced_review_layout = QHBoxLayout()
-        forced_review_layout.setSpacing(6)
-
-        self.force_seq_btn = QPushButton(" Next")
-        self.force_seq_btn.setIcon(self._icon("go-next"))
-        self.force_seq_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.force_seq_btn.clicked.connect(
-            lambda: self.start_forced_review(direction="ASC")
-        )
+        review_controls_layout = QHBoxLayout()
+        review_controls_layout.setSpacing(6)
 
         self.restart_review_btn = QPushButton(" Restart")
         self.restart_review_btn.setIcon(self._icon("view-refresh"))
         self.restart_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.restart_review_btn.clicked.connect(self.restart_current_review)
+        self.restart_review_btn.clicked.connect(self._restart_daily_review)
 
-        self.force_rev_btn = QPushButton(" Previous")
-        self.force_rev_btn.setIcon(self._icon("go-previous"))
-        self.force_rev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.force_rev_btn.clicked.connect(
-            lambda: self.start_forced_review(direction="DESC")
-        )
+        self.previous_review_btn = QPushButton(" Previous")
+        self.previous_review_btn.setIcon(self._icon("go-previous"))
+        self.previous_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.previous_review_btn.clicked.connect(self._previous_daily_card)
 
-        forced_review_layout.addWidget(self.force_seq_btn)
-        forced_review_layout.addWidget(self.restart_review_btn)
-        forced_review_layout.addWidget(self.force_rev_btn)
+        review_controls_layout.addWidget(self.restart_review_btn)
+        review_controls_layout.addWidget(self.previous_review_btn)
 
         self.close_review_btn = QPushButton("×", self.view)
         self.close_review_btn.setToolTip("Close review")
@@ -574,7 +569,7 @@ class BarskyApp(QMainWindow):
         )
         self.close_review_btn.clicked.connect(self.close_review)
 
-        main_layout.addLayout(forced_review_layout)
+        main_layout.addLayout(review_controls_layout)
 
         self.card_ui = None
         self.incorrect_zone = None
@@ -730,6 +725,11 @@ class BarskyApp(QMainWindow):
         self.review_mode = ""
         self._paused_review_card = None
         self._paused_review_mode = ""
+        self._daily_review_history = []
+        self._daily_queue_snapshot = []
+        self._paused_cards_due = []
+        self._paused_daily_queue = []
+        self._paused_review_history = []
 
         self.randomize_box_five()
 
@@ -1378,39 +1378,134 @@ class BarskyApp(QMainWindow):
     # Button visibility
     # ------------------------------------------------------------------
     def _update_button_visibility(self):
-        """Enable/disable review-dependent buttons based on state."""
+        """Review-control state machine: idle vs active.
+
+        IDLE   (no active review):
+          - primary button → \"Start Daily Review\" or \"Resume Daily Review\"
+          - Restart / Previous / Close → disabled
+
+        ACTIVE (daily review in progress):
+          - primary button → \"Next\"
+          - Restart / Previous / Close → enabled
+        """
         has_db = self.conn is not None
         has_card = self.current_card is not None
-        has_active_review = has_card and self.review_mode != ""
+        is_active = self.review_mode == "daily"
+        has_paused = self._paused_review_card is not None
 
         self.delete_entry_btn.setEnabled(has_db and has_card)
-        self.close_review_btn.setEnabled(has_active_review)
 
-        self.start_btn.setEnabled(has_db)
-        self.force_seq_btn.setEnabled(has_db)
-        self.restart_review_btn.setEnabled(has_db)
-        self.force_rev_btn.setEnabled(has_db)
+        if not has_db:
+            self.start_btn.setEnabled(False)
+            self.restart_review_btn.setEnabled(False)
+            self.previous_review_btn.setEnabled(False)
+            self.close_review_btn.setEnabled(False)
+            return
+
+        if is_active:
+            # ── ACTIVE state ──
+            self.start_btn.setText(" Next")
+            self.start_btn.setIcon(self._icon("go-next"))
+            self.restart_review_btn.setEnabled(True)
+            self.previous_review_btn.setEnabled(True)
+            self.close_review_btn.setEnabled(True)
+        else:
+            # ── IDLE state ──
+            if has_paused:
+                self.start_btn.setText(" Resume Daily Review")
+            else:
+                self.start_btn.setText(" Start Daily Review")
+            self.start_btn.setIcon(self._icon("media-playback-start"))
+            self.start_btn.setEnabled(True)
+            self.restart_review_btn.setEnabled(False)
+            self.previous_review_btn.setEnabled(False)
+            self.close_review_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # Review Flow
     # ------------------------------------------------------------------
-    def close_review(self):
-        """Stop the active review without grading, deleting, or advancing.
+    def _on_primary_button_clicked(self):
+        """Dispatch primary button based on current state.
 
-        Stores the current card and review mode so the same card can be
-        resumed later.  All resume paths re-show the paused card first;
-        the queue that follows depends on the action that resumes:
-
-        - Start Daily (after daily close): preserved remaining queue.
-        - Next (forced ASC): ascending traversal from paused position.
-        - Previous (forced DESC): descending traversal from paused position.
-        - Restart: all cards in ascending order.
+        - IDLE  → start (or resume) daily review.
+        - ACTIVE → advance to next card in the daily queue.
         """
-        if not self.current_card:
+        if self.review_mode == "daily":
+            self._advance_daily_queue()
+        else:
+            self.start_review()
+
+    def _advance_daily_queue(self):
+        """Skip the current card and advance to the next in the daily queue.
+
+        The current (ungraded) card is returned to the end of the queue
+        so it will be reviewed later in this session.
+        """
+        if not self.current_card or self.review_mode != "daily":
+            return
+
+        # Return ungraded card to end of queue.
+        self.cards_due.append(self.current_card)
+        self.show_next_card()
+
+    def _previous_daily_card(self):
+        """Navigate back to the previously graded card in this daily session.
+
+        The current (ungraded) card goes to the front of the queue.
+        If there is no history yet, this is a no-op.
+        """
+        if self.review_mode != "daily" or not self._daily_review_history:
+            return
+
+        # Push current (ungraded) card to front of queue.
+        if self.current_card is not None:
+            self.cards_due.insert(0, self.current_card)
+
+        # Pop last card from history and show it.
+        prev_card = self._daily_review_history.pop()
+
+        if self.card_ui:
+            self.scene.removeItem(self.card_ui)
+            self.card_ui = None
+
+        self.current_card = prev_card
+        self.is_current_flipped = False
+        self.draw_card_ui()
+
+    def _restart_daily_review(self):
+        """Restart the current daily session from the beginning.
+
+        Resets the queue to the original due-card snapshot and clears
+        review history.  Only has effect during an active daily review.
+        """
+        if self.review_mode != "daily":
+            return
+
+        if self.card_ui:
+            self.scene.removeItem(self.card_ui)
+            self.card_ui = None
+
+        self.cards_due = list(self._daily_queue_snapshot)
+        self._daily_review_history = []
+        self.current_card = None
+
+        self.show_next_card()
+
+    def close_review(self):
+        """Pause the active daily review and return to idle.
+
+        The current card, remaining queue, original queue snapshot, and
+        review history are all preserved so the session can be resumed
+        exactly where it left off.  Closing does not modify the database.
+        """
+        if not self.current_card or self.review_mode != "daily":
             return
 
         self._paused_review_card = self.current_card
         self._paused_review_mode = self.review_mode
+        self._paused_cards_due = list(self.cards_due)
+        self._paused_daily_queue = list(self._daily_queue_snapshot)
+        self._paused_review_history = list(self._daily_review_history)
 
         if self.card_ui:
             self.scene.removeItem(self.card_ui)
@@ -1418,6 +1513,8 @@ class BarskyApp(QMainWindow):
 
         self.current_card = None
         self.review_mode = ""
+        self._daily_review_history = []
+        self._daily_queue_snapshot = []
 
         self._update_button_visibility()
 
@@ -1477,6 +1574,13 @@ class BarskyApp(QMainWindow):
         self.show_next_card()
 
     def start_review(self):
+        """Start (or resume) the daily review of due cards.
+
+        On first start, queries all due cards and saves a snapshot for
+        Restart.  On resume after close, restores the preserved queue,
+        snapshot, and history so the session continues from where it was
+        paused.
+        """
         if not self.conn:
             return
 
@@ -1490,14 +1594,14 @@ class BarskyApp(QMainWindow):
 
         c = self.conn.cursor()
 
-        # Preserve queue when resuming a daily review — avoid
-        # reshuffle/requery that would lose the remaining order.
+        # Distinguish first-start from resume-after-close.
         resume_daily = (
             self._paused_review_card is not None
             and self._paused_review_mode == "daily"
         )
 
         if not resume_daily:
+            # ── First start: query all due cards ──
             today_str = datetime.date.today().isoformat()
             c.execute(
                 "SELECT id, front, back, box FROM cards WHERE next_review <= ?",
@@ -1510,146 +1614,38 @@ class BarskyApp(QMainWindow):
             else:
                 self.cards_due.sort(key=lambda x: x[0])
 
+            self._daily_review_history = []
+
         # Resume paused card (inserts at front, de-duplicates).
         self._resume_paused_card(c)
+
+        if resume_daily:
+            # Restore deep session state preserved by close_review().
+            self._daily_queue_snapshot = list(self._paused_daily_queue)
+            self._daily_review_history = list(self._paused_review_history)
+            self._paused_cards_due = []
+            self._paused_daily_queue = []
+            self._paused_review_history = []
+        else:
+            # First start: snapshot the complete queue for Restart.
+            self._daily_queue_snapshot = list(self.cards_due)
 
         if not self.cards_due:
             QMessageBox.information(self, "Done", "No cards due for review today!")
             self.review_mode = ""
+            self._daily_queue_snapshot = []
+            self._daily_review_history = []
             self._update_button_visibility()
             return
 
         self.show_next_card()
 
-    def start_forced_review(self, direction="ASC", restart=False):
-        if not self.conn:
-            QMessageBox.warning(self, "Error", "Load a database first.")
-            return
-
-        target_mode = "force_seq" if direction == "ASC" else "force_rev"
-
-        # Detect paused card and compute the starting offset for the
-        # remainder of the queue.  Paused card goes first unconditionally.
-        paused_fresh = None
-        if self._paused_review_card is not None:
-            paused = self._paused_review_card
-            self._paused_review_card = None
-            self._paused_review_mode = ""
-            c = self.conn.cursor()
-            c.execute(
-                "SELECT id, front, back, box FROM cards WHERE id = ?",
-                (paused[0],),
-            )
-            paused_fresh = c.fetchone()
-
-        if restart:
-            current_id = None
-        elif paused_fresh is not None:
-            # Resume: remaining cards start after the paused card's position.
-            current_id = paused_fresh[0]
-        elif self.current_card is not None:
-            current_id = self.current_card[0]
-        else:
-            current_id = 0
-
-        if self.current_card is not None:
-            if self.card_ui:
-                self.scene.removeItem(self.card_ui)
-                self.card_ui = None
-            self.current_card = None
-
-        self.review_mode = target_mode
-
-        c = self.conn.cursor()
-
-        # Build the queue: paused card first (if any), then remainder
-        if paused_fresh is not None:
-            self.cards_due = [paused_fresh]
-        else:
-            self.cards_due = []
-
-        if restart or paused_fresh is not None:
-            # Restart or resume: fetch remaining cards in the requested
-            # direction, de-duplicating against the paused card.
-            if restart:
-                # Restart: all cards from the beginning
-                query = (
-                    f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
-                )
-                c.execute(query)
-            else:
-                # Resume with paused card: remainder after paused card
-                if direction == "ASC":
-                    query = (
-                        "SELECT id, front, back, box FROM cards "
-                        "WHERE id > ? ORDER BY id ASC"
-                    )
-                else:
-                    query = (
-                        "SELECT id, front, back, box FROM cards "
-                        "WHERE id < ? ORDER BY id DESC"
-                    )
-                c.execute(query, (current_id,))
-
-            remaining = c.fetchall()
-
-            # Wrap around if no remaining (and not a restart — restart
-            # already fetched everything)
-            if not remaining and not restart:
-                wrap_query = (
-                    f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
-                )
-                c.execute(wrap_query)
-                remaining = c.fetchall()
-
-            # De-dup against paused card
-            if paused_fresh is not None:
-                paused_id = paused_fresh[0]
-                remaining = [r for r in remaining if r[0] != paused_id]
-
-            self.cards_due.extend(remaining)
-        else:
-            # Normal (non-paused) flow
-            if current_id is not None and current_id != 0:
-                if direction == "ASC":
-                    query = (
-                        "SELECT id, front, back, box FROM cards "
-                        "WHERE id > ? ORDER BY id ASC"
-                    )
-                else:
-                    query = (
-                        "SELECT id, front, back, box FROM cards "
-                        "WHERE id < ? ORDER BY id DESC"
-                    )
-                c.execute(query, (current_id,))
-                self.cards_due = c.fetchall()
-
-                if not self.cards_due:
-                    wrap_query = (
-                        f"SELECT id, front, back, box FROM cards "
-                        f"ORDER BY id {direction}"
-                    )
-                    c.execute(wrap_query)
-                    self.cards_due = c.fetchall()
-            else:
-                query = (
-                    f"SELECT id, front, back, box FROM cards ORDER BY id {direction}"
-                )
-                c.execute(query)
-                self.cards_due = c.fetchall()
-
-        if not self.cards_due:
-            QMessageBox.information(self, "Empty", "There are no cards in the database.")
-            self.review_mode = ""
-            self._update_button_visibility()
-            return
-
-        self.show_next_card()
 
     def restart_current_review(self):
+        """Restart the current daily review session (called from Restart button)."""
         if not self.conn:
             return
-        self.start_forced_review(direction="ASC", restart=True)
+        self._restart_daily_review()
 
     def show_next_card(self):
         if self.card_ui:
@@ -1670,16 +1666,12 @@ class BarskyApp(QMainWindow):
                 self.draw_card_ui()
                 return
 
-        if self.review_mode == "force_seq":
-            self.start_forced_review(direction="ASC", restart=True)
-            return
-        elif self.review_mode == "force_rev":
-            self.start_forced_review(direction="DESC", restart=True)
-            return
-
+        # Queue exhausted — daily review is complete.
         QMessageBox.information(self, "Done", "You have finished your reviews.")
         self.current_card = None
         self.review_mode = ""
+        self._daily_review_history = []
+        self._daily_queue_snapshot = []
         self._update_button_visibility()
 
     def draw_card_ui(self):
@@ -1814,6 +1806,11 @@ class BarskyApp(QMainWindow):
             (new_box, next_review_str, card_id),
         )
         self.conn.commit()
+
+        # Track graded card in daily session history (for Previous navigation).
+        if self.review_mode == "daily":
+            self._daily_review_history.append(self.current_card)
+
         self.show_next_card()
 
     # ------------------------------------------------------------------

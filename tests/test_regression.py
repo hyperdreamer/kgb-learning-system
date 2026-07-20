@@ -1944,10 +1944,11 @@ class TestReviewControls:
     # -- finding #1: button visibility after DB load ----------------------
 
     def test_buttons_after_db_load(self):
-        """Start/Next/Restart/Previous enabled; Delete/Close disabled."""
+        """IDLE state: Start enabled; Restart/Previous/Close disabled.
+
+        force_seq_btn has been removed (merged into the primary button)."""
         import tempfile, os
         conn = self._db(1)
-        # load_database needs a real file-path — write to temp file
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
         tmp.close()
         try:
@@ -1959,11 +1960,13 @@ class TestReviewControls:
             w.load_database(silent=True)
 
             assert w.start_btn.isEnabled()
-            assert w.force_seq_btn.isEnabled()
-            assert w.restart_review_btn.isEnabled()
-            assert w.force_rev_btn.isEnabled()
+            assert "Start Daily Review" in w.start_btn.text()
+            assert not w.restart_review_btn.isEnabled()
+            assert not w.previous_review_btn.isEnabled()
             assert not w.delete_entry_btn.isEnabled()
             assert not w.close_review_btn.isEnabled()
+            # force_seq_btn must not exist
+            assert not hasattr(w, "force_seq_btn")
         finally:
             os.unlink(tmp.name)
         conn.close(); w.close()
@@ -2095,52 +2098,6 @@ class TestReviewControls:
         assert w.review_mode == "daily"
         conn.close(); w.close()
 
-    # -- resume: Next / Previous / Restart after close --------------------
-
-    def test_next_after_close_paused_first_then_asc(self):
-        """Next after close: paused first, then ASC from paused+1."""
-        conn = self._db(1, 2, 3, 4, 5)
-        w = self._win(conn=conn, card=(3, "c3", "b3", 1), mode="force_seq")
-        w.close_review()
-        w.start_forced_review(direction="ASC")
-
-        assert w.current_card[0] == 3
-        remaining = [c[0] for c in w.cards_due]
-        assert 3 not in remaining
-        assert remaining[0] == 4
-        conn.close(); w.close()
-
-    def test_previous_after_close_paused_first_then_desc(self):
-        """Previous after close: paused first, then DESC from paused-1."""
-        conn = self._db(1, 2, 3, 4, 5)
-        w = self._win(conn=conn, card=(3, "c3", "b3", 1), mode="force_rev")
-        w.close_review()
-        w.start_forced_review(direction="DESC")
-
-        assert w.current_card[0] == 3
-        assert [c[0] for c in w.cards_due][0] == 2
-        conn.close(); w.close()
-
-    def test_restart_after_close_paused_first_all_asc(self):
-        """Restart after close: paused first, all other cards ASC."""
-        conn = self._db(1, 2, 3, 4, 5)
-        w = self._win(conn=conn, card=(3, "c3", "b3", 1), mode="force_seq")
-        w.close_review()
-        w.restart_current_review()
-
-        assert w.current_card[0] == 3
-        assert sorted(c[0] for c in w.cards_due) == [1, 2, 4, 5]
-        conn.close(); w.close()
-
-    def test_forced_resume_skips_deleted_paused(self):
-        """Next after close: deleted paused card silently skipped."""
-        conn = self._db(1, 2, 3)
-        w = self._win(conn=conn, card=(2, "c2", "b2", 1), mode="force_seq")
-        w.close_review()
-        conn.execute("DELETE FROM cards WHERE id=2"); conn.commit()
-        w.start_forced_review(direction="ASC")
-        assert w.current_card[0] != 2
-        conn.close(); w.close()
 
     # -- DB load clears paused state --------------------------------------
 

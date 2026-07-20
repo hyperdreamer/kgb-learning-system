@@ -154,17 +154,10 @@ Click **Add Entry**. The dialog adapts to the database type:
 
 ### 4. Review Controls
 
-- **Start Daily Review** — begins a review of all cards due today. The 5-box SRS system works identically across all subtypes.
-- **Next** — sequential review in ascending ID order (useful for browsing all cards regardless of due date).
-- **Previous** — sequential review in descending ID order.
-- **Restart** — restart the current review from the beginning in ascending ID order.
-- **Close Review** — pauses the active review without grading or advancing. The current card and review mode are saved; remaining queued cards are preserved in order. Closing has no effect on the database — it is purely a UI convenience for pausing and resuming a session. **Close Review** is only enabled when a card is shown in an active review mode.
-
-  On resume, the paused card is always re-shown first.  The queue that follows depends on the resume action:
-  - **Start Daily Review** (after a daily close): the preserved daily queue.
-  - **Next**: ascending traversal from the paused card's position.
-  - **Previous**: descending traversal from the paused card's position.
-  - **Restart**: all cards in ascending order.
+- **Start Daily Review** — begins a review of all cards due today. During an active review, this primary button becomes **Next** and skips the current card to the end of the same daily queue.
+- **Previous** — returns to the most recently graded card in the current daily session. It is disabled while no review is active.
+- **Restart** — restarts the current daily session from its original due-card queue and clears session history. It is disabled while no review is active.
+- **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database.
 - **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. **Delete Entry** is enabled whenever a database is loaded and a card is displayed (not only during reviews).
 
 ### 5. Browse & Edit
