@@ -1,8 +1,10 @@
 """Categorized application settings dialog."""
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -11,6 +13,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -24,7 +27,55 @@ from .ai_provider import AIProviderConfig, create_ai_test_worker
 from .config import DIR_DB, save_settings
 from .db import DB_SUFFIX
 from .secret_line_edit import SecretLineEdit
-from .tts import VoiceListWorker
+from .tts import TTSWorker, VoiceListWorker
+
+_PREVIEW_SAMPLE = "Hello. This is a preview of the selected voice."
+
+_GENDER_BUTTON_STYLE = """
+QPushButton {
+    padding: 4px 12px;
+    border: 1px solid #aaa;
+    background: #f5f5f5;
+}
+QPushButton:checked {
+    background: #2b6cb0;
+    color: white;
+    border-color: #2b6cb0;
+}
+QPushButton:hover:!checked {
+    background: #e8e8e8;
+}
+"""
+
+
+class _VoiceRowWidget(QWidget):
+    """Compact list-row: voice name, locale/gender meta, per-row preview."""
+
+    def __init__(self, short_name, locale, gender, on_preview, parent=None):
+        super().__init__(parent)
+        self.short_name = short_name
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 6, 4)
+        layout.setSpacing(8)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(0)
+        name_label = QLabel(short_name)
+        name_label.setStyleSheet("font-weight: 600;")
+        meta_label = QLabel(f"{locale} · {gender}")
+        meta_label.setStyleSheet("color: #666;")
+        text_col.addWidget(name_label)
+        text_col.addWidget(meta_label)
+        layout.addLayout(text_col, 1)
+
+        play_btn = QPushButton("▶")
+        play_btn.setFixedWidth(32)
+        play_btn.setToolTip("Preview this voice")
+        play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        play_btn.clicked.connect(lambda: on_preview(short_name))
+        layout.addWidget(play_btn)
+        self.preview_button = play_btn
 
 
 class SettingsDialog(QDialog):
@@ -46,9 +97,15 @@ class SettingsDialog(QDialog):
         self.current_voice = settings.get(
             "tts_voice", "en-US-AvaMultilingualNeural"
         )
+        self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
+        self.preview_tts_worker = None
         self.setWindowTitle("App Settings")
-        self.setMinimumSize(620, 390)
+        self.setMinimumSize(620, 480)
+
+        self.preview_player = QMediaPlayer(self)
+        self.preview_audio = QAudioOutput(self)
+        self.preview_player.setAudioOutput(self.preview_audio)
 
         outer_layout = QVBoxLayout(self)
         content_layout = QHBoxLayout()
@@ -179,14 +236,101 @@ class SettingsDialog(QDialog):
         self.pages.addWidget(page)
 
     def _build_audio_page(self):
-        page, layout = self._page()
-        self.tts_voice_input = QComboBox()
-        self.tts_voice_input.setObjectName("ttsVoiceInput")
-        self.tts_voice_input.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # --- Language filter ---
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Language:"))
+        self.tts_language_filter = QComboBox()
+        self.tts_language_filter.setObjectName("ttsLanguageFilter")
+        self.tts_language_filter.addItem("All languages", "")
+        self.tts_language_filter.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self.tts_voice_input.addItem("(loading voices…)", self.current_voice)
-        layout.addRow("TTS Voice (Edge-TTS):", self.tts_voice_input)
+        lang_row.addWidget(self.tts_language_filter, 1)
+        layout.addLayout(lang_row)
+
+        # --- Gender segmented control ---
+        gender_row = QHBoxLayout()
+        gender_row.addWidget(QLabel("Gender:"))
+        self.tts_gender_all = QPushButton("All")
+        self.tts_gender_all.setObjectName("ttsGenderAll")
+        self.tts_gender_male = QPushButton("Male")
+        self.tts_gender_male.setObjectName("ttsGenderMale")
+        self.tts_gender_female = QPushButton("Female")
+        self.tts_gender_female.setObjectName("ttsGenderFemale")
+        self.tts_gender_group = QButtonGroup(self)
+        for btn, value in (
+            (self.tts_gender_all, ""),
+            (self.tts_gender_male, "Male"),
+            (self.tts_gender_female, "Female"),
+        ):
+            btn.setCheckable(True)
+            btn.setStyleSheet(_GENDER_BUTTON_STYLE)
+            btn.setProperty("genderFilter", value)
+            self.tts_gender_group.addButton(btn)
+            gender_row.addWidget(btn)
+        self.tts_gender_group.setExclusive(True)
+        self.tts_gender_all.setChecked(True)
+        gender_row.addStretch()
+        layout.addLayout(gender_row)
+
+        # --- Search ---
+        self.tts_voice_search = QLineEdit()
+        self.tts_voice_search.setObjectName("ttsVoiceSearch")
+        self.tts_voice_search.setPlaceholderText("Search by voice name…")
+        self.tts_voice_search.setClearButtonEnabled(True)
+        layout.addWidget(self.tts_voice_search)
+
+        # --- Voice list ---
+        self.tts_voice_list = QListWidget()
+        self.tts_voice_list.setObjectName("ttsVoiceList")
+        self.tts_voice_list.setMinimumHeight(160)
+        self.tts_voice_list.setAlternatingRowColors(True)
+        layout.addWidget(self.tts_voice_list, 1)
+        self._set_voice_list_status("(loading voices…)")
+
+        # --- Selected summary ---
+        summary = QWidget()
+        summary.setObjectName("ttsSelectedSummary")
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(0, 4, 0, 0)
+        summary_layout.setSpacing(10)
+
+        summary_text = QVBoxLayout()
+        summary_text.setSpacing(0)
+        self.tts_selected_name = QLabel(self.current_voice)
+        self.tts_selected_name.setObjectName("ttsSelectedName")
+        self.tts_selected_name.setStyleSheet("font-weight: 600;")
+        self.tts_selected_meta = QLabel("")
+        self.tts_selected_meta.setObjectName("ttsSelectedMeta")
+        self.tts_selected_meta.setStyleSheet("color: #666;")
+        summary_text.addWidget(self.tts_selected_name)
+        summary_text.addWidget(self.tts_selected_meta)
+        summary_layout.addLayout(summary_text, 1)
+
+        self.tts_preview_button = QPushButton("Preview")
+        self.tts_preview_button.setObjectName("ttsPreviewButton")
+        self.tts_preview_button.setToolTip(
+            "Play a short sample with the selected voice"
+        )
+        summary_layout.addWidget(self.tts_preview_button)
+        layout.addWidget(summary)
+
+        # Wire filters / selection / preview
+        self.tts_language_filter.currentIndexChanged.connect(
+            self._refilter_voices
+        )
+        self.tts_gender_group.buttonClicked.connect(self._refilter_voices)
+        self.tts_voice_search.textChanged.connect(self._refilter_voices)
+        self.tts_voice_list.currentItemChanged.connect(
+            self._on_voice_selection_changed
+        )
+        self.tts_preview_button.clicked.connect(self._preview_selected_voice)
+
         self.pages.addWidget(page)
 
     def _build_ai_page(self):
@@ -254,6 +398,9 @@ class SettingsDialog(QDialog):
         if path:
             self.default_database_input.setText(path)
 
+    # ------------------------------------------------------------------
+    # Voice list / picker
+    # ------------------------------------------------------------------
     def _start_voice_worker(self):
         self.voice_worker = VoiceListWorker()
         self.voice_worker.voices_ready.connect(self._on_voices_ready)
@@ -262,24 +409,171 @@ class SettingsDialog(QDialog):
         self.voice_worker.start()
 
     def _on_voices_ready(self, voices):
-        self.tts_voice_input.clear()
+        self._all_voices = list(voices)
+        self._populate_language_filter()
+        self._refilter_voices()
+        if not voices:
+            self._set_voice_list_status("(voice list unavailable)")
+            self._update_selected_summary(self.current_voice, "", "")
+
+    def _on_voice_error(self, _message):
+        self._all_voices = []
+        self._set_voice_list_status("(voice list unavailable)")
+        self._update_selected_summary(self.current_voice, "", "")
+
+    def _populate_language_filter(self):
+        current = self.tts_language_filter.currentData() or ""
+        self.tts_language_filter.blockSignals(True)
+        self.tts_language_filter.clear()
+        self.tts_language_filter.addItem("All languages", "")
+        locales = sorted({locale for _, locale, _, _ in self._all_voices if locale})
         selected_index = 0
-        for index, (short_name, locale, gender, _friendly) in enumerate(voices):
-            label = f"{short_name}  ·  {locale}  ·  {gender}"
-            self.tts_voice_input.addItem(label, short_name)
-            if short_name == self.current_voice:
+        for index, locale in enumerate(locales, start=1):
+            self.tts_language_filter.addItem(locale, locale)
+            if locale == current:
                 selected_index = index
-        if voices:
-            self.tts_voice_input.setCurrentIndex(selected_index)
-        else:
-            self.tts_voice_input.addItem(
-                "(voice list unavailable)", self.current_voice
+        self.tts_language_filter.setCurrentIndex(selected_index)
+        self.tts_language_filter.blockSignals(False)
+
+    def _selected_gender_filter(self):
+        btn = self.tts_gender_group.checkedButton()
+        if btn is None:
+            return ""
+        return btn.property("genderFilter") or ""
+
+    def _filtered_voices(self):
+        locale_filter = self.tts_language_filter.currentData() or ""
+        gender_filter = self._selected_gender_filter()
+        query = self.tts_voice_search.text().strip().lower()
+        result = []
+        for short_name, locale, gender, friendly in self._all_voices:
+            if locale_filter and locale != locale_filter:
+                continue
+            if gender_filter and gender != gender_filter:
+                continue
+            if query:
+                haystack = f"{short_name} {friendly}".lower()
+                if query not in haystack:
+                    continue
+            result.append((short_name, locale, gender, friendly))
+        return result
+
+    def _set_voice_list_status(self, text):
+        self.tts_voice_list.blockSignals(True)
+        self.tts_voice_list.clear()
+        item = QListWidgetItem(text)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.tts_voice_list.addItem(item)
+        self.tts_voice_list.blockSignals(False)
+
+    def _refilter_voices(self, *_args):
+        if not self._all_voices:
+            return
+        filtered = self._filtered_voices()
+        prefer = self.current_voice
+        self.tts_voice_list.blockSignals(True)
+        self.tts_voice_list.clear()
+        select_row = -1
+        for index, (short_name, locale, gender, _friendly) in enumerate(filtered):
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, short_name)
+            item.setData(Qt.ItemDataRole.UserRole + 1, locale)
+            item.setData(Qt.ItemDataRole.UserRole + 2, gender)
+            row = _VoiceRowWidget(
+                short_name, locale, gender, self._preview_voice
             )
+            item.setSizeHint(row.sizeHint())
+            self.tts_voice_list.addItem(item)
+            self.tts_voice_list.setItemWidget(item, row)
+            if short_name == prefer and select_row < 0:
+                select_row = index
+        self.tts_voice_list.blockSignals(False)
 
-    @staticmethod
-    def _on_voice_error(_message):
-        pass
+        if not filtered:
+            self._set_voice_list_status("(no voices match filters)")
+            # Keep staged voice; refresh meta from full list if known.
+            locale, gender = self._voice_meta(self.current_voice)
+            self._update_selected_summary(self.current_voice, locale, gender)
+            return
 
+        if select_row >= 0:
+            self.tts_voice_list.setCurrentRow(select_row)
+            self._on_voice_selection_changed(
+                self.tts_voice_list.currentItem(), None
+            )
+        else:
+            # Preferred voice is filtered out — keep it staged, clear list
+            # selection so filters never silently reassign tts_voice.
+            self.tts_voice_list.setCurrentRow(-1)
+            locale, gender = self._voice_meta(self.current_voice)
+            self._update_selected_summary(self.current_voice, locale, gender)
+
+    def _on_voice_selection_changed(self, current, _previous):
+        if current is None:
+            return
+        short_name = current.data(Qt.ItemDataRole.UserRole)
+        if not short_name:
+            return
+        locale = current.data(Qt.ItemDataRole.UserRole + 1) or ""
+        gender = current.data(Qt.ItemDataRole.UserRole + 2) or ""
+        self.current_voice = short_name
+        self._update_selected_summary(short_name, locale, gender)
+
+    def _update_selected_summary(self, short_name, locale, gender):
+        self.tts_selected_name.setText(short_name or "")
+        if locale or gender:
+            parts = [p for p in (locale, gender) if p]
+            self.tts_selected_meta.setText(" · ".join(parts))
+        else:
+            self.tts_selected_meta.setText("")
+
+    def _voice_meta(self, short_name):
+        for name, locale, gender, _friendly in self._all_voices:
+            if name == short_name:
+                return locale, gender
+        return "", ""
+
+    def _preview_selected_voice(self):
+        self._preview_voice(self.current_voice)
+
+    def _preview_voice(self, short_name):
+        if not short_name or self.preview_tts_worker is not None:
+            return
+        # Stop any currently playing sample before starting a new one.
+        self.preview_player.stop()
+        self._set_preview_controls_enabled(False)
+        worker = TTSWorker(_PREVIEW_SAMPLE, short_name)
+        self.preview_tts_worker = worker
+        worker.finished.connect(self._on_preview_finished)
+        worker.error.connect(self._on_preview_error)
+        worker.finished.connect(self._on_preview_worker_done)
+        worker.error.connect(self._on_preview_worker_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.error.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_preview_finished(self, file_path):
+        self.preview_player.setSource(QUrl.fromLocalFile(file_path))
+        self.preview_player.play()
+
+    def _on_preview_error(self, message):
+        QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")
+
+    def _on_preview_worker_done(self, *_args):
+        self.preview_tts_worker = None
+        self._set_preview_controls_enabled(True)
+
+    def _set_preview_controls_enabled(self, enabled):
+        self.tts_preview_button.setEnabled(enabled)
+        for i in range(self.tts_voice_list.count()):
+            item = self.tts_voice_list.item(i)
+            widget = self.tts_voice_list.itemWidget(item)
+            if isinstance(widget, _VoiceRowWidget):
+                widget.preview_button.setEnabled(enabled)
+
+    # ------------------------------------------------------------------
+    # AI test
+    # ------------------------------------------------------------------
     def _staged_ai_config(self) -> AIProviderConfig:
         return AIProviderConfig(
             base_url=self.ai_base_url_input.text().strip(),
@@ -330,9 +624,7 @@ class SettingsDialog(QDialog):
         staged["default_database"] = (
             self.default_database_input.text().strip()
         )
-        staged["tts_voice"] = (
-            self.tts_voice_input.currentData() or self.current_voice
-        )
+        staged["tts_voice"] = self.current_voice
         staged["ai_base_url"] = self.ai_base_url_input.text().strip()
         staged["ai_model"] = self.ai_model_input.text().strip()
         staged["ai_api_key"] = self.ai_api_key_input.text().strip()

@@ -45,6 +45,27 @@ class FakeVoiceWorker(QObject):
         self.deleted = True
 
 
+class FakeTTSWorker(QObject):
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    instances = []
+
+    def __init__(self, text, voice):
+        super().__init__()
+        self.text = text
+        self.voice = voice
+        self.started = False
+        self.deleted = False
+        FakeTTSWorker.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+
 class FakeAITestWorker(QObject):
     result = pyqtSignal(bool, str, float)
     finished = pyqtSignal()
@@ -63,6 +84,15 @@ class FakeAITestWorker(QObject):
 
     def deleteLater(self):
         self.deleted = True
+
+
+SAMPLE_VOICES = [
+    ("en-US-AvaMultilingualNeural", "en-US", "Female", "Ava"),
+    ("en-US-AndrewNeural", "en-US", "Male", "Andrew"),
+    ("en-GB-SoniaNeural", "en-GB", "Female", "Sonia"),
+    ("zh-CN-XiaoxiaoNeural", "zh-CN", "Female", "Xiaoxiao"),
+    ("zh-CN-YunxiNeural", "zh-CN", "Male", "Yunxi"),
+]
 
 
 @pytest.fixture
@@ -90,6 +120,8 @@ def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory
 
     worker = FakeVoiceWorker()
     monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
+    FakeTTSWorker.instances = []
+    monkeypatch.setattr(module, "TTSWorker", FakeTTSWorker)
     if save is not None:
         monkeypatch.setattr(module, "save_settings", save)
     if ai_test_factory is not None:
@@ -102,6 +134,21 @@ def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory
     return module.SettingsDialog(
         settings, current_size=current_size
     ), worker
+
+
+def _voice_names(dialog):
+    names = []
+    for i in range(dialog.tts_voice_list.count()):
+        item = dialog.tts_voice_list.item(i)
+        name = item.data(Qt.ItemDataRole.UserRole)
+        if name:
+            names.append(name)
+    return names
+
+
+def _emit_voices(dialog, worker, voices=None):
+    worker.voices_ready.emit(list(voices if voices is not None else SAMPLE_VOICES))
+    _app().processEvents()
 
 
 def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch, settings):
@@ -123,7 +170,15 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "fontSizeInput": 1,
         "contentFontFamilyInput": 1,
         "contentFontSizeInput": 1,
-        "ttsVoiceInput": 2,
+        "ttsLanguageFilter": 2,
+        "ttsGenderAll": 2,
+        "ttsGenderMale": 2,
+        "ttsGenderFemale": 2,
+        "ttsVoiceSearch": 2,
+        "ttsVoiceList": 2,
+        "ttsSelectedName": 2,
+        "ttsSelectedMeta": 2,
+        "ttsPreviewButton": 2,
         "aiBaseUrlInput": 3,
         "aiModelInput": 3,
         "aiApiKeyInput": 3,
@@ -136,6 +191,7 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         control = dialog.findChild(QObject, object_name)
         assert control is not None, object_name
         assert pages.widget(page_index).isAncestorOf(control), object_name
+    assert dialog.findChild(QObject, "ttsVoiceInput") is None
     assert dialog.findChild(QObject, "saveSettingsButton") is not None
     assert dialog.findChild(QObject, "cancelSettingsButton") is not None
     assert worker.started
@@ -236,8 +292,14 @@ def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeyp
         ("other", "en-US", "Female", "Other"),
         (settings["tts_voice"], "en-US", "Female", "Ava"),
     ])
+    _app().processEvents()
 
-    assert dialog.tts_voice_input.currentData() == settings["tts_voice"]
+    assert dialog.current_voice == settings["tts_voice"]
+    assert dialog.tts_selected_name.text() == settings["tts_voice"]
+    assert settings["tts_voice"] in _voice_names(dialog)
+    assert dialog.tts_voice_list.currentItem().data(
+        Qt.ItemDataRole.UserRole
+    ) == settings["tts_voice"]
     worker.finished.emit()
     assert worker.deleted
     assert dialog.voice_worker is worker
@@ -253,10 +315,11 @@ def test_api_key_uses_existing_secret_line_edit(monkeypatch, settings):
     dialog.reject()
 
 
-def test_dialog_does_not_force_wide_voice_controls(monkeypatch, settings):
+def test_audio_page_list_is_usable_without_forcing_huge_width(monkeypatch, settings):
     dialog, _ = _dialog(monkeypatch, settings)
-    assert dialog.tts_voice_input.minimumWidth() == 0
-    assert dialog.tts_voice_input.view().minimumWidth() == 0
+    assert dialog.minimumHeight() >= 480
+    assert dialog.tts_voice_list.minimumWidth() == 0
+    assert dialog.minimumWidth() < 900
     dialog.reject()
 
 
@@ -537,3 +600,204 @@ def test_ai_test_missing_api_key_fails_without_hanging(monkeypatch, settings):
     assert dialog.ai_test_button.isEnabled() is True
     dialog.reject()
 
+
+# ---------------------------------------------------------------------------
+# Voice picker: filters, selection, preview, empty/error states
+# ---------------------------------------------------------------------------
+
+def test_gender_filter_narrows_voice_list(monkeypatch, settings):
+    dialog, worker = _dialog(monkeypatch, settings)
+    _emit_voices(dialog, worker)
+
+    dialog.tts_gender_male.click()
+    _app().processEvents()
+    male = _voice_names(dialog)
+    assert male == ["en-US-AndrewNeural", "zh-CN-YunxiNeural"]
+
+    dialog.tts_gender_female.click()
+    _app().processEvents()
+    female = _voice_names(dialog)
+    assert female == [
+        "en-US-AvaMultilingualNeural",
+        "en-GB-SoniaNeural",
+        "zh-CN-XiaoxiaoNeural",
+    ]
+
+    dialog.tts_gender_all.click()
+    _app().processEvents()
+    assert _voice_names(dialog) == [v[0] for v in SAMPLE_VOICES]
+    dialog.reject()
+
+
+def test_language_filter_narrows_voice_list(monkeypatch, settings):
+    dialog, worker = _dialog(monkeypatch, settings)
+    _emit_voices(dialog, worker)
+
+    # Language combo: All + sorted locales en-GB, en-US, zh-CN
+    index = dialog.tts_language_filter.findData("zh-CN")
+    assert index > 0
+    dialog.tts_language_filter.setCurrentIndex(index)
+    _app().processEvents()
+    assert _voice_names(dialog) == [
+        "zh-CN-XiaoxiaoNeural",
+        "zh-CN-YunxiNeural",
+    ]
+
+    dialog.tts_language_filter.setCurrentIndex(0)  # All languages
+    _app().processEvents()
+    assert len(_voice_names(dialog)) == len(SAMPLE_VOICES)
+    dialog.reject()
+
+
+def test_search_filter_narrows_voice_list(monkeypatch, settings):
+    dialog, worker = _dialog(monkeypatch, settings)
+    _emit_voices(dialog, worker)
+
+    dialog.tts_voice_search.setText("sonia")
+    _app().processEvents()
+    assert _voice_names(dialog) == ["en-GB-SoniaNeural"]
+
+    dialog.tts_voice_search.setText("YUNXI")
+    _app().processEvents()
+    assert _voice_names(dialog) == ["zh-CN-YunxiNeural"]
+
+    dialog.tts_voice_search.clear()
+    _app().processEvents()
+    assert len(_voice_names(dialog)) == len(SAMPLE_VOICES)
+    dialog.reject()
+
+
+def test_selecting_list_item_stages_voice_short_name(monkeypatch, settings):
+    saved = []
+    dialog, worker = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    _emit_voices(dialog, worker)
+
+    # Select Andrew (row 1 in unfiltered list)
+    target = "en-US-AndrewNeural"
+    for i in range(dialog.tts_voice_list.count()):
+        item = dialog.tts_voice_list.item(i)
+        if item.data(Qt.ItemDataRole.UserRole) == target:
+            dialog.tts_voice_list.setCurrentRow(i)
+            break
+    _app().processEvents()
+
+    assert dialog.current_voice == target
+    assert dialog.tts_selected_name.text() == target
+    assert "Male" in dialog.tts_selected_meta.text()
+    assert dialog._staged_settings()["tts_voice"] == target
+    assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"  # not saved yet
+
+    dialog.save_button.click()
+    assert saved[0]["tts_voice"] == target
+    assert settings["tts_voice"] == target
+
+
+def test_initial_configured_voice_remains_selected_after_voices_ready(
+    monkeypatch, settings
+):
+    settings["tts_voice"] = "zh-CN-YunxiNeural"
+    dialog, worker = _dialog(monkeypatch, settings)
+    assert dialog.current_voice == "zh-CN-YunxiNeural"
+    assert dialog.tts_selected_name.text() == "zh-CN-YunxiNeural"
+
+    _emit_voices(dialog, worker)
+
+    assert dialog.current_voice == "zh-CN-YunxiNeural"
+    assert dialog.tts_selected_name.text() == "zh-CN-YunxiNeural"
+    assert dialog.tts_voice_list.currentItem().data(
+        Qt.ItemDataRole.UserRole
+    ) == "zh-CN-YunxiNeural"
+    assert "Male" in dialog.tts_selected_meta.text()
+    assert "zh-CN" in dialog.tts_selected_meta.text()
+    dialog.reject()
+
+
+def test_preview_starts_tts_worker_without_saving(monkeypatch, settings):
+    saved = []
+    dialog, worker = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    _emit_voices(dialog, worker)
+
+    # Select a non-default voice, then preview
+    target = "en-GB-SoniaNeural"
+    for i in range(dialog.tts_voice_list.count()):
+        item = dialog.tts_voice_list.item(i)
+        if item.data(Qt.ItemDataRole.UserRole) == target:
+            dialog.tts_voice_list.setCurrentRow(i)
+            break
+    _app().processEvents()
+
+    dialog.tts_preview_button.click()
+    _app().processEvents()
+
+    assert len(FakeTTSWorker.instances) == 1
+    tts = FakeTTSWorker.instances[0]
+    assert tts.started
+    assert tts.voice == target
+    assert "preview" in tts.text.lower() or "Hello" in tts.text
+    assert dialog.tts_preview_button.isEnabled() is False
+    assert saved == []
+    assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"
+
+    tts.finished.emit("/tmp/fake-preview.mp3")
+    _app().processEvents()
+    assert dialog.tts_preview_button.isEnabled() is True
+    assert dialog.preview_tts_worker is None
+    assert saved == []
+    dialog.reject()
+
+
+def test_filters_do_not_save_settings(monkeypatch, settings):
+    saved = []
+    original = dict(settings)
+    dialog, worker = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    _emit_voices(dialog, worker)
+
+    dialog.tts_gender_male.click()
+    dialog.tts_language_filter.setCurrentIndex(
+        dialog.tts_language_filter.findData("en-US")
+    )
+    dialog.tts_voice_search.setText("Andrew")
+    dialog.category_list.setCurrentRow(0)
+    dialog.category_list.setCurrentRow(2)
+    _app().processEvents()
+
+    assert saved == []
+    assert settings == original
+    dialog.reject()
+
+
+def test_empty_voice_list_still_allows_save_of_current_voice(monkeypatch, settings):
+    saved = []
+    dialog, worker = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    worker.voices_ready.emit([])
+    _app().processEvents()
+
+    assert dialog.current_voice == settings["tts_voice"]
+    assert dialog.tts_selected_name.text() == settings["tts_voice"]
+    assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
+
+    dialog.save_button.click()
+    assert saved[0]["tts_voice"] == settings["tts_voice"]
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+
+def test_voice_error_still_allows_save_of_current_voice(monkeypatch, settings):
+    saved = []
+    dialog, worker = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    worker.error.emit("network down")
+    _app().processEvents()
+
+    assert dialog.current_voice == settings["tts_voice"]
+    assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
+    dialog.save_button.click()
+    assert saved[0]["tts_voice"] == settings["tts_voice"]

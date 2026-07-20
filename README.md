@@ -173,11 +173,11 @@ Double-click a row to edit. Sentence cards open the full sentence dialog with re
 
 ### 6. Text-to-Speech 🔊
 
-TTS reads the sentence (front) and back content when flipped. Configure voice in Settings.
+TTS reads the sentence (front) and back content when flipped. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample, then save the selected Edge TTS voice.
 
 ### 7. Settings
 
-Configure window size, fonts, default database, TTS voice, AI provider, and language preferences.
+Configure window size, fonts, default database, TTS voice (with language/gender/search filters and preview), AI provider, and language preferences.
 
 ---
 
