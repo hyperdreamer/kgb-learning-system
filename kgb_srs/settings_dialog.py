@@ -1,5 +1,7 @@
 """Categorized application settings dialog."""
 
+import os
+
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -24,7 +26,12 @@ from PyQt6.QtWidgets import (
 )
 
 from .ai_provider import AIProviderConfig, create_ai_test_worker
-from .config import DIR_DB, save_settings
+from .config import (
+    DIR_DB,
+    ensure_database_root_structure,
+    get_database_root,
+    save_settings,
+)
 from .db import DB_SUFFIX
 from .secret_line_edit import SecretLineEdit
 from .tts import TTSWorker, VoiceListWorker
@@ -170,6 +177,32 @@ class SettingsDialog(QDialog):
 
     def _build_general_page(self):
         page, layout = self._page()
+
+        # --- Database root directory ---
+        root_value = (self.settings.get("database_root") or "").strip()
+        if not root_value:
+            root_value = DIR_DB
+        self.database_root_input = QLineEdit(root_value)
+        self.database_root_input.setObjectName("databaseRootInput")
+        self.database_root_input.setPlaceholderText(
+            "Directory that holds all databases"
+        )
+        self.database_root_browse_button = QPushButton("Browse…")
+        self.database_root_browse_button.setObjectName(
+            "databaseRootBrowseButton"
+        )
+
+        root_row = QWidget()
+        root_row_layout = QHBoxLayout(root_row)
+        root_row_layout.setContentsMargins(0, 0, 0, 0)
+        root_row_layout.addWidget(self.database_root_input, 1)
+        root_row_layout.addWidget(self.database_root_browse_button)
+        layout.addRow("Database Directory:", root_row)
+        self.database_root_browse_button.clicked.connect(
+            self.browse_database_root
+        )
+
+        # --- Default database file ---
         self.default_database_input = QLineEdit(
             self.settings.get("default_database", "")
         )
@@ -361,11 +394,24 @@ class SettingsDialog(QDialog):
         self.ai_test_button.clicked.connect(self._start_ai_test)
         self.pages.addWidget(page)
 
+    def browse_database_root(self):
+        start = self.database_root_input.text().strip() or DIR_DB
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Database Directory",
+            start,
+        )
+        if path:
+            self.database_root_input.setText(path)
+
     def browse_database(self):
+        start = self.database_root_input.text().strip() or DIR_DB
+        if not os.path.isdir(start):
+            start = DIR_DB
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Default Database",
-            DIR_DB,
+            start,
             f"Barsky DB (*{DB_SUFFIX});;All Files (*)",
         )
         if path:
@@ -573,6 +619,17 @@ class SettingsDialog(QDialog):
             self.content_font_family_input.currentText()
         )
         staged["content_font_size"] = self.content_font_size_input.value()
+        root_text = self.database_root_input.text().strip()
+        # Store empty when the user keeps the project default so upgrades stay
+        # portable; get_database_root() still resolves empty → DIR_DB.
+        if not root_text or os.path.abspath(os.path.expanduser(root_text)) == (
+            os.path.abspath(DIR_DB)
+        ):
+            staged["database_root"] = ""
+        else:
+            staged["database_root"] = os.path.abspath(
+                os.path.expanduser(root_text)
+            )
         staged["default_database"] = (
             self.default_database_input.text().strip()
         )
@@ -589,6 +646,17 @@ class SettingsDialog(QDialog):
 
     def save_and_apply(self):
         staged = self._staged_settings()
+        root = get_database_root(staged)
+        try:
+            ensure_database_root_structure(root)
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Database Directory",
+                f"Could not create database directory structure under:\n"
+                f"{root}\n\n{exc}",
+            )
+            return
         try:
             save_settings(staged)
         except OSError as exc:

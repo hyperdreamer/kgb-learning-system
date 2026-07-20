@@ -4,7 +4,15 @@ A spaced-repetition learning application with Markdown + MathJax support.
 """
 
 # Non-PyQt modules are safe to import eagerly.
-from .config import load_settings, save_settings, DEFAULT_SETTINGS, DIR_DB
+from .config import (
+    load_settings,
+    save_settings,
+    DEFAULT_SETTINGS,
+    DIR_DB,
+    get_database_root,
+    ensure_database_root_structure,
+    CANONICAL_DB_SUBDIRS,
+)
 
 __all__ = [
     "BarskyApp",
@@ -12,6 +20,9 @@ __all__ = [
     "save_settings",
     "DEFAULT_SETTINGS",
     "DIR_DB",
+    "get_database_root",
+    "ensure_database_root_structure",
+    "CANONICAL_DB_SUBDIRS",
 ]
 
 

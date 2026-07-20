@@ -30,7 +30,7 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-from .config import load_settings, save_settings, DIR_DB
+from .config import load_settings, save_settings, get_database_root, ensure_database_root_structure
 from .db import init_db, find_databases
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
@@ -179,9 +179,19 @@ class BarskyApp(QMainWindow):
         self.setup_ui()
         self.apply_font_settings()
 
+        # Ensure the configured database root has the canonical category/
+        # subtype directories (Language-based/{Sentence,Word-Phrase}-based +
+        # Knowledge-based). Legacy folders are left untouched.
+        try:
+            ensure_database_root_structure(get_database_root(self.settings))
+        except OSError as exc:
+            print(f"Could not create database directory structure: {exc}")
+
         default_db = self.settings.get("default_database", "")
         if default_db:
-            for display, path in find_databases():
+            for display, path in find_databases(
+                get_database_root(self.settings)
+            ):
                 if path == default_db and os.path.exists(default_db):
                     self.current_db_path = default_db
                     self.current_lang = display
@@ -326,7 +336,8 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     def build_db_menu(self, parent_menu):
         """Build a hierarchical QMenu using catalog-based categories/subtypes."""
-        dbs = find_databases()
+        settings = getattr(self, "settings", None) or {}
+        dbs = find_databases(get_database_root(settings))
         entries = []
         for display, full_path in dbs:
             db_type = _open_and_infer_type(full_path)
@@ -589,7 +600,7 @@ class BarskyApp(QMainWindow):
         db_path = action.data()
         if not db_path:
             return
-        for display, path in find_databases():
+        for display, path in find_databases(get_database_root(self.settings)):
             if path == db_path:
                 self.current_db_path = db_path
                 self.current_lang = display
@@ -599,7 +610,18 @@ class BarskyApp(QMainWindow):
 
     def create_new_database(self):
         """Show category/subtype selection dialog, then create DB with metadata."""
-        dialog = DBCreationDialog(self, base_dir=DIR_DB)
+        db_root = get_database_root(self.settings)
+        try:
+            ensure_database_root_structure(db_root)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Database Directory",
+                f"Could not prepare database directory:\n{db_root}\n\n{exc}",
+            )
+            return
+
+        dialog = DBCreationDialog(self, base_dir=db_root)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -622,7 +644,7 @@ class BarskyApp(QMainWindow):
         subdir = canon_map[db_type]
 
         try:
-            path = resolve_db_path(DIR_DB, subdir, name)
+            path = resolve_db_path(db_root, subdir, name)
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Name", str(e))
             return
@@ -1815,6 +1837,19 @@ class BarskyApp(QMainWindow):
         # MainWindow-owned worker lifetime.
         self.voice_worker = dialog.voice_worker
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Root may have changed — recreate canonical layout under the new
+            # (or existing) directory. Structure creation already ran inside
+            # the dialog, but re-run here so later create/scan paths are ready.
+            try:
+                ensure_database_root_structure(
+                    get_database_root(self.settings)
+                )
+            except OSError as exc:
+                QMessageBox.warning(
+                    self,
+                    "Database Directory",
+                    f"Could not prepare database directory:\n{exc}",
+                )
             self.resize(self.settings["width"], self.settings["height"])
             self.apply_font_settings()
             # Refresh drop-zone HTML and study-card content fonts even when

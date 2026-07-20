@@ -73,7 +73,11 @@ class DatabaseType(Enum):
 # Menu display path helper
 # ---------------------------------------------------------------------------
 
-def display_path_for(db_path: str, db_type: DatabaseType) -> str:
+def display_path_for(
+    db_path: str,
+    db_type: DatabaseType,
+    base_dir: str | None = None,
+) -> str:
     """Build the hierarchical display path for a database given its type.
 
     The display path is used in the menu tree.
@@ -99,10 +103,15 @@ def display_path_for(db_path: str, db_type: DatabaseType) -> str:
     }
     canonical = canonicals[db_type]
 
-    from .config import DIR_DB
+    from .config import DIR_DB, get_database_root
+
+    if base_dir is None:
+        base_dir = get_database_root()
+    if not base_dir:
+        base_dir = DIR_DB
 
     norm_path = os.path.realpath(db_path)
-    canonical_abs = os.path.realpath(os.path.join(DIR_DB, canonical))
+    canonical_abs = os.path.realpath(os.path.join(base_dir, canonical))
     category_disp = db_type.category_display
 
     try:

@@ -1189,7 +1189,7 @@ class TestMenuSubmenuSpacing:
         dummy.write_text("")
 
         monkeypatch.setattr("kgb_srs.main_window.find_databases",
-                            lambda: [("Test", str(dummy))])
+                            lambda *a, **k: [("Test", str(dummy))])
         monkeypatch.setattr("kgb_srs.main_window._open_and_infer_type",
                             lambda p: DatabaseType.LANGUAGE_SENTENCE)
 
@@ -1218,7 +1218,7 @@ class TestMenuSubmenuSpacing:
         dummy.write_text("")
 
         monkeypatch.setattr("kgb_srs.main_window.find_databases",
-                            lambda: [("French", str(dummy))])
+                            lambda *a, **k: [("French", str(dummy))])
         monkeypatch.setattr("kgb_srs.main_window._open_and_infer_type",
                             lambda p: DatabaseType.LANGUAGE_SENTENCE)
 
@@ -1259,7 +1259,7 @@ class TestMenuSubmenuSpacing:
         dummy.write_text("")
 
         monkeypatch.setattr("kgb_srs.main_window.find_databases",
-                            lambda: [("Math", str(dummy))])
+                            lambda *a, **k: [("Math", str(dummy))])
         monkeypatch.setattr("kgb_srs.main_window._open_and_infer_type",
                             lambda p: DatabaseType.KNOWLEDGE)
 

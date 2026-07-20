@@ -11,6 +11,14 @@ PROJECT_DIR = os.path.dirname(SCRIPT_DIR)  # parent: kgb_learning_system
 DIR_DB = os.path.join(PROJECT_DIR, "db")
 SETTINGS_FILE = os.path.join(PROJECT_DIR, "barsky_settings.json")
 
+# Canonical relative layout under the database root.
+# Language-based uses two subtype directories; Knowledge-based is flat.
+CANONICAL_DB_SUBDIRS = (
+    os.path.join("Language-based", "Sentence-based"),
+    os.path.join("Language-based", "Word-Phrase-based"),
+    "Knowledge-based",
+)
+
 # --- Default Settings ---
 DEFAULT_SETTINGS = {
     "width": 900,
@@ -20,6 +28,8 @@ DEFAULT_SETTINGS = {
     # Flashcard study content (separate from UI chrome)
     "content_font_family": "Arial",
     "content_font_size": 18,
+    # Root folder for all databases. Empty → project db/ (DIR_DB).
+    "database_root": "",
     "default_database": "",
     "tts_voice": "en-US-AvaMultilingualNeural",
     # Audio page language filter ("" = All languages)
@@ -32,6 +42,44 @@ DEFAULT_SETTINGS = {
     # Language settings for AI prompts
     "explanation_language": "Chinese",
 }
+
+
+def get_database_root(settings=None) -> str:
+    """Resolve the configured database root directory.
+
+    Empty / missing ``database_root`` falls back to the project ``db/`` path
+    (``DIR_DB``) so existing installs keep working without a settings change.
+    """
+    if settings is None:
+        settings = load_settings()
+    root = (settings.get("database_root") or "").strip()
+    if not root:
+        return DIR_DB
+    return os.path.abspath(os.path.expanduser(root))
+
+
+def ensure_database_root_structure(root: str | None = None) -> str:
+    """Create the canonical category/subtype directories under *root*.
+
+    Layout::
+
+        <root>/
+        ├── Language-based/
+        │   ├── Sentence-based/
+        │   └── Word-Phrase-based/
+        └── Knowledge-based/
+
+    Returns the absolute root path. Missing parents are created. Existing
+    directories and files (including legacy ``Languages/`` / ``Math/``) are left
+    untouched.
+    """
+    if root is None:
+        root = get_database_root()
+    root = os.path.abspath(os.path.expanduser(root))
+    os.makedirs(root, exist_ok=True)
+    for subdir in CANONICAL_DB_SUBDIRS:
+        os.makedirs(os.path.join(root, subdir), exist_ok=True)
+    return root
 
 
 def load_settings():

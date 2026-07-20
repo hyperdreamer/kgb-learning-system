@@ -5,6 +5,7 @@
   "font_size": 14,
   "content_font_family": "Arial",
   "content_font_size": 18,
+  "database_root": "",
   "default_database": "",
   "tts_voice": "en-US-AvaMultilingualNeural",
   "tts_language": "",

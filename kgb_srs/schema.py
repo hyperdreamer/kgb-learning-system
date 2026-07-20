@@ -476,13 +476,14 @@ def update_sentence_card(
 def find_databases(base_dir=None):
     """Recursively find all _barsky.db files under *base_dir*.
 
-    If *base_dir* is None, uses the config DIR_DB.
+    If *base_dir* is None, uses the configured database root
+    (``get_database_root()``), which defaults to project ``db/``.
 
     Returns list of (display_name, full_path) sorted by display name.
     """
     if base_dir is None:
-        from .config import DIR_DB
-        base_dir = DIR_DB
+        from .config import get_database_root
+        base_dir = get_database_root()
 
     results = []
     if not os.path.isdir(base_dir):

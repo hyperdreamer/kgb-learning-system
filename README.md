@@ -18,15 +18,21 @@ python main.py
 
 ## Database Hierarchy
 
-Databases are organized into two top-level categories:
+Databases live under a configurable **database root** (default: project `db/`).
+Set it in **Settings → General → Database Directory**. When the root is assigned
+or the app starts, the canonical category/subtype folders are created:
 
 ```
-db/
+<database_root>/
 ├── Language-based/
 │   ├── Sentence-based/       # Cards with sentence + unfamiliar words
 │   └── Word-Phrase-based/    # Traditional word/phrase → meaning cards
 └── Knowledge-based/          # Generic front/back cards (math, etc.)
 ```
+
+Language-based databases use **two different subdirectories** to separate the
+two types. New databases are created under the matching subtype folder.
+Legacy folders such as `Languages/` and `Math/` remain readable.
 
 The selection menu reflects this category/subtype hierarchy. The app infers and persists `database_type` metadata in each database. Knowledge-based databases do **not** show a duplicate subtype label in the menu.
 
@@ -177,7 +183,24 @@ TTS reads the sentence (front) and back content when flipped. Choose a voice und
 
 ### 7. Settings
 
-Configure window size, fonts, default database, TTS voice (with remembered language filter, gender/search filters, and row preview), AI provider, and language preferences.
+Configure:
+
+| Category | Settings |
+|----------|----------|
+| **General** | Database Directory (root folder), Default Database (file) |
+| **Appearance** | Window size, UI font, content font |
+| **Audio & Speech** | TTS voice (language/gender/search filters, row preview) |
+| **AI Provider** | Base URL, model, API key, timeout, explanation language, Test |
+
+When you set **Database Directory**, the app creates:
+
+```
+<database_root>/Language-based/Sentence-based/
+<database_root>/Language-based/Word-Phrase-based/
+<database_root>/Knowledge-based/
+```
+
+Empty `database_root` keeps the portable project default (`db/`).
 
 ---
 

@@ -104,6 +104,7 @@ def settings():
         "font_size": 14,
         "content_font_family": "Arial",
         "content_font_size": 18,
+        "database_root": "",
         "default_database": "",
         "tts_voice": "en-US-AvaMultilingualNeural",
         "tts_language": "",
@@ -164,6 +165,8 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
     ]
     assert pages.count() == 4
     expected_pages = {
+        "databaseRootInput": 0,
+        "databaseRootBrowseButton": 0,
         "defaultDatabaseInput": 0,
         "windowWidthInput": 1,
         "windowHeightInput": 1,
@@ -286,6 +289,66 @@ def test_database_browser_stages_selected_path(monkeypatch, settings):
     assert settings["default_database"] == ""
     assert calls
     dialog.reject()
+
+
+def test_database_root_browser_stages_selected_directory(monkeypatch, settings):
+    import kgb_srs.settings_dialog as module
+    from kgb_srs.config import DIR_DB
+
+    dialog, _ = _dialog(monkeypatch, settings)
+    assert dialog.database_root_input.text() == DIR_DB
+    calls = []
+    monkeypatch.setattr(
+        module.QFileDialog,
+        "getExistingDirectory",
+        lambda *args, **kwargs: (
+            calls.append(args) or "/tmp/my-databases"
+        ),
+    )
+
+    dialog.database_root_browse_button.click()
+
+    assert dialog.database_root_input.text() == "/tmp/my-databases"
+    assert settings.get("database_root", "") == ""
+    assert calls
+    dialog.reject()
+
+
+def test_save_creates_canonical_database_root_structure(monkeypatch, settings, tmp_path):
+    import kgb_srs.settings_dialog as module
+    from kgb_srs.config import CANONICAL_DB_SUBDIRS
+
+    saved = []
+    root = tmp_path / "dbs"
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.database_root_input.setText(str(root))
+
+    dialog.save_button.click()
+
+    assert len(saved) == 1
+    assert saved[0]["database_root"] == str(root)
+    for subdir in CANONICAL_DB_SUBDIRS:
+        assert (root / subdir).is_dir()
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+
+def test_save_stores_empty_database_root_for_project_default(monkeypatch, settings):
+    import kgb_srs.settings_dialog as module
+    from kgb_srs.config import DIR_DB
+
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.database_root_input.setText(DIR_DB)
+
+    dialog.save_button.click()
+
+    assert len(saved) == 1
+    assert saved[0]["database_root"] == ""
+    assert dialog.result() == dialog.DialogCode.Accepted
 
 
 def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeypatch, settings):

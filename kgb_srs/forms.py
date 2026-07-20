@@ -6,6 +6,8 @@ Dialogs:
   DBCreationDialog     — category/subtype selection for new databases
 """
 
+import os
+
 from PyQt6.QtWidgets import (
     QDialog,
     QWidget,
@@ -1099,7 +1101,16 @@ class DBCreationDialog(QDialog):
             subdir = "Language-based/Word-Phrase-based"
         else:
             subdir = "Knowledge-based"
-        self._dir_label.setText(f"db/{subdir}/")
+        root = self._base_dir or "db"
+        # Show a short path for the project default; otherwise the full root.
+        from .config import DIR_DB
+        if not self._base_dir or os.path.abspath(self._base_dir) == (
+            os.path.abspath(DIR_DB)
+        ):
+            display_root = "db"
+        else:
+            display_root = root.rstrip("/\\")
+        self._dir_label.setText(f"{display_root}/{subdir}/")
 
     def _on_create(self):
         from .schema import validate_db_name
