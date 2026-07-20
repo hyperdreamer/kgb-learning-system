@@ -2254,6 +2254,58 @@ class TestReviewControls:
         assert not hasattr(w, "delete_current_btn"), "legacy widget removed"
         w.close()
 
+    # -- card geometry ------------------------------------------------------
+
+    def _draw_card_at(self, w, scene_w, scene_h, zone_y):
+        """Helper: resize scene, draw card, return (width, centre_x)."""
+        w.scene.clear()
+        w.card_ui = None
+        w.scene.setSceneRect(0, 0, scene_w, scene_h)
+        w._zone_y = zone_y
+        w.current_card = (1, "front", "back", 1)
+        w.draw_card_ui()
+        card = w.card_ui
+        assert card is not None, "card_ui not created"
+        return card.rect().width(), card.pos().x()
+
+    def test_review_card_occupies_90_percent_scene_width(self):
+        """Card width ≈ 90 % of scene width, centred, contained, and wider
+        scenes produce wider cards."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+
+        w = BarskyApp()
+        try:
+            cw_narrow, cx_narrow = self._draw_card_at(w, 800, 600, 500)
+            cw_wide, cx_wide = self._draw_card_at(w, 1200, 800, 700)
+
+            # approximate 90 % width
+            assert cw_narrow == pytest.approx(720, abs=5), (
+                f"Expected ~720 (90 % of 800), got {cw_narrow}"
+            )
+            assert cw_wide == pytest.approx(1080, abs=5), (
+                f"Expected ~1080 (90 % of 1200), got {cw_wide}"
+            )
+            # wider scene → wider card
+            assert cw_wide > cw_narrow, (
+                f"Card should grow: {cw_wide} not > {cw_narrow}"
+            )
+            # centred
+            assert cx_narrow == pytest.approx(400, abs=1), (
+                f"Card not centred at 800/2, got {cx_narrow}"
+            )
+            assert cx_wide == pytest.approx(600, abs=1), (
+                f"Card not centred at 1200/2, got {cx_wide}"
+            )
+            # contained within scene bounds
+            for cw, cx, limit in [(cw_narrow, cx_narrow, 800),
+                                   (cw_wide, cx_wide, 1200)]:
+                left = cx - cw / 2
+                right = cx + cw / 2
+                assert left >= 0, f"Card left edge outside scene ({left})"
+                assert right <= limit, f"Card right edge outside scene ({right})"
+        finally:
+            w.close()
     # -- close button visual contract --------------------------------------
 
     def test_close_button_is_compact_x_overlay_on_canvas(self):

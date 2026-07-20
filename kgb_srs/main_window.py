@@ -1693,7 +1693,7 @@ class BarskyApp(QMainWindow):
         w = max(400, self.scene.width())
         h = max(400, self.scene.height())
 
-        cw = int(w * 0.75)
+        cw = int(w * 0.90)
         ch = int(h * 0.75)
 
         available = zone_y - 20
