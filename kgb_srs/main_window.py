@@ -22,21 +22,18 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
-    QSpinBox,
-    QFormLayout,
     QAbstractItemView,
     QCheckBox,
     QMenu,
-    QFileDialog,
     QApplication,
 )
-from PyQt6.QtCore import Qt, QPointF, QTimer, QUrl
-from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPen, QColor, QBrush, QIcon, QPixmap, QAction
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import load_settings, save_settings, DIR_DB
-from .db import init_db, find_databases, DB_SUFFIX
-from .tts import TTSWorker, VoiceListWorker
+from .db import init_db, find_databases
+from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
 from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
@@ -54,6 +51,8 @@ from .catalog import (DatabaseType, DatabaseCategory, infer_database_type,
 from .validation import validate_unfamiliar_items, deduplicate_unfamiliar_items
 from .search import search_sentence_cards, search_word_phrase_cards
 from .ai_provider import AIProviderConfig
+from .secret_line_edit import SecretLineEdit, _make_eye_icons
+from .settings_dialog import SettingsDialog
 
 _DB_MENU_STYLESHEET = (
     "QMenu::item {"
@@ -63,98 +62,6 @@ _DB_MENU_STYLESHEET = (
     " padding-bottom: 6px;"
     " }"
 )
-
-
-def _make_eye_icons(size=20):
-    """Return (hidden_icon, visible_icon) — distinct QIcon objects.
-
-    Painted with QPainter — no external assets, no Unicode emoji.
-
-    hidden_icon:  eye outline + diagonal slash (password hidden).
-    visible_icon: eye outline + centered hollow iris (plaintext visible).
-
-    Returns two separate QIcon instances because QLineEdit renders
-    QAction icons without consulting QIcon state (Off/On); explicit
-    setIcon() switching is required on toggle.
-    """
-    from PyQt6.QtGui import QPainterPath
-
-    grey = QColor(0x75, 0x75, 0x75)
-    pen = QPen(grey, 1.5)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-
-    margin = max(2, int(size * 0.22))
-    cx = size / 2.0
-    cy = size / 2.0
-    ew = size / 2.0 - margin  # eye half-width
-    eh = size / 2.0 - margin  # eye half-height
-
-    def _eye_outline():
-        p = QPainterPath()
-        p.moveTo(cx - ew, cy)
-        p.quadTo(cx, cy - eh, cx + ew, cy)
-        p.quadTo(cx, cy + eh, cx - ew, cy)
-        p.closeSubpath()
-        return p
-
-    def _render(draw_cb):
-        pm = QPixmap(size, size)
-        pm.fill(Qt.GlobalColor.transparent)
-        qp = QPainter(pm)
-        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        qp.setPen(pen)
-        draw_cb(qp)
-        qp.end()
-        return pm
-
-    # ── hidden (slashed eye): eye outline + diagonal slash ──
-    def _draw_hidden(qp):
-        qp.drawPath(_eye_outline())
-        slop = margin * 0.7
-        x1 = int(cx + ew - slop)
-        y1 = int(cy - eh + slop)
-        x2 = int(cx - ew + slop)
-        y2 = int(cy + eh - slop)
-        qp.drawLine(x1, y1, x2, y2)
-
-    # ── visible (open eye): eye outline + centered outlined iris ──
-    def _draw_visible(qp):
-        qp.drawPath(_eye_outline())
-        # No brush → outline only; pen already set by _render.
-        pr = size * 0.14  # iris radius
-        qp.drawEllipse(QPointF(cx, cy), pr, pr)
-
-    hidden_icon = QIcon(_render(_draw_hidden))
-    visible_icon = QIcon(_render(_draw_visible))
-    return hidden_icon, visible_icon
-
-
-class SecretLineEdit(QLineEdit):
-    """Password input with a visibility toggle action rendered inside the
-    QLineEdit at the trailing edge."""
-
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.setEchoMode(QLineEdit.EchoMode.Password)
-
-        self._icon_hidden, self._icon_visible = _make_eye_icons()
-        self._toggle_action = QAction(self._icon_hidden, "Show API key", self)
-        self._toggle_action.setCheckable(True)
-        self._toggle_action.setToolTip("Show API key")
-
-        self.addAction(self._toggle_action,
-                       QLineEdit.ActionPosition.TrailingPosition)
-        self._toggle_action.toggled.connect(self._on_toggled)
-
-    def _on_toggled(self, checked):
-        mode = QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-        tip = "Hide API key" if checked else "Show API key"
-        icon = self._icon_visible if checked else self._icon_hidden
-        self.setEchoMode(mode)
-        self._toggle_action.setToolTip(tip)
-        self._toggle_action.setIcon(icon)
-        self._toggle_action.setText(tip)
 
 
 from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
@@ -1826,137 +1733,11 @@ class BarskyApp(QMainWindow):
     # Settings Dialog
     # ------------------------------------------------------------------
     def open_settings_window(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("App Settings")
-        layout = QFormLayout(dialog)
-
-        w_input = QSpinBox()
-        w_input.setRange(400, 3000)
-        w_input.setValue(self.settings["width"])
-
-        h_input = QSpinBox()
-        h_input.setRange(400, 3000)
-        h_input.setValue(self.settings["height"])
-
-        font_combo = QComboBox()
-        font_combo.addItems(QFontDatabase.families())
-        font_combo.setCurrentText(self.settings["font_family"])
-
-        size_input = QSpinBox()
-        size_input.setRange(8, 36)
-        size_input.setValue(self.settings["font_size"])
-
-        lang_input = QLineEdit(self.settings.get("default_database", ""))
-        lang_input.setPlaceholderText("No default database selected")
-        lang_input.setReadOnly(True)
-
-        browse_btn = QPushButton("Browse…")
-        browse_btn.setStyleSheet("padding: 4px 12px;")
-
-        db_row = QHBoxLayout()
-        db_row.addWidget(lang_input)
-        db_row.addWidget(browse_btn)
-
-        def browse_db():
-            path, _ = QFileDialog.getOpenFileName(
-                dialog, "Select Default Database", DIR_DB,
-                f"Barsky DB (*{DB_SUFFIX});;All Files (*)"
-            )
-            if path:
-                lang_input.setText(path)
-
-        browse_btn.clicked.connect(browse_db)
-
-        tts_combo = QComboBox()
-        tts_combo.setMinimumWidth(520)
-        tts_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        tts_combo.view().setMinimumWidth(700)
-        current_voice = self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
-
-        voice_worker = VoiceListWorker()
-        self.voice_worker = voice_worker
-
-        def on_voices_ready(voices):
-            tts_combo.clear()
-            tts_combo.addItem("(loading voices…)", current_voice)
-            tts_combo.model().removeRow(0)
-
-            selected_idx = 0
-            for i, (short_name, locale, gender, friendly) in enumerate(voices):
-                label = f"{short_name}  ·  {locale}  ·  {gender}"
-                tts_combo.addItem(label, short_name)
-                if short_name == current_voice:
-                    selected_idx = i
-            tts_combo.setCurrentIndex(selected_idx)
-
-        def on_error(msg):
-            pass
-
-        voice_worker.voices_ready.connect(on_voices_ready)
-        voice_worker.error.connect(on_error)
-        voice_worker.finished.connect(voice_worker.deleteLater)
-        voice_worker.start()
-
-        layout.addRow("Window Width:", w_input)
-        layout.addRow("Window Height:", h_input)
-        layout.addRow("Font Family:", font_combo)
-        layout.addRow("Font Size:", size_input)
-        layout.addRow("Default Database:", db_row)
-        layout.addRow("TTS Voice (Edge-TTS):", tts_combo)
-
-        # --- AI Provider Settings ---
-        layout.addRow(QLabel("<b>AI Provider (OpenAI-compatible)</b>"))
-
-        ai_base_input = QLineEdit(self.settings.get("ai_base_url", "https://api.openai.com/v1"))
-        layout.addRow("Base URL:", ai_base_input)
-
-        ai_model_input = QLineEdit(self.settings.get("ai_model", "gpt-4o-mini"))
-        layout.addRow("Model:", ai_model_input)
-
-        ai_key_input = SecretLineEdit(self.settings.get("ai_api_key", ""))
-        ai_key_input.setPlaceholderText("sk-... (stored locally, never committed)")
-        layout.addRow("API Key:", ai_key_input)
-
-        ai_timeout_input = QSpinBox()
-        ai_timeout_input.setRange(5, 120)
-        ai_timeout_input.setValue(int(self.settings.get("ai_timeout", 30)))
-        ai_timeout_input.setSuffix(" s")
-        layout.addRow("Timeout:", ai_timeout_input)
-
-        learned_lang_input = QLineEdit(self.settings.get("learned_language", "English"))
-        layout.addRow("Learned Language:", learned_lang_input)
-
-        explain_lang_input = QLineEdit(self.settings.get("explanation_language", "Chinese"))
-        layout.addRow("Explanation Language:", explain_lang_input)
-
-        save_btn = QPushButton("Save && Apply")
-        save_btn.setStyleSheet("background-color: #ccffcc;")
-        layout.addRow(save_btn)
-
-        def save_and_apply():
-            staged = dict(self.settings)
-            staged["width"] = w_input.value()
-            staged["height"] = h_input.value()
-            staged["font_family"] = font_combo.currentText()
-            staged["font_size"] = size_input.value()
-            staged["default_database"] = lang_input.text().strip()
-            staged["tts_voice"] = tts_combo.currentData() or current_voice
-            staged["ai_base_url"] = ai_base_input.text().strip()
-            staged["ai_model"] = ai_model_input.text().strip()
-            staged["ai_api_key"] = ai_key_input.text().strip()
-            staged["ai_timeout"] = ai_timeout_input.value()
-            staged["learned_language"] = learned_lang_input.text().strip()
-            staged["explanation_language"] = explain_lang_input.text().strip()
-
-            try:
-                save_settings(staged)
-            except OSError as exc:
-                QMessageBox.critical(dialog, "Settings Not Saved", str(exc))
-                return
-            self.settings.update(staged)
+        dialog = SettingsDialog(self.settings, self)
+        # Keep the background voice-list thread alive even if the modal dialog
+        # is closed before the request completes, matching the previous
+        # MainWindow-owned worker lifetime.
+        self.voice_worker = dialog.voice_worker
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             self.resize(self.settings["width"], self.settings["height"])
             self.apply_font_settings()
-            dialog.accept()
-
-        save_btn.clicked.connect(save_and_apply)
-        dialog.exec()
