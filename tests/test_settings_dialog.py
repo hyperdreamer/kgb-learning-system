@@ -45,6 +45,26 @@ class FakeVoiceWorker(QObject):
         self.deleted = True
 
 
+class FakeAITestWorker(QObject):
+    result = pyqtSignal(bool, str, float)
+    finished = pyqtSignal()
+
+    instances = []
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.started = False
+        self.deleted = False
+        FakeAITestWorker.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+
 @pytest.fixture
 def settings():
     return {
@@ -65,7 +85,7 @@ def settings():
     }
 
 
-def _dialog(monkeypatch, settings, save=None, current_size=None):
+def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory=None):
     _app()
     import kgb_srs.settings_dialog as module
 
@@ -73,6 +93,13 @@ def _dialog(monkeypatch, settings, save=None, current_size=None):
     monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
     if save is not None:
         monkeypatch.setattr(module, "save_settings", save)
+    if ai_test_factory is not None:
+        monkeypatch.setattr(module, "create_ai_test_worker", ai_test_factory)
+    else:
+        FakeAITestWorker.instances = []
+        monkeypatch.setattr(
+            module, "create_ai_test_worker", lambda config: FakeAITestWorker(config)
+        )
     return module.SettingsDialog(
         settings, current_size=current_size
     ), worker
@@ -86,9 +113,9 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
     sidebar = dialog.findChild(QListWidget, "settingsCategoryList")
     pages = dialog.findChild(QStackedWidget, "settingsPages")
     assert [sidebar.item(i).text() for i in range(sidebar.count())] == [
-        "General", "Appearance", "Audio & Speech", "AI Provider", "Languages"
+        "General", "Appearance", "Audio & Speech", "AI Provider"
     ]
-    assert pages.count() == 5
+    assert pages.count() == 4
     expected_pages = {
         "defaultDatabaseInput": 0,
         "windowWidthInput": 1,
@@ -102,8 +129,10 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "aiModelInput": 3,
         "aiApiKeyInput": 3,
         "aiTimeoutInput": 3,
-        "learnedLanguageInput": 4,
-        "explanationLanguageInput": 4,
+        "learnedLanguageInput": 3,
+        "explanationLanguageInput": 3,
+        "aiTestButton": 3,
+        "aiTestStatusLabel": 3,
     }
     for object_name, page_index in expected_pages.items():
         control = dialog.findChild(QObject, object_name)
@@ -131,11 +160,11 @@ def test_switching_categories_does_not_save_or_mutate_settings(monkeypatch, sett
     original = dict(settings)
     dialog, _ = _dialog(monkeypatch, settings, save=lambda staged: saved.append(staged))
 
+    dialog.category_list.setCurrentRow(2)
     dialog.category_list.setCurrentRow(3)
-    dialog.category_list.setCurrentRow(4)
     _app().processEvents()
 
-    assert dialog.pages.currentIndex() == 4
+    assert dialog.pages.currentIndex() == 3
     assert saved == []
     assert settings == original
     dialog.reject()
@@ -431,4 +460,82 @@ def test_default_settings_include_content_font_keys():
 
     assert DEFAULT_SETTINGS["content_font_family"] == "Arial"
     assert DEFAULT_SETTINGS["content_font_size"] == 18
+
+
+def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatch, settings):
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.ai_base_url_input.setText(" https://example.test/v1 ")
+    dialog.ai_model_input.setText(" staged-model ")
+    dialog.ai_api_key_input.setText(" staged-key ")
+    dialog.ai_timeout_input.setValue(12)
+
+    dialog.ai_test_button.click()
+    _app().processEvents()
+
+    assert len(FakeAITestWorker.instances) == 1
+    worker = FakeAITestWorker.instances[0]
+    assert worker.started
+    assert dialog.ai_test_button.isEnabled() is False
+    assert dialog.ai_test_status_label.text() == "Testing…"
+    assert worker.config.base_url == "https://example.test/v1"
+    assert worker.config.model == "staged-model"
+    assert worker.config.api_key == "staged-key"
+    assert worker.config.timeout_seconds == 12
+    assert saved == []
+    assert settings["ai_api_key"] == "secret"
+    dialog.reject()
+
+
+def test_ai_test_success_updates_status_and_reenables_button(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_model_input.setText("gpt-test")
+    dialog.ai_test_button.click()
+    worker = FakeAITestWorker.instances[0]
+
+    worker.result.emit(True, "OK — gpt-test reachable", 245.4)
+    worker.finished.emit()
+    _app().processEvents()
+
+    assert dialog.ai_test_status_label.text() == "OK — 245 ms (gpt-test)"
+    assert dialog.ai_test_button.isEnabled() is True
+    assert dialog.ai_test_worker is None
+    assert worker.deleted
+    dialog.reject()
+
+
+def test_ai_test_failure_updates_status_and_reenables_button(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_test_button.click()
+    worker = FakeAITestWorker.instances[0]
+
+    worker.result.emit(False, "invalid API key", 12.0)
+    worker.finished.emit()
+    _app().processEvents()
+
+    assert dialog.ai_test_status_label.text() == "Failed — invalid API key"
+    assert dialog.ai_test_button.isEnabled() is True
+    assert dialog.ai_test_worker is None
+    assert worker.deleted
+    dialog.reject()
+
+
+def test_ai_test_missing_api_key_fails_without_hanging(monkeypatch, settings):
+    """Missing key is reported via the worker result and does not hang the UI."""
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_api_key_input.setText("   ")
+    dialog.ai_test_button.click()
+    worker = FakeAITestWorker.instances[0]
+
+    assert worker.config.api_key == ""
+    # Simulate what the real worker would emit for a missing key.
+    worker.result.emit(False, "API key is not set", -1.0)
+    worker.finished.emit()
+    _app().processEvents()
+
+    assert dialog.ai_test_status_label.text() == "Failed — API key is not set"
+    assert dialog.ai_test_button.isEnabled() is True
+    dialog.reject()
 

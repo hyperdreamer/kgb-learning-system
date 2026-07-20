@@ -7,10 +7,10 @@ Non-secret defaults come from a template; API keys are never committed.
 """
 
 import json
+import time
 import urllib.request
 import urllib.error
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +217,79 @@ class AIClient:
 
 
 # ---------------------------------------------------------------------------
+# Connection test (stdlib only)
+# ---------------------------------------------------------------------------
+
+def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
+    """Probe the configured model and return (ok, message, latency_ms).
+
+    Sends a minimal chat-completions request to prove auth + model reachability.
+    Does not raise for expected network/HTTP failures — they become (False, ...).
+    """
+    if not config.api_key:
+        return False, "API key is not set", -1.0
+
+    base = config.base_url.rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {config.api_key}",
+    }
+    body = json.dumps({
+        "model": config.model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+    }).encode("utf-8")
+
+    started = time.monotonic()
+    try:
+        _make_http_call(url, headers, body, timeout=config.timeout_seconds)
+        latency_ms = (time.monotonic() - started) * 1000.0
+        return True, f"OK — {config.model} reachable", latency_ms
+    except urllib.error.HTTPError as exc:
+        latency_ms = (time.monotonic() - started) * 1000.0
+        detail = _http_error_message(exc)
+        return False, detail, latency_ms
+    except urllib.error.URLError as exc:
+        latency_ms = (time.monotonic() - started) * 1000.0
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError) or "timed out" in str(exc).lower():
+            return False, "timed out", latency_ms
+        return False, f"Network error: {reason or exc}", latency_ms
+    except TimeoutError:
+        latency_ms = (time.monotonic() - started) * 1000.0
+        return False, "timed out", latency_ms
+    except Exception as exc:
+        latency_ms = (time.monotonic() - started) * 1000.0
+        return False, f"Unexpected error: {exc}", latency_ms
+
+
+def _http_error_message(exc: urllib.error.HTTPError) -> str:
+    """Best-effort human-readable message from an HTTP error response."""
+    body_text = ""
+    try:
+        body_text = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        body_text = ""
+    if body_text:
+        try:
+            data = json.loads(body_text)
+            if isinstance(data, dict) and "error" in data:
+                err = data["error"]
+                if isinstance(err, dict):
+                    msg = err.get("message") or err.get("code")
+                    if msg:
+                        return str(msg)
+                return str(err)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    reason = getattr(exc, "reason", None) or getattr(exc, "msg", None)
+    if reason:
+        return f"HTTP {exc.code}: {reason}"
+    return f"HTTP {exc.code}"
+
+
+# ---------------------------------------------------------------------------
 # QThread worker (lazy PyQt6 import)
 # ---------------------------------------------------------------------------
 
@@ -264,3 +337,31 @@ def create_ai_worker(config: AIProviderConfig, prompt: str):
     Safe to call from any context where PyQt6 is available.
     """
     return _get_ai_worker_class()(config, prompt)
+
+
+def _get_ai_test_worker_class():
+    """Lazy import of AITestWorker to avoid requiring PyQt6 at module level."""
+    from PyQt6.QtCore import QThread, pyqtSignal
+
+    class AITestWorker(QThread):
+        """Background thread that probes AI provider reachability."""
+
+        result = pyqtSignal(bool, str, float)  # ok, message, latency_ms
+
+        def __init__(self, config: AIProviderConfig):
+            super().__init__()
+            self._config = config
+
+        def run(self):
+            ok, message, latency_ms = test_connection(self._config)
+            self.result.emit(ok, message, latency_ms)
+
+    return AITestWorker
+
+
+def create_ai_test_worker(config: AIProviderConfig):
+    """Create an AITestWorker thread for the given config.
+
+    Safe to call from any context where PyQt6 is available.
+    """
+    return _get_ai_test_worker_class()(config)

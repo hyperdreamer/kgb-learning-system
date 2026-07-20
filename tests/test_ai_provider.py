@@ -1,6 +1,9 @@
 """Tests for kgb_srs.ai_provider — AI client and validation, no real network."""
 
+import io
 import json
+import urllib.error
+
 import pytest
 
 from kgb_srs.ai_provider import (
@@ -10,6 +13,8 @@ from kgb_srs.ai_provider import (
     build_word_phrase_prompt,
     AIMissingConfigError,
 )
+# Import under a non-test name so pytest does not collect the pure function.
+from kgb_srs.ai_provider import test_connection as check_ai_connection
 
 
 # ---------------------------------------------------------------------------
@@ -190,3 +195,89 @@ class TestMakeHttpCall:
         urllib or return an error. We just verify it exists and is callable."""
         from kgb_srs.ai_provider import _make_http_call
         assert callable(_make_http_call)
+
+
+# ---------------------------------------------------------------------------
+# test_connection
+# ---------------------------------------------------------------------------
+
+class TestTestConnection:
+    def _cfg(self, **overrides):
+        data = dict(
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            api_key="sk-test",
+            timeout_seconds=5,
+        )
+        data.update(overrides)
+        return AIProviderConfig(**data)
+
+    def test_missing_api_key(self):
+        ok, message, latency = check_ai_connection(self._cfg(api_key=""))
+        assert ok is False
+        assert "API key" in message
+        assert latency == -1.0
+
+    def test_success(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+
+        def fake_http(url, headers, body, timeout):
+            assert url == "https://api.example.com/v1/chat/completions"
+            assert headers["Authorization"] == "Bearer sk-test"
+            payload = json.loads(body.decode("utf-8"))
+            assert payload["model"] == "test-model"
+            assert payload["messages"] == [{"role": "user", "content": "ping"}]
+            assert payload["max_tokens"] == 1
+            return json.dumps({
+                "choices": [{"message": {"content": "pong"}}]
+            })
+
+        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        ok, message, latency = check_ai_connection(self._cfg())
+        assert ok is True
+        assert "test-model" in message
+        assert latency >= 0
+
+    def test_http_401(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+
+        def fake_http(url, headers, body, timeout):
+            raise urllib.error.HTTPError(
+                url,
+                401,
+                "Unauthorized",
+                hdrs=None,
+                fp=io.BytesIO(json.dumps({
+                    "error": {"message": "Invalid API key"}
+                }).encode("utf-8")),
+            )
+
+        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        ok, message, latency = check_ai_connection(self._cfg())
+        assert ok is False
+        assert "Invalid API key" in message
+        assert latency >= 0
+
+    def test_timeout(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+
+        def fake_http(url, headers, body, timeout):
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        ok, message, latency = check_ai_connection(self._cfg())
+        assert ok is False
+        assert "timed out" in message.lower()
+        assert latency >= 0
+
+    def test_network_error(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+
+        def fake_http(url, headers, body, timeout):
+            raise urllib.error.URLError("connection refused")
+
+        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        ok, message, latency = check_ai_connection(self._cfg())
+        assert ok is False
+        assert "connection refused" in message.lower() or "Network error" in message
+        assert latency >= 0

@@ -71,7 +71,7 @@ The app supports any **OpenAI-compatible** HTTP endpoint (GPT, DeepSeek, etc.).
 
 ### Configuration
 
-In **Settings**, configure:
+In **Settings → AI Provider**, configure:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -81,6 +81,9 @@ In **Settings**, configure:
 | Timeout | 30 s | Network timeout |
 | Learned Language | English | Language of the content being studied |
 | Explanation Language | Chinese | Language for AI-generated explanations |
+| **Test** | — | Checks that the staged model/API key are reachable and reports latency |
+
+Use **Test** to validate the currently entered Base URL / Model / API Key / Timeout without saving. The check POSTs a minimal `chat/completions` request and shows success latency (ms) or a failure reason.
 
 ### Privacy
 

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .ai_provider import AIProviderConfig, create_ai_test_worker
 from .config import DIR_DB, save_settings
 from .db import DB_SUFFIX
 from .secret_line_edit import SecretLineEdit
@@ -33,7 +35,6 @@ class SettingsDialog(QDialog):
         "Appearance",
         "Audio & Speech",
         "AI Provider",
-        "Languages",
     )
 
     def __init__(self, settings, parent=None, current_size=None):
@@ -45,6 +46,7 @@ class SettingsDialog(QDialog):
         self.current_voice = settings.get(
             "tts_voice", "en-US-AvaMultilingualNeural"
         )
+        self.ai_test_worker = None
         self.setWindowTitle("App Settings")
         self.setMinimumSize(620, 390)
 
@@ -80,7 +82,6 @@ class SettingsDialog(QDialog):
         self._build_appearance_page()
         self._build_audio_page()
         self._build_ai_page()
-        self._build_languages_page()
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -219,10 +220,7 @@ class SettingsDialog(QDialog):
         )
         self.ai_timeout_input.setSuffix(" s")
         layout.addRow("Timeout:", self.ai_timeout_input)
-        self.pages.addWidget(page)
 
-    def _build_languages_page(self):
-        page, layout = self._page()
         self.learned_language_input = QLineEdit(
             self.settings.get("learned_language", "English")
         )
@@ -236,6 +234,20 @@ class SettingsDialog(QDialog):
             "explanationLanguageInput"
         )
         layout.addRow("Explanation Language:", self.explanation_language_input)
+
+        self.ai_test_button = QPushButton("Test")
+        self.ai_test_button.setObjectName("aiTestButton")
+        self.ai_test_status_label = QLabel("")
+        self.ai_test_status_label.setObjectName("aiTestStatusLabel")
+        self.ai_test_status_label.setWordWrap(True)
+
+        test_row = QWidget()
+        test_layout = QHBoxLayout(test_row)
+        test_layout.setContentsMargins(0, 0, 0, 0)
+        test_layout.addWidget(self.ai_test_button)
+        test_layout.addWidget(self.ai_test_status_label, 1)
+        layout.addRow("", test_row)
+        self.ai_test_button.clicked.connect(self._start_ai_test)
         self.pages.addWidget(page)
 
     def browse_database(self):
@@ -273,6 +285,43 @@ class SettingsDialog(QDialog):
     @staticmethod
     def _on_voice_error(_message):
         pass
+
+    def _staged_ai_config(self) -> AIProviderConfig:
+        return AIProviderConfig(
+            base_url=self.ai_base_url_input.text().strip(),
+            model=self.ai_model_input.text().strip(),
+            api_key=self.ai_api_key_input.text().strip(),
+            timeout_seconds=self.ai_timeout_input.value(),
+        )
+
+    def _start_ai_test(self):
+        if self.ai_test_worker is not None:
+            return
+        self.ai_test_button.setEnabled(False)
+        self.ai_test_status_label.setStyleSheet("")
+        self.ai_test_status_label.setText("Testing…")
+        config = self._staged_ai_config()
+        worker = create_ai_test_worker(config)
+        self.ai_test_worker = worker
+        worker.result.connect(self._on_ai_test_result)
+        worker.finished.connect(self._on_ai_test_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_ai_test_result(self, ok, message, latency_ms):
+        model = self.ai_model_input.text().strip() or "model"
+        if ok:
+            ms = int(round(latency_ms)) if latency_ms >= 0 else "?"
+            text = f"OK — {ms} ms ({model})"
+            self.ai_test_status_label.setStyleSheet("color: #1a7f37;")
+        else:
+            text = f"Failed — {message}"
+            self.ai_test_status_label.setStyleSheet("color: #cf222e;")
+        self.ai_test_status_label.setText(text)
+
+    def _on_ai_test_finished(self):
+        self.ai_test_worker = None
+        self.ai_test_button.setEnabled(True)
 
     def _staged_settings(self):
         staged = dict(self.settings)
