@@ -43,7 +43,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 ### Sentence-based (`language_sentence`)
 
 - **Front**: A sentence plus one or more unfamiliar words or phrases.
-- **Validation**: Every unfamiliar item must appear literally in the sentence (Unicode-safe, case-insensitive, whitespace-normalized). Regex metacharacters are treated as literal text.
+- **Validation**: Every unfamiliar item must appear in the sentence (Unicode-safe, case-insensitive, whitespace-normalized). Literal match is tried first; if that fails, a local inflection-tolerant check accepts common tense/number forms (e.g. lemma `insist on` matches surface `insists on`). Multi-word phrases must still match consecutive tokens. Continuous scripts without spaces stay on the literal path. Regex metacharacters in items are treated as literal text. No AI/network call is used for membership checks.
 - **AI generation**: In-dialog nonblocking AI generation. A **Generate** button starts a background QThread; controls are disabled during generation; on completion, per-item meaning fields are populated. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor in the dialog). Manual meaning edits remain available as a quiet escape hatch when AI is offline or a single meaning needs a fix.
 - **Review**: The front shows the sentence with unfamiliar items listed. The back shows each expression with its contextual meaning.
 - **TTS**: Reads the sentence aloud.
@@ -223,7 +223,7 @@ kgb_srs/                    # Python package
 ├── catalog.py              # Database type enum, metadata inference
 ├── schema.py               # DB init, migration, CRUD helpers
 ├── db.py                   # Backward-compat re-exports from schema
-├── validation.py           # Sentence literal matching (Unicode-safe)
+├── validation.py           # Sentence matching (literal + inflection-tolerant)
 ├── search.py               # Subtype-aware AND/OR search
 ├── ai_provider.py          # OpenAI-compatible HTTP client
 ├── ai_parser.py            # AI JSON response parsing & validation

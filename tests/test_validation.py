@@ -1,4 +1,4 @@
-"""Tests for kgb_srs.validation — sentence-based literal validation."""
+"""Tests for kgb_srs.validation — sentence-based item matching."""
 
 import pytest
 
@@ -104,6 +104,57 @@ class TestValidateUnfamiliarItems:
         items = ["日本語", "勉強"]
         result = validate_unfamiliar_items(sentence, items)
         assert result.valid is True
+
+    def test_inflected_verb_phrase_insist_on(self):
+        """Lemma form must match 3rd-person surface form in the sentence."""
+        sentence = "He insists on speaking himself."
+        items = ["insist on"]
+        result = validate_unfamiliar_items(sentence, items)
+        assert result.valid is True
+        assert result.missing == []
+
+    def test_past_and_ing_forms(self):
+        assert validate_unfamiliar_items(
+            "She insisted on leaving.", ["insist on"]
+        ).valid
+        assert validate_unfamiliar_items(
+            "They are insisting on a refund.", ["insist on"]
+        ).valid
+
+    def test_third_person_go_goes(self):
+        assert validate_unfamiliar_items(
+            "He goes to school.", ["go to"]
+        ).valid
+
+    def test_studies_study(self):
+        assert validate_unfamiliar_items(
+            "She studies hard every day.", ["study"]
+        ).valid
+
+    def test_watched_watch(self):
+        assert validate_unfamiliar_items(
+            "I watched a film last night.", ["watch"]
+        ).valid
+
+    def test_still_rejects_absent(self):
+        result = validate_unfamiliar_items(
+            "He insists on speaking.", ["absent phrase"]
+        )
+        assert result.valid is False
+        assert "absent phrase" in result.missing
+
+    def test_cjk_still_literal(self):
+        assert validate_unfamiliar_items(
+            "我喜欢吃中国菜", ["中国菜", "我喜欢"]
+        ).valid
+
+    def test_multiword_requires_consecutive(self):
+        """Words present but not consecutive as the phrase must fail."""
+        result = validate_unfamiliar_items(
+            "I insist that we focus on quality.", ["insist on"]
+        )
+        assert result.valid is False
+        assert "insist on" in result.missing
 
 
 # ---------------------------------------------------------------------------
