@@ -233,6 +233,7 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     saved = []
     dialog, _ = _dialog(monkeypatch, settings, save=lambda staged: saved.append(dict(staged)))
     dialog.window_width_input.setValue(1024)
+    # Outside the database root → normalized to empty on save.
     dialog.default_database_input.setText(" /tmp/test.barsky ")
     dialog.ai_api_key_input.setText(" new-key ")
     dialog.explanation_language_input.setText(" German ")
@@ -241,7 +242,7 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
 
     assert len(saved) == 1
     assert saved[0]["width"] == 1024
-    assert saved[0]["default_database"] == "/tmp/test.barsky"
+    assert saved[0]["default_database"] == ""
     assert saved[0]["ai_api_key"] == "new-key"
     assert saved[0]["explanation_language"] == "German"
     assert settings == saved[0]
@@ -272,23 +273,93 @@ def test_save_failure_keeps_live_settings_and_dialog_open(monkeypatch, settings)
     dialog.reject()
 
 
-def test_database_browser_stages_selected_path(monkeypatch, settings):
+def test_database_browser_stages_relative_path_under_root(
+    monkeypatch, settings, tmp_path
+):
     import kgb_srs.settings_dialog as module
+    from kgb_srs.config import DIR_DB
 
     dialog, _ = _dialog(monkeypatch, settings)
+    # Point staged root at tmp so we control the under-root path.
+    root = tmp_path / "dbs"
+    root.mkdir()
+    chosen = root / "Language-based" / "English_barsky.db"
+    chosen.parent.mkdir(parents=True)
+    chosen.write_bytes(b"")
+    dialog.database_root_input.setText(str(root))
+
     calls = []
     monkeypatch.setattr(
         module.QFileDialog,
         "getOpenFileName",
-        lambda *args: (calls.append(args) or ("/tmp/chosen.barsky", "")),
+        lambda *args: (calls.append(args) or (str(chosen), "")),
     )
 
     dialog.database_browse_button.click()
 
-    assert dialog.default_database_input.text() == "/tmp/chosen.barsky"
+    expected_rel = os.path.normpath(
+        os.path.join("Language-based", "English_barsky.db")
+    )
+    assert dialog.default_database_input.text() == expected_rel
+    assert not os.path.isabs(dialog.default_database_input.text())
     assert settings["default_database"] == ""
     assert calls
     dialog.reject()
+
+
+def test_database_browser_rejects_path_outside_root(monkeypatch, settings):
+    import kgb_srs.settings_dialog as module
+
+    dialog, _ = _dialog(monkeypatch, settings)
+    warnings = []
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "warning",
+        lambda parent, title, message: warnings.append(
+            (parent, title, message)
+        ),
+    )
+    monkeypatch.setattr(
+        module.QFileDialog,
+        "getOpenFileName",
+        lambda *args: ("/tmp/chosen.barsky", ""),
+    )
+
+    dialog.database_browse_button.click()
+
+    assert dialog.default_database_input.text() == ""
+    assert settings["default_database"] == ""
+    assert len(warnings) == 1
+    assert warnings[0][1] == "Default Database"
+    dialog.reject()
+
+
+def test_save_stores_relative_default_database_under_root(
+    monkeypatch, settings, tmp_path
+):
+    saved = []
+    root = tmp_path / "dbs"
+    root.mkdir()
+    abs_db = root / "Language-based" / "English_barsky.db"
+    abs_db.parent.mkdir(parents=True)
+    abs_db.write_bytes(b"")
+
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.database_root_input.setText(str(root))
+    dialog.default_database_input.setText(str(abs_db))
+
+    dialog.save_button.click()
+
+    assert len(saved) == 1
+    expected_rel = os.path.normpath(
+        os.path.join("Language-based", "English_barsky.db")
+    )
+    assert saved[0]["default_database"] == expected_rel
+    assert not os.path.isabs(saved[0]["default_database"])
+    assert saved[0]["database_root"] == str(root)
+    assert dialog.result() == dialog.DialogCode.Accepted
 
 
 def test_database_root_browser_stages_selected_directory(monkeypatch, settings):

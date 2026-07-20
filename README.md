@@ -129,7 +129,10 @@ When creating a new sentence card, if a card with the same normalized sentence a
   - Inferred metadata is persisted to the settings table for future use.
 - The `unfamiliar_items` table is migrated on open to include the `meaning` column if absent. This is idempotent and preserves all data.
 - Database names are validated against path traversal, separators, NUL, and control characters.
-- The `default_database` setting continues working as before.
+- The `default_database` setting is scoped to the configured Database Directory
+  and is stored as a **relative path** under that root. Absolute values that
+  still live under the root are resolved at runtime and rewritten to relative
+  form on the next save; absolute paths outside the root are treated as unset.
 
 ---
 
@@ -201,6 +204,11 @@ When you set **Database Directory**, the app creates:
 ```
 
 Empty `database_root` keeps the portable project default (`db/`).
+
+**Default Database** may only be chosen inside the Database Directory. The
+setting is stored as a path relative to that root (for example
+`Language-based/Word-Phrase-based/English_barsky.db`), and is resolved back to
+an absolute path when the app opens the default database.
 
 ---
 

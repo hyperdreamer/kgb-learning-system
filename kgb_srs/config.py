@@ -82,6 +82,84 @@ def ensure_database_root_structure(root: str | None = None) -> str:
     return root
 
 
+def is_path_under_root(path: str, root: str) -> bool:
+    """True if *path* is the same as or under *root* (after abspath/expanduser)."""
+    if not path or not root:
+        return False
+    abs_path = os.path.abspath(os.path.expanduser(path))
+    abs_root = os.path.abspath(os.path.expanduser(root))
+    try:
+        common = os.path.commonpath([abs_path, abs_root])
+    except ValueError:
+        # Different drives on Windows, etc.
+        return False
+    return common == abs_root
+
+
+def relative_db_path(path: str, root: str) -> str | None:
+    """Return *path* relative to *root* if under root; else None."""
+    if not path or not root:
+        return None
+    if not is_path_under_root(path, root):
+        return None
+    abs_path = os.path.abspath(os.path.expanduser(path))
+    abs_root = os.path.abspath(os.path.expanduser(root))
+    rel = os.path.relpath(abs_path, abs_root)
+    return os.path.normpath(rel)
+
+
+def resolve_default_database(settings=None) -> str:
+    """Resolve settings['default_database'] to an absolute file path.
+
+    Rules:
+    - Empty / missing → ""
+    - Absolute under get_database_root(settings) → that absolute path
+    - Absolute not under root → "" (out of scope)
+    - Relative → join with get_database_root(settings)
+    File existence is not required for resolution.
+    """
+    if settings is None:
+        settings = load_settings()
+    value = (settings.get("default_database") or "").strip()
+    if not value:
+        return ""
+    root = get_database_root(settings)
+    if os.path.isabs(value) or value.startswith("~"):
+        abs_value = os.path.abspath(os.path.expanduser(value))
+        if is_path_under_root(abs_value, root):
+            return abs_value
+        return ""
+    # Relative: join then re-check so ".." cannot escape the root.
+    joined = os.path.normpath(os.path.join(root, value))
+    if is_path_under_root(joined, root):
+        return joined
+    return ""
+
+
+def normalize_default_database(value: str, root: str) -> str:
+    """Normalize a chosen/stored default_database for persistence.
+
+    - Empty → ""
+    - Absolute under root → relative path via os.path.relpath
+    - Relative that stays under root when joined → normalized relative
+    - Outside root → ""
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    root = os.path.abspath(os.path.expanduser(root)) if root else ""
+    if not root:
+        return ""
+    if os.path.isabs(value) or value.startswith("~"):
+        abs_value = os.path.abspath(os.path.expanduser(value))
+        rel = relative_db_path(abs_value, root)
+        return rel or ""
+    # Relative: only keep if it stays under root when joined
+    joined = os.path.normpath(os.path.join(root, value))
+    rel = relative_db_path(joined, root)
+    return rel or ""
+
+
 def load_settings():
     """Load settings from JSON file, merging with defaults."""
     settings = dict(DEFAULT_SETTINGS)

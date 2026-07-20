@@ -30,7 +30,14 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-from .config import load_settings, save_settings, get_database_root, ensure_database_root_structure
+from .config import (
+    load_settings,
+    save_settings,
+    get_database_root,
+    ensure_database_root_structure,
+    resolve_default_database,
+    relative_db_path,
+)
 from .db import init_db, find_databases
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
@@ -187,12 +194,12 @@ class BarskyApp(QMainWindow):
         except OSError as exc:
             print(f"Could not create database directory structure: {exc}")
 
-        default_db = self.settings.get("default_database", "")
-        if default_db:
+        default_db = resolve_default_database(self.settings)
+        if default_db and os.path.exists(default_db):
             for display, path in find_databases(
                 get_database_root(self.settings)
             ):
-                if path == default_db and os.path.exists(default_db):
+                if path == default_db:
                     self.current_db_path = default_db
                     self.current_lang = display
                     self.db_btn.setText(f"📂 {self._leaf_name(display)}")
@@ -209,7 +216,9 @@ class BarskyApp(QMainWindow):
         self.settings["width"] = self.width()
         self.settings["height"] = self.height()
         if self.current_db_path:
-            self.settings["default_database"] = self.current_db_path
+            root = get_database_root(self.settings)
+            rel = relative_db_path(self.current_db_path, root)
+            self.settings["default_database"] = rel or ""
         self._save_settings()
         event.accept()
 

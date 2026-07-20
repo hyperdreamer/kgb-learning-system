@@ -12,6 +12,10 @@ from .config import (
     get_database_root,
     ensure_database_root_structure,
     CANONICAL_DB_SUBDIRS,
+    is_path_under_root,
+    relative_db_path,
+    resolve_default_database,
+    normalize_default_database,
 )
 
 __all__ = [
@@ -23,6 +27,10 @@ __all__ = [
     "get_database_root",
     "ensure_database_root_structure",
     "CANONICAL_DB_SUBDIRS",
+    "is_path_under_root",
+    "relative_db_path",
+    "resolve_default_database",
+    "normalize_default_database",
 ]
 
 

@@ -30,6 +30,9 @@ from .config import (
     DIR_DB,
     ensure_database_root_structure,
     get_database_root,
+    is_path_under_root,
+    normalize_default_database,
+    relative_db_path,
     save_settings,
 )
 from .db import DB_SUFFIX
@@ -202,13 +205,15 @@ class SettingsDialog(QDialog):
             self.browse_database_root
         )
 
-        # --- Default database file ---
-        self.default_database_input = QLineEdit(
-            self.settings.get("default_database", "")
+        # --- Default database file (stored relative to database root) ---
+        default_display = self._display_default_database(
+            self.settings.get("default_database", ""),
+            get_database_root(self.settings),
         )
+        self.default_database_input = QLineEdit(default_display)
         self.default_database_input.setObjectName("defaultDatabaseInput")
         self.default_database_input.setPlaceholderText(
-            "No default database selected"
+            "Relative path under Database Directory"
         )
         self.default_database_input.setReadOnly(True)
         self.database_browse_button = QPushButton("Browse…")
@@ -221,6 +226,9 @@ class SettingsDialog(QDialog):
         row_layout.addWidget(self.database_browse_button)
         layout.addRow("Default Database:", row)
         self.database_browse_button.clicked.connect(self.browse_database)
+        self.database_root_input.textChanged.connect(
+            self._on_database_root_text_changed
+        )
         self.pages.addWidget(page)
 
     def _build_appearance_page(self):
@@ -404,18 +412,57 @@ class SettingsDialog(QDialog):
         if path:
             self.database_root_input.setText(path)
 
+    def _staged_root_path(self) -> str:
+        """Absolute root implied by the staged Database Directory field."""
+        root_text = self.database_root_input.text().strip()
+        if not root_text:
+            return DIR_DB
+        return os.path.abspath(os.path.expanduser(root_text))
+
+    @staticmethod
+    def _display_default_database(value: str, root: str) -> str:
+        """Show stored relative path; convert absolute-under-root to relative."""
+        value = (value or "").strip()
+        if not value:
+            return ""
+        if os.path.isabs(value) or value.startswith("~"):
+            rel = relative_db_path(value, root)
+            return rel or ""
+        return os.path.normpath(value)
+
+    def _on_database_root_text_changed(self, *_args):
+        """Clear default DB if it would fall outside the new root."""
+        current = self.default_database_input.text().strip()
+        if not current:
+            return
+        root = self._staged_root_path()
+        if not normalize_default_database(current, root):
+            self.default_database_input.clear()
+
     def browse_database(self):
-        start = self.database_root_input.text().strip() or DIR_DB
-        if not os.path.isdir(start):
-            start = DIR_DB
+        root = self._staged_root_path()
+        start = root if os.path.isdir(root) else DIR_DB
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Default Database",
             start,
             f"Barsky DB (*{DB_SUFFIX});;All Files (*)",
         )
-        if path:
-            self.default_database_input.setText(path)
+        if not path:
+            return
+        if not is_path_under_root(path, root):
+            QMessageBox.warning(
+                self,
+                "Default Database",
+                "Default Database must be inside the configured "
+                "Database Directory:\n"
+                f"{root}",
+            )
+            return
+        rel = relative_db_path(path, root)
+        if rel is None:
+            return
+        self.default_database_input.setText(rel)
 
     # ------------------------------------------------------------------
     # Voice list / picker
@@ -630,8 +677,10 @@ class SettingsDialog(QDialog):
             staged["database_root"] = os.path.abspath(
                 os.path.expanduser(root_text)
             )
-        staged["default_database"] = (
-            self.default_database_input.text().strip()
+        root = get_database_root(staged)
+        staged["default_database"] = normalize_default_database(
+            self.default_database_input.text().strip(),
+            root,
         )
         staged["tts_voice"] = self.current_voice
         staged["tts_language"] = self.current_language or ""
