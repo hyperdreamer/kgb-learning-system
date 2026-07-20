@@ -338,11 +338,6 @@ class BarskyApp(QMainWindow):
             f"padding: {dyn_pad}px; font-size: {fs}px;"
         )
 
-        self.close_review_btn.setStyleSheet(
-            self._button_style("#78909C", "#90A4AE") +
-            f"padding: {dyn_pad}px; font-size: {fs}px;"
-        )
-
     # ------------------------------------------------------------------
     # Database Menu
     # ------------------------------------------------------------------
@@ -549,12 +544,35 @@ class BarskyApp(QMainWindow):
         forced_review_layout.addWidget(self.restart_review_btn)
         forced_review_layout.addWidget(self.force_rev_btn)
 
-        self.close_review_btn = QPushButton(" Close Review")
-        self.close_review_btn.setIcon(self._icon("window-close"))
+        self.close_review_btn = QPushButton("×", self.view)
+        self.close_review_btn.setToolTip("Close review")
+        self.close_review_btn.setAccessibleName("Close review")
         self.close_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_review_btn.setEnabled(False)
+        self.close_review_btn.setFixedSize(28, 28)
+        self.close_review_btn.setStyleSheet(
+            "QPushButton {"
+            "  background-color: rgba(250, 250, 250, 200);"
+            "  color: #757575;"
+            "  border: 1px solid #E0E0E0;"
+            "  border-radius: 4px;"
+            "  font-size: 16px;"
+            "  font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #E0E0E0;"
+            "  color: #424242;"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #BDBDBD;"
+            "}"
+            "QPushButton:disabled {"
+            "  background-color: transparent;"
+            "  color: #BDBDBD;"
+            "  border: 1px solid transparent;"
+            "}"
+        )
         self.close_review_btn.clicked.connect(self.close_review)
-        forced_review_layout.addWidget(self.close_review_btn)
 
         main_layout.addLayout(forced_review_layout)
 
@@ -824,6 +842,19 @@ class BarskyApp(QMainWindow):
 
         if self.current_card:
             self.draw_card_ui()
+
+        # Reposition the overlay close button at the top-right of the view.
+        btn = self.close_review_btn
+        btn_margin = 6
+        btn_w = btn.width()
+        btn_h = btn.height()
+        btn.setGeometry(
+            self.view.width() - btn_w - btn_margin,
+            btn_margin,
+            btn_w,
+            btn_h,
+        )
+        btn.raise_()
 
     # ------------------------------------------------------------------
     # TTS

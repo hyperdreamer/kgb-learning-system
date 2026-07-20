@@ -2253,3 +2253,56 @@ class TestReviewControls:
         assert isinstance(w.close_review_btn, QPushButton)
         assert not hasattr(w, "delete_current_btn"), "legacy widget removed"
         w.close()
+
+    # -- close button visual contract --------------------------------------
+
+    def test_close_button_is_compact_x_overlay_on_canvas(self):
+        """Compact '×' overlay at top-right of QGraphicsView with 6 px
+        margin; clicking it closes the active review."""
+        _qt_app()
+        from PyQt6.QtWidgets import QPushButton, QApplication
+        from PyQt6.QtCore import Qt
+        from kgb_srs.main_window import BarskyApp
+
+        w = BarskyApp()
+        w.resize(900, 700)
+        w.show()
+        QApplication.processEvents()
+
+        btn = w.close_review_btn
+
+        # Visual contract
+        assert isinstance(btn, QPushButton)
+        assert btn.parent() is w.view
+        assert btn.text().strip() == "×"
+        assert btn.toolTip() == "Close review"
+        assert btn.accessibleName() == "Close review"
+        assert btn.cursor().shape() == Qt.CursorShape.PointingHandCursor
+        assert (btn.width(), btn.height()) == (28, 28)
+
+        # 6 px top-right anchoring — after show
+        assert btn.x() + btn.width() == w.view.width() - 6
+        assert btn.y() == 6
+
+        # 6 px top-right anchoring — after resize
+        w.resize(600, 400)
+        QApplication.processEvents()
+        assert btn.x() + btn.width() == w.view.width() - 6
+        assert btn.y() == 6
+
+        # Signal wiring: clicking closes the review
+        conn = self._db(1)
+        w.conn = conn
+        w.current_card = (1, "c1", "b1", 1)
+        w.review_mode = "daily"
+        w._update_button_visibility()
+        assert btn.isEnabled()
+
+        btn.click()
+
+        assert not btn.isEnabled()
+        assert w.current_card is None
+        assert w.review_mode == ""
+
+        conn.close()
+        w.close()
