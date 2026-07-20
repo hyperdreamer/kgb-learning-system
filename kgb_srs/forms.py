@@ -185,6 +185,9 @@ class SentenceCardDialog(QDialog):
 
         remove_btn = QPushButton("Remove Selected")
         remove_btn.clicked.connect(self._remove_selected)
+        remove_btn.setEnabled(False)
+        remove_btn.setToolTip("Select one or more items in the list to remove.")
+        self._remove_btn = remove_btn
         entry_layout.addWidget(remove_btn)
         layout.addLayout(entry_layout)
 
@@ -262,6 +265,10 @@ class SentenceCardDialog(QDialog):
 
         # Connect double-click on list to removal
         self._items_list.itemDoubleClicked.connect(self._remove_selected)
+        self._items_list.itemSelectionChanged.connect(
+            self._update_remove_selected_enabled
+        )
+        self._update_remove_selected_enabled()
 
         # Check AI config availability
         self._check_ai_available()
@@ -279,6 +286,11 @@ class SentenceCardDialog(QDialog):
             for i in range(self._items_list.count())
         ]
 
+    def _update_remove_selected_enabled(self) -> None:
+        """Dim Remove Selected when the list has no selection."""
+        has_selection = bool(self._items_list.selectedItems())
+        self._remove_btn.setEnabled(has_selection)
+
     def _add_item(self):
         text = self._item_entry.text().strip()
         if text:
@@ -294,6 +306,7 @@ class SentenceCardDialog(QDialog):
                 self._item_entry.clear()
                 self._status_label.setText("")
                 self._rebuild_meaning_editors()
+                self._update_remove_selected_enabled()
 
     def _add_selected_text(self):
         """Add the currently selected text from the sentence editor."""
@@ -318,12 +331,14 @@ class SentenceCardDialog(QDialog):
                 f"Added: {selected[:50]}")
             self._status_label.setStyleSheet("color: #393;")
             self._rebuild_meaning_editors()
+            self._update_remove_selected_enabled()
 
     def _remove_selected(self):
         for item in self._items_list.selectedItems():
             self._items_list.takeItem(self._items_list.row(item))
         self._status_label.setText("")
         self._rebuild_meaning_editors()
+        self._update_remove_selected_enabled()
 
     # ------------------------------------------------------------------
     # AI availability
