@@ -2539,7 +2539,7 @@ class TestReviewControls:
         conn.close(); w.close()
 
     def test_keyboard_shortcuts_are_installed(self):
-        """Main window installs review/chrome shortcuts."""
+        """Main window installs Alt-based review/chrome shortcuts."""
         from PyQt6.QtGui import QShortcut
 
         conn = self._db(1)
@@ -2547,15 +2547,17 @@ class TestReviewControls:
         shortcuts = w.findChildren(QShortcut)
         keys = {sc.key().toString() for sc in shortcuts}
         for expected in (
-            "Return",
-            "Space",
-            "Left",
-            "Right",
-            "Esc",
-            "Ctrl+B",
-            "Ctrl+N",
-            "Ctrl+D",
-            "Ctrl+R",
+            "Alt+S",
+            "Alt+R",
+            "Alt+Left",
+            "Alt+Right",
+            "Alt+X",
+            "Alt+B",
+            "Alt+N",
+            "Alt+D",
+            "Alt+T",
+            "Alt+P",
+            "Alt+L",
         ):
             assert any(expected in k or k == expected for k in keys), (
                 f"Missing shortcut {expected!r} in {sorted(keys)}"
@@ -2563,7 +2565,7 @@ class TestReviewControls:
         conn.close(); w.close()
 
     def test_shortcut_reveal_and_grade(self):
-        """Space reveals; Right grades correct only after flip."""
+        """Alt+R reveals; Alt+Right grades correct only after flip."""
         from unittest.mock import MagicMock
 
         conn = self._db(1)
@@ -2590,18 +2592,15 @@ class TestReviewControls:
             assert cur.fetchone()[0] == 2
         conn.close(); w.close()
 
-    def test_shortcut_ignores_text_input_focus(self):
-        """Shortcuts no-op while a text field has focus."""
-        from unittest.mock import patch
-        from PyQt6.QtWidgets import QLineEdit
-
+    def test_shortcut_tooltips_use_alt(self):
+        """Button tooltips document Alt shortcuts."""
         conn = self._db(1)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
-        w.is_current_flipped = False
-        edit = QLineEdit()
-        with patch("kgb_srs.main_window.QApplication.focusWidget", return_value=edit):
-            w._shortcut_reveal()
-        assert w.is_current_flipped is False
+        w = self._win(conn=conn)
+        assert "Alt+B" in w.browse_btn.toolTip()
+        assert "Alt+S" in w.start_btn.toolTip()
+        assert "Alt+X" in w.close_review_btn.toolTip()
+        assert "Alt+T" in w.restart_review_btn.toolTip()
+        assert "Alt+P" in w.previous_review_btn.toolTip()
         conn.close(); w.close()
 
     # -- finding #2: close preserves queue ---------------------------------
@@ -2897,7 +2896,7 @@ class TestReviewControls:
         assert isinstance(btn, QPushButton)
         assert btn.parent() is w.view
         assert btn.text().strip() == "×"
-        assert btn.toolTip() == "Close review (Esc)"
+        assert btn.toolTip() == "Close review (Alt+X)"
         assert btn.accessibleName() == "Close review"
         assert btn.cursor().shape() == Qt.CursorShape.PointingHandCursor
         assert (btn.width(), btn.height()) == (28, 28)

@@ -170,31 +170,33 @@ Click **Add Entry**. The dialog adapts to the database type:
 
 ### 4. Review Controls
 
-- **Start Daily Review** — begins a review of all cards due today. During an active review, this primary button becomes **Next** and skips the current card to the end of the same daily queue. Shortcut: **Enter**.
-- **Reveal Answer** — flips the card (shortcut: **Space**).
-- **Incorrect / Correct** — grade after flip: **← / 1** = Incorrect, **→ / 2** = Correct (or drag the card onto the drop zones).
-- **Listen** — speak the card (shortcut: **L**).
-- **Previous** — returns to the last graded card in this session (shortcut: **Ctrl+Left**).
-- **Restart** — restarts the current daily session from its original due-card queue and clears session history. It is disabled while no review is active. Shortcut: **Ctrl+R**.
-- **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database. Shortcut: **Esc**.
-- **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only). Shortcut: **Ctrl+D**.
+All shortcuts use **Alt** so they never steal plain typing.
+
+- **Start Daily Review** — begins a review of all cards due today. During an active review, this primary button becomes **Next** and skips the current card to the end of the same daily queue. Shortcut: **Alt+S**.
+- **Reveal Answer** — flips the card (shortcut: **Alt+R**).
+- **Incorrect / Correct** — grade after flip: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card onto the drop zones).
+- **Listen** — speak the card (shortcut: **Alt+L**).
+- **Previous** — returns to the last graded card in this session (shortcut: **Alt+P**).
+- **Restart** — restarts the current daily session from its original due-card queue and clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
+- **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database. Shortcut: **Alt+X**.
+- **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only). Shortcut: **Alt+D**.
 
 ### 5. Browse & Edit
 
-Click **Browse and Edit** (shortcut: **Ctrl+B**). Search with AND/OR logic:
+Click **Browse and Edit** (shortcut: **Alt+B**). Search with AND/OR logic:
 
 - **Sentence-based**: Searches sentence text, unfamiliar expressions, back, and child meanings. OR groups may contain AND terms (e.g., `math AND theorem OR topology`). Plain multi-word queries search as a literal substring.
 - **Word/Phrase-based**: Searches front and back.
 
 Buttons:
 
-- **Review Selected** — opens the selected card in a one-card review session (flip / grade / Close Review). Available for all database types; on word/phrase DBs this is the primary action. Shortcuts: **Enter** (when not typing in Search), **Ctrl+R**.
-- **Edit Selected** — edit the card (sentence dialog for sentence DBs; simple front/back for knowledge). Disabled on word/phrase DBs. Shortcut: **Ctrl+E**.
-- **Delete Selected** — delete after confirmation. Disabled on word/phrase DBs. Shortcut: **Del**.
+- **Review Selected** — opens the selected card in a one-card review session (flip / grade / Close Review). Available for all database types; on word/phrase DBs this is the primary action. Shortcut: **Alt+R**.
+- **Edit Selected** — edit the card (sentence dialog for sentence DBs; simple front/back for knowledge). Disabled on word/phrase DBs. Shortcut: **Alt+E**.
+- **Delete Selected** — delete after confirmation. Disabled on word/phrase DBs. Shortcut: **Alt+D**.
 
 Double-click a row to edit (sentence/knowledge) or review (word/phrase).
 
-Other chrome shortcuts: **Ctrl+N** Add Entry, **Ctrl+,** Settings.
+Other chrome shortcuts: **Alt+N** Add Entry, **Alt+,** Settings.
 
 ### 6. Text-to-Speech 🔊
 
