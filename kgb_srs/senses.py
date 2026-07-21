@@ -745,7 +745,7 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
 
     Returns number of item rows linked/updated.
     """
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, expression, meaning, sense_id FROM unfamiliar_items"
@@ -759,7 +759,7 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
             continue
         if sense_id:
             # Keep existing link if still valid.
-            if get_sense(conn, int(sense_id)) is not None:
+            if get_sense(conn, int(sense_id), commit=commit) is not None:
                 continue
         sense = create_or_get_sense(
             conn, expr, meaning_text, commit=False

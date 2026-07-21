@@ -44,6 +44,10 @@ The method mutates the AI stage before returning settings. Its name is imperfect
 
 The canonical word/phrase projection path can itself be a symlink resolving outside the configured database root. During sync, the current ownership comparison accepts this and can write/prune that external SQLite database. Rejecting this layout is the safest correction, but it would break existing users who intentionally store their canonical projections externally. Add a migration/discovery path and regression tests for both supported in-root links and rejected escape links before changing the policy.
 
+### Nested sentence projection filename collisions
+
+Canonical W/P projection filenames are currently flattened to the sentence database basename. Two nested sentence databases with the same filename therefore overwrite and prune one shared W/P projection, potentially mixing SRS history. Mirroring the validated relative directory structure is the correct long-term design, but existing installations may already have a shared flat projection whose history cannot be safely attributed. Add collision detection plus an explicit migration/discovery policy and tests before changing target paths.
+
 ### Markdown local-resource and navigation policy
 
 Review cards render user-controlled Markdown in `QWebEngineView` with local-file and remote-network access enabled. Tightening this would prevent `file://` content access and arbitrary navigation, but can break existing card images/links and remote MathJax. Define the supported content policy, bundle or explicitly allow MathJax, then add URL sanitization and navigation tests before changing production settings.

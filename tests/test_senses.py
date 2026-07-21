@@ -103,6 +103,52 @@ class TestSenseInventory:
         assert len(senses) == 1
         assert senses[0].meaning == "a greeting"
 
+    def test_backfill_without_commit_rolls_back_outer_transaction(self, tmp_path):
+        path = tmp_path / "backfill_transaction.db"
+        transaction_conn = init_db(str(path))
+        ensure_sentence_schema(transaction_conn)
+
+        insert_sentence_card(
+            transaction_conn, "known", [("known", "known meaning")]
+        )
+        transaction_conn.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES ('new legacy', '', 1, date('now'))"
+        )
+        new_card_id = transaction_conn.execute(
+            "SELECT last_insert_rowid()"
+        ).fetchone()[0]
+        transaction_conn.execute(
+            "INSERT INTO unfamiliar_items (card_id, expression, meaning) "
+            "VALUES (?, 'new', 'new meaning')",
+            (new_card_id,),
+        )
+        transaction_conn.commit()
+
+        transaction_conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
+        )
+        assert backfill_senses_from_items(transaction_conn, commit=False) == 1
+        assert transaction_conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (new_card_id,),
+        ).fetchone()[0] is not None
+
+        transaction_conn.rollback()
+        transaction_conn.close()
+
+        with sqlite3.connect(path) as verify_conn:
+            assert verify_conn.execute(
+                "SELECT value FROM settings WHERE key='outer_write'"
+            ).fetchone() is None
+            assert verify_conn.execute(
+                "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+                (new_card_id,),
+            ).fetchone()[0] is None
+            assert verify_conn.execute(
+                "SELECT id FROM expression_senses WHERE expression='new'"
+            ).fetchone() is None
+
 
 class TestSentenceCardSenseAtomicity:
     def test_insert_rolls_back_senses_when_second_child_insert_fails(self, conn):
