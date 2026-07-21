@@ -832,9 +832,17 @@ class BarskyApp(QMainWindow):
             from .senses import ensure_linked_word_phrase_database
 
             ensure_sentence_schema(conn)
-            ensure_linked_word_phrase_database(
-                conn, path, db_root, sync=True
-            )
+            try:
+                ensure_linked_word_phrase_database(
+                    conn, path, db_root, sync=True
+                )
+            except Exception as exc:
+                # The word/phrase database is a derived projection.  Its
+                # failure must not prevent opening the newly created source DB.
+                print(
+                    f"Word/phrase projection creation failed: {exc}",
+                    file=sys.stderr,
+                )
         conn.close()
 
         display = os.path.join(subdir, name)
@@ -886,9 +894,11 @@ class BarskyApp(QMainWindow):
             return
 
         if not os.path.exists(self.current_db_path):
+            failed_path = self.current_db_path
+            self._clear_database_state()
             if not silent:
                 QMessageBox.warning(
-                    self, "Error", f"Database file not found:\n{self.current_db_path}"
+                    self, "Error", f"Database file not found:\n{failed_path}"
                 )
             return
 

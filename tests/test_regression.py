@@ -3026,6 +3026,85 @@ class TestReviewControls:
         conn.close()
         w.close()
 
+    def test_missing_db_load_clears_active_review_state(self, tmp_path):
+        """A missing selected database clears the review it replaces."""
+        conn = self._db(1)
+        w = self._win(conn=conn)
+        w.start_review()
+        assert w.current_card is not None
+        assert w.review_mode == "daily"
+        w.current_db_path = str(tmp_path / "missing_barsky.db")
+        w.current_lang = "Missing"
+
+        w.load_database(silent=True)
+
+        assert w.conn is None
+        assert w.current_db_path is None
+        assert w.current_lang is None
+        assert w.current_card is None
+        assert w.cards_due == []
+        assert w.review_mode == ""
+        assert w._paused_review_card is None
+        assert w._paused_review_mode == ""
+        w.close()
+
+    def test_create_sentence_db_survives_projection_failure(self, tmp_path, monkeypatch):
+        """Projection errors are non-modal and do not block source DB creation."""
+        _qt_app()
+        from PyQt6.QtWidgets import QDialog
+        from kgb_srs.catalog import (
+            DatabaseType,
+            DB_DIR_LANGUAGE_SENTENCE,
+            read_database_type,
+        )
+        from kgb_srs.main_window import BarskyApp
+
+        db_root = tmp_path / "databases"
+        name = "ProjectionFailure"
+
+        class AcceptedCreationDialog:
+            def __init__(self, *args, **kwargs):
+                self.selected_type = DatabaseType.LANGUAGE_SENTENCE
+                self.db_name = name
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+        def fail_projection(*args, **kwargs):
+            raise RuntimeError("projection unavailable")
+
+        monkeypatch.setattr(
+            "kgb_srs.main_window.DBCreationDialog", AcceptedCreationDialog
+        )
+        monkeypatch.setattr(
+            BarskyApp, "_ensure_all_word_phrase_projections", lambda self: None
+        )
+        monkeypatch.setattr(
+            "kgb_srs.senses.ensure_linked_word_phrase_database", fail_projection
+        )
+        warning_calls = []
+        monkeypatch.setattr(
+            "kgb_srs.main_window.QMessageBox.warning",
+            lambda *args: warning_calls.append(args),
+        )
+        monkeypatch.setattr(
+            "kgb_srs.main_window.QMessageBox.information", lambda *args: None
+        )
+
+        w = BarskyApp()
+        w.settings = dict(w.settings)
+        w.settings["database_root"] = str(db_root)
+        w._save_settings = lambda: None
+        w.create_new_database()
+
+        expected_path = db_root / DB_DIR_LANGUAGE_SENTENCE / f"{name}_barsky.db"
+        assert expected_path.is_file()
+        assert w.current_db_path == str(expected_path)
+        assert w.conn is not None
+        assert read_database_type(w.conn) == DatabaseType.LANGUAGE_SENTENCE
+        assert warning_calls == []
+        w.close()
+
     # -- delete behavior --------------------------------------------------
 
     def test_delete_clears_paused_and_advances(self):

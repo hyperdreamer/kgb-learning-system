@@ -558,8 +558,8 @@ def _tokens_flex_equal(a: str, b: str) -> bool:
     Comparison is case-insensitive so lemma ``exact`` matches surface
     ``Exacted`` / ``EXACTED``.
     """
-    sa = _strip_token_punct(a).casefold()
-    sb = _strip_token_punct(b).casefold()
+    sa = unicodedata.normalize("NFC", _strip_token_punct(a)).casefold()
+    sb = unicodedata.normalize("NFC", _strip_token_punct(b)).casefold()
     if not sa or not sb:
         return False
     if sa == sb:

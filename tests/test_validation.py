@@ -481,6 +481,15 @@ class TestHighlightUnfamiliarInSentence:
             "May Still Be **Exacted**!"
         )
 
+    def test_composed_cafe_plural_matches_decomposed_surface_and_preserves_surface(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        sentence = "A cafe\u0301 is open."
+        assert validate_unfamiliar_items(sentence, ["cafés"]).valid
+        assert highlight_unfamiliar_in_sentence(sentence, ["cafés"]) == (
+            "A **cafe\u0301** is open."
+        )
+
     def test_trailing_punctuation_not_inside_bold(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
 
