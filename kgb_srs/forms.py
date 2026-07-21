@@ -623,6 +623,8 @@ class SentenceCardDialog(QDialog):
 
     def _on_active_meaning_changed(self) -> None:
         """Keep the store in sync when the user repairs meaning manually."""
+        if getattr(self, "_programmatic_meaning_update", False):
+            return
         if self._active_meaning_expr is None or not self._meaning_widgets:
             return
         expr, edit = self._meaning_widgets[0]
@@ -757,7 +759,13 @@ class SentenceCardDialog(QDialog):
                 ):
                     edit = self._meaning_widgets[0][1]
                     edit.setReadOnly(True)
-                    edit.setPlainText(self._meanings[target_expr])
+                    self._programmatic_meaning_update = True
+                    edit.blockSignals(True)
+                    try:
+                        edit.setPlainText(self._meanings[target_expr])
+                    finally:
+                        edit.blockSignals(False)
+                        self._programmatic_meaning_update = False
                 self._update_sense_source_label(target_expr)
                 self._ai_status.setText(status + " Ready to save.")
                 self._ai_status.setStyleSheet("color: #393;")
@@ -1021,11 +1029,18 @@ class SentenceCardDialog(QDialog):
         if self._ai_worker is not None and self._ai_worker.isRunning():
             event.ignore()
             return
+        membership = getattr(self, "_membership_worker", None)
+        if membership is not None and membership.isRunning():
+            event.ignore()
+            return
         super().closeEvent(event)
 
     def reject(self):
         """Ignore Cancel while AI generation is active."""
         if self._ai_worker is not None and self._ai_worker.isRunning():
+            return
+        membership = getattr(self, "_membership_worker", None)
+        if membership is not None and membership.isRunning():
             return
         super().reject()
 
@@ -1606,19 +1621,12 @@ class DBCreationDialog(QDialog):
         self._sentence_radio.setToolTip(
             "Cards have a sentence with unfamiliar words/phrases. "
             "AI assigns senses in a shared catalog; a word/phrase "
-            "dictionary can be derived from those senses."
+            "dictionary is auto-created/linked as a projection."
         )
         group_layout.addWidget(self._sentence_radio)
 
-        self._word_phrase_radio = QRadioButton(
-            "Word/Phrase-based (derived only)"
-        )
-        self._word_phrase_radio.setToolTip(
-            "Read-only dictionary projection of the shared sense catalog. "
-            "Created automatically with each sentence database — "
-            "manual add/edit is disabled."
-        )
-        group_layout.addWidget(self._word_phrase_radio)
+        # Word/phrase DBs are projection-only and auto-linked from sentence
+        # DBs — users cannot create orphan W/P databases from this dialog.
 
         group_layout.addSpacing(10)
 
@@ -1654,7 +1662,6 @@ class DBCreationDialog(QDialog):
 
         # Update the dir label when radio changes
         self._sentence_radio.toggled.connect(self._update_dir_label)
-        self._word_phrase_radio.toggled.connect(self._update_dir_label)
         self._knowledge_radio.toggled.connect(self._update_dir_label)
         self._update_dir_label()
 
@@ -1677,8 +1684,6 @@ class DBCreationDialog(QDialog):
     def _update_dir_label(self):
         if self._sentence_radio.isChecked():
             subdir = "Language-based/Sentence-based"
-        elif self._word_phrase_radio.isChecked():
-            subdir = "Language-based/Word-Phrase-based"
         else:
             subdir = "Knowledge-based"
         root = self._base_dir or "db"
@@ -1711,8 +1716,6 @@ class DBCreationDialog(QDialog):
 
         if self._sentence_radio.isChecked():
             self._selected_type = DatabaseType.LANGUAGE_SENTENCE
-        elif self._word_phrase_radio.isChecked():
-            self._selected_type = DatabaseType.LANGUAGE_WORD_PHRASE
         else:
             self._selected_type = DatabaseType.KNOWLEDGE
 

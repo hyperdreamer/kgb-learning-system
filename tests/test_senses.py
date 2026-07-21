@@ -326,3 +326,163 @@ class TestLinkedWordPhraseSync:
         from kgb_srs.senses import sync_linked_word_phrase_database
 
         assert sync_linked_word_phrase_database(conn) is None
+
+
+# ---------------------------------------------------------------------------
+# Audit fixes: W/P upsert SRS, orphan purge, savepoint nesting
+# ---------------------------------------------------------------------------
+
+
+class TestUpsertPreservesSrs:
+    """FIX 1: updating W/P projection must not wipe box/next_review."""
+
+    def test_update_preserves_box_and_next_review(self, conn):
+        from kgb_srs.senses import upsert_word_phrase_card
+        import datetime
+
+        future = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES (?, ?, ?, ?)",
+            ("bank", "old meaning", 4, future),
+        )
+        conn.commit()
+        card_id = int(cur.lastrowid)
+
+        updated_id, action = upsert_word_phrase_card(
+            conn, "bank", "financial institution"
+        )
+        assert action == "updated"
+        assert updated_id == card_id
+
+        cur.execute(
+            "SELECT front, back, box, next_review FROM cards WHERE id=?",
+            (card_id,),
+        )
+        front, back, box, next_review = cur.fetchone()
+        assert front == "bank"
+        assert back == "financial institution"
+        assert box == 4
+        assert next_review == future
+
+    def test_insert_still_starts_box_one_today(self, conn):
+        from kgb_srs.senses import upsert_word_phrase_card
+        import datetime
+
+        today = datetime.date.today().isoformat()
+        card_id, action = upsert_word_phrase_card(conn, "river", "stream of water")
+        assert action == "inserted"
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT box, next_review FROM cards WHERE id=?", (card_id,)
+        )
+        box, next_review = cur.fetchone()
+        assert box == 1
+        assert next_review == today
+
+
+class TestOrphanSensePurge:
+    """FIX 2: obsolete senses must not stay in W/P projection."""
+
+    def test_update_meaning_purges_old_sense(self, conn):
+        from kgb_srs.schema import update_sentence_card
+        from kgb_srs.senses import get_sense, derive_word_phrase_entries
+
+        cid = insert_sentence_card(
+            conn, "Hello world", [("world", "the earth")]
+        )
+        old_sid = conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (cid,),
+        ).fetchone()[0]
+        assert get_sense(conn, old_sid) is not None
+
+        update_sentence_card(
+            conn,
+            cid,
+            front="Hello world",
+            back="updated",
+            items=[("world", "the planet")],
+        )
+
+        assert get_sense(conn, old_sid) is None
+        entries = derive_word_phrase_entries(conn)
+        assert len(entries) == 1
+        display, back, senses = entries[0]
+        assert display.lower() == "world"
+        assert len(senses) == 1
+        assert senses[0].meaning == "the planet"
+        assert "the earth" not in back
+        assert "the planet" in back
+
+    def test_referenced_sense_not_deleted(self, conn):
+        from kgb_srs.schema import update_sentence_card
+        from kgb_srs.senses import get_sense
+
+        cid1 = insert_sentence_card(
+            conn, "Hello world", [("world", "the earth")]
+        )
+        sid = conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (cid1,),
+        ).fetchone()[0]
+        # Second card still uses the same sense meaning.
+        insert_sentence_card(
+            conn, "World peace", [("World", "the earth")]
+        )
+        update_sentence_card(
+            conn,
+            cid1,
+            front="Hello world",
+            back="x",
+            items=[("world", "other meaning")],
+        )
+        # Sense still referenced by second card.
+        assert get_sense(conn, sid) is not None
+
+
+class TestCreateOrGetSenseSavepoint:
+    """FIX 5: unique conflict must not rollback outer transaction."""
+
+    def test_conflict_preserves_outer_card_row(self, conn):
+        from kgb_srs.senses import create_or_get_sense, find_sense_by_meaning
+        import kgb_srs.senses as senses_mod
+
+        # Outer uncommitted work.
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES ('outer', 'row', 1, '2020-01-01')"
+        )
+        outer_id = int(cur.lastrowid)
+
+        # Seed a sense so the INSERT path can hit UNIQUE.
+        first = create_or_get_sense(conn, "bank", "river side", commit=False)
+        assert first.id is not None
+
+        # Force the insert branch even though a row already exists.
+        original_find = senses_mod.find_sense_by_meaning
+
+        def find_then_existing(*args, **kwargs):
+            # First call inside create_or_get_sense: pretend missing.
+            # Subsequent call after conflict: real lookup.
+            if getattr(find_then_existing, "_calls", 0) == 0:
+                find_then_existing._calls = 1
+                return None
+            return original_find(*args, **kwargs)
+
+        find_then_existing._calls = 0
+        senses_mod.find_sense_by_meaning = find_then_existing
+        try:
+            recovered = create_or_get_sense(
+                conn, "bank", "river side", commit=False
+            )
+        finally:
+            senses_mod.find_sense_by_meaning = original_find
+
+        assert recovered.id == first.id
+        still = conn.execute(
+            "SELECT id FROM cards WHERE id=?", (outer_id,)
+        ).fetchone()
+        assert still is not None, "outer transaction row must survive conflict"

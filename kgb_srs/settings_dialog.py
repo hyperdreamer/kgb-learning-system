@@ -620,8 +620,9 @@ class SettingsDialog(QDialog):
         self._set_preview_controls_enabled(False)
         worker = TTSWorker(_PREVIEW_SAMPLE, short_name)
         self.preview_tts_worker = worker
-        worker.finished.connect(self._on_preview_finished)
+        worker.audio_ready.connect(self._on_preview_finished)
         worker.error.connect(self._on_preview_error)
+        # Real QThread.finished (not the payload signal) clears the ref.
         worker.finished.connect(self._on_preview_worker_done)
         worker.error.connect(self._on_preview_worker_done)
         worker.finished.connect(worker.deleteLater)

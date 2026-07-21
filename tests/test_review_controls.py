@@ -344,6 +344,7 @@ class TestResumeTransition:
         assert app.current_card[0] == first_id
 
         # Grade one card
+        app.is_current_flipped = True
         app.process_answer(correct=True)
         second_id = app.current_card[0] if app.current_card else None
 
@@ -375,6 +376,7 @@ class TestQueueCompletion:
         for _ in range(due_count):
             if app.current_card is None:
                 break
+            app.is_current_flipped = True
             app.process_answer(correct=True)
 
         assert app.review_mode == "", (
@@ -396,6 +398,7 @@ class TestRestartDailyReview:
         first_id = app.current_card[0]
 
         # Grade a card (it moves to history, queue shrinks).
+        app.is_current_flipped = True
         app.process_answer(correct=True)
         assert app.review_mode == "daily"
         assert len(app._daily_review_history) >= 1
@@ -459,6 +462,7 @@ class TestDailyReviewHistoryTracking:
         app.start_review()
         graded_card = app.current_card
 
+        app.is_current_flipped = True
         app.process_answer(correct=True)
 
         assert len(app._daily_review_history) == 1, (
@@ -488,3 +492,88 @@ class TestQueueSnapshot:
         assert len(snapshot) >= len(remaining), (
             "Snapshot must capture the full original due queue"
         )
+
+
+
+class TestProcessAnswerFreshBox:
+    """FIX 3/4/11: grade from DB box, require flip, store fresh history."""
+
+    def test_requires_flip_before_grading(self, app_with_db):
+        app, _, conn = app_with_db
+        app.start_review()
+        assert app.current_card is not None
+        card_id = app.current_card[0]
+        cur = conn.cursor()
+        cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
+        box_before = cur.fetchone()[0]
+        app.is_current_flipped = False
+
+        app.process_answer(correct=True)
+
+        cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
+        assert cur.fetchone()[0] == box_before
+        assert app.current_card[0] == card_id
+        assert app._daily_review_history == []
+
+    def test_grades_from_db_box_not_stale_tuple(self, app_with_db):
+        app, _, conn = app_with_db
+        app.start_review()
+        card_id, front, back, _ = app.current_card
+
+        # DB is already at a higher box than the in-memory tuple.
+        conn.execute(
+            "UPDATE cards SET box=3, next_review=? WHERE id=?",
+            (__import__("datetime").date.today().isoformat(), card_id),
+        )
+        conn.commit()
+        app.current_card = (card_id, front, back, 1)  # stale memory
+        app.is_current_flipped = True
+
+        app.process_answer(correct=True)
+
+        cur = conn.cursor()
+        cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
+        assert cur.fetchone()[0] == 4
+        assert app._daily_review_history[-1] == (card_id, front, back, 4)
+
+    def test_previous_refetches_box_from_db(self, app_with_db):
+        app, _, conn = app_with_db
+        app.start_review()
+        first = app.current_card
+        app.is_current_flipped = True
+        app.process_answer(correct=True)
+        assert app._daily_review_history
+
+        # Mutate DB box after history was written with fresh tuple.
+        graded_id = app._daily_review_history[-1][0]
+        conn.execute("UPDATE cards SET box=5 WHERE id=?", (graded_id,))
+        conn.commit()
+
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == graded_id
+        assert app.current_card[3] == 5
+
+
+class TestResumeRestoresPausedQueue:
+    """FIX 10: resume must restore _paused_cards_due explicitly."""
+
+    def test_resume_restores_paused_cards_due(self, app_with_db):
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.current_card is not None
+        remaining = list(app.cards_due)
+        app.close_review()
+        assert app._paused_cards_due == remaining
+
+        # Simulate accidental wipe of in-memory queue after close.
+        app.cards_due = []
+        app.start_review()
+        # Current card is re-inserted at front from paused card; remaining
+        # should come from the restored paused queue (minus current).
+        assert app.review_mode == "daily"
+        assert app.current_card is not None
+        # After show_next_card, current is popped; remaining queue length
+        # should match original remaining (possibly reordered only by resume).
+        assert len(app.cards_due) == len(remaining)
+        assert app._paused_cards_due == []

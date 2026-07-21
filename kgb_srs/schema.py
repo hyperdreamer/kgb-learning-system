@@ -400,6 +400,9 @@ def insert_sentence_card(
                 (card_id, expr, meaning, sense.id),
             )
 
+        from .senses import purge_orphan_senses
+
+        purge_orphan_senses(conn, commit=False)
         conn.commit()
         return card_id
     except Exception:
@@ -521,6 +524,9 @@ def update_sentence_card(
                 (card_id, expr, meaning, sense.id),
             )
 
+        from .senses import purge_orphan_senses
+
+        purge_orphan_senses(conn, commit=False)
         conn.commit()
     except Exception:
         conn.rollback()

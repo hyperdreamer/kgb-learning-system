@@ -175,7 +175,7 @@ The currently loaded database is marked with **●**. Legacy databases appear un
 Click **Add Entry**. The dialog adapts to the database type:
 
 - **Sentence-based**: Full dialog with sentence input, unfamiliar item management, selected-text addition, in-dialog AI generation, validation, and compact per-item meaning fields (back is auto-derived on Save).
-- **Word/Phrase-based**: Front/back entry with optional AI generation for meanings.
+- **Word/Phrase-based**: Projection-only dictionary auto-created from sentence databases (shared sense catalog). No manual Add Entry; edit senses via sentence cards.
 - **Knowledge-based**: Simple front/back entry with no AI prompts — preserves original generic behavior.
 
 ### 4. Review Controls

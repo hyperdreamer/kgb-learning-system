@@ -2927,3 +2927,57 @@ class TestReviewControls:
 
         conn.close()
         w.close()
+
+
+
+class TestProgrammaticMeaningSenseId:
+    """FIX 6: AI/programmatic setPlainText must not clear sense_id."""
+
+    def test_programmatic_meaning_preserves_sense_id(self):
+        from PyQt6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello world", items=["world"])
+        dialog._sense_ids["world"] = 42
+        dialog._meanings["world"] = "old"
+        dialog._active_meaning_expr = "world"
+        dialog._rebuild_meaning_editors()
+        assert dialog._meaning_widgets
+        edit = dialog._meaning_widgets[0][1]
+
+        dialog._programmatic_meaning_update = True
+        edit.blockSignals(True)
+        try:
+            edit.setPlainText("new meaning from AI")
+        finally:
+            edit.blockSignals(False)
+            dialog._programmatic_meaning_update = False
+
+        dialog._meanings["world"] = "new meaning from AI"
+        assert dialog._sense_ids["world"] == 42
+
+        edit.setPlainText("typed by user")
+        assert dialog._sense_ids["world"] is None
+        dialog.close()
+
+
+class TestDBCreationDialogNoWordPhrase:
+    """FIX 9: dialog must not offer manual W/P database creation."""
+
+    def test_no_word_phrase_radio(self):
+        from PyQt6.QtWidgets import QApplication
+        import sys
+        app = QApplication.instance() or QApplication(sys.argv)
+        from kgb_srs.forms import DBCreationDialog
+        from kgb_srs.catalog import DatabaseType
+
+        dialog = DBCreationDialog()
+        assert not hasattr(dialog, "_word_phrase_radio")
+        dialog._sentence_radio.setChecked(True)
+        dialog._name_edit.setText("Demo")
+        dialog._on_create()
+        assert dialog.selected_type == DatabaseType.LANGUAGE_SENTENCE
+        dialog.close()

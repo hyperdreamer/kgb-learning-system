@@ -13,7 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 class TTSWorker(QThread):
     """Worker thread that generates TTS audio without blocking the GUI."""
 
-    finished = pyqtSignal(str)
+    audio_ready = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, text, voice):
@@ -34,7 +34,7 @@ class TTSWorker(QThread):
         asyncio.set_event_loop(loop)
         try:
             file_path = loop.run_until_complete(self.generate_audio())
-            self.finished.emit(file_path)
+            self.audio_ready.emit(file_path)
         except Exception as e:
             self.error.emit(str(e))
         finally:

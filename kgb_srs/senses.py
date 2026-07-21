@@ -147,6 +147,9 @@ def create_or_get_sense(
 
     Identity is (expression_norm, meaning_norm). Display text keeps the
     first-seen wording.
+
+    Nested callers pass commit=False so outer transactions stay intact.
+    Unique conflicts use a SAVEPOINT instead of a full rollback.
     """
     ensure_expression_senses_table(conn)
     expr = (expression or "").strip()
@@ -163,6 +166,7 @@ def create_or_get_sense(
     expr_norm = normalize_sentence(expr)
     meaning_norm = normalize_sentence(meaning_text)
     cur = conn.cursor()
+    cur.execute("SAVEPOINT sense_ins")
     try:
         cur.execute(
             "INSERT INTO expression_senses "
@@ -171,6 +175,7 @@ def create_or_get_sense(
             (expr, meaning_text, expr_norm, meaning_norm),
         )
         sense_id = int(cur.lastrowid)
+        cur.execute("RELEASE SAVEPOINT sense_ins")
         if commit:
             conn.commit()
         return Sense(
@@ -181,8 +186,9 @@ def create_or_get_sense(
             meaning_norm=meaning_norm,
         )
     except Exception:
-        # Race / unique conflict: re-read.
-        conn.rollback()
+        # Race / unique conflict: undo only the nested insert attempt.
+        cur.execute("ROLLBACK TO SAVEPOINT sense_ins")
+        cur.execute("RELEASE SAVEPOINT sense_ins")
         existing = find_sense_by_meaning(conn, expr, meaning_text)
         if existing is not None:
             return existing
@@ -224,16 +230,50 @@ def list_all_senses(conn) -> list[Sense]:
 
 
 def group_senses_by_expression(conn) -> dict[str, list[Sense]]:
-    """Map expression_norm → senses (stable order)."""
+    """Map expression_norm → senses that still have item references."""
     grouped: dict[str, list[Sense]] = {}
     display_expr: dict[str, str] = {}
     for sense in list_all_senses(conn):
+        if not sense_has_item_references(conn, sense.id):
+            continue
         key = sense.expression_norm
         grouped.setdefault(key, []).append(sense)
         display_expr.setdefault(key, sense.expression)
     # Attach display forms via a side map is awkward for callers; return
     # grouped by norm key. Callers use sense.expression for display.
     return grouped
+
+
+def sense_has_item_references(conn, sense_id: int) -> bool:
+    """True when at least one unfamiliar_items row points at sense_id."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM unfamiliar_items WHERE sense_id = ? LIMIT 1",
+        (sense_id,),
+    )
+    return cur.fetchone() is not None
+
+
+def purge_orphan_senses(conn, *, commit: bool = False) -> int:
+    """Delete expression_senses rows with no unfamiliar_items references.
+
+    Returns the number of deleted rows.
+    """
+    ensure_expression_senses_table(conn)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM expression_senses
+        WHERE id NOT IN (
+            SELECT sense_id FROM unfamiliar_items
+            WHERE sense_id IS NOT NULL
+        )
+        """
+    )
+    deleted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+    if commit:
+        conn.commit()
+    return deleted
 
 
 def example_sentences_for_sense(
@@ -371,6 +411,9 @@ def upsert_word_phrase_card(
 ) -> tuple[int, str]:
     """Insert or update a word/phrase card by front (case-insensitive).
 
+    On UPDATE only front/back change; SRS box and next_review are preserved.
+    On INSERT new cards start at box=1 due today.
+
     Returns (card_id, action) where action is 'inserted' or 'updated'.
     """
     import datetime
@@ -385,16 +428,19 @@ def upsert_word_phrase_card(
     today = datetime.date.today().isoformat()
     cur = conn.cursor()
     cur.execute(
-        "SELECT id FROM cards WHERE front = ? COLLATE NOCASE",
+        "SELECT id, front, back FROM cards WHERE front = ? COLLATE NOCASE",
         (front,),
     )
     row = cur.fetchone()
     if row:
         card_id = int(row[0])
-        cur.execute(
-            "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-            (front, back, today, card_id),
-        )
+        existing_front = row[1] or ""
+        existing_back = row[2] or ""
+        if existing_front != front or existing_back != back:
+            cur.execute(
+                "UPDATE cards SET front=?, back=? WHERE id=?",
+                (front, back, card_id),
+            )
         action = "updated"
     else:
         cur.execute(

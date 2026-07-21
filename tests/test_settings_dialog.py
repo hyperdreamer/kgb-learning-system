@@ -46,7 +46,8 @@ class FakeVoiceWorker(QObject):
 
 
 class FakeTTSWorker(QObject):
-    finished = pyqtSignal(str)
+    audio_ready = pyqtSignal(str)
+    finished = pyqtSignal()
     error = pyqtSignal(str)
 
     instances = []
@@ -958,7 +959,8 @@ def test_preview_row_button_starts_tts_worker_without_saving(monkeypatch, settin
     assert saved == []
     assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"
 
-    tts.finished.emit("/tmp/fake-preview.mp3")
+    tts.audio_ready.emit("/tmp/fake-preview.mp3")
+    tts.finished.emit()
     _app().processEvents()
     assert preview_btn.isEnabled() is True
     assert dialog.preview_tts_worker is None

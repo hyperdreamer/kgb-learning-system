@@ -230,6 +230,21 @@ class BarskyApp(QMainWindow):
             rel = relative_db_path(self.current_db_path, root)
             self.settings["default_database"] = rel or ""
         self._save_settings()
+
+        worker = self.tts_worker
+        if worker is not None and worker.isRunning():
+            try:
+                worker.audio_ready.disconnect()
+            except TypeError:
+                pass
+            try:
+                worker.error.disconnect()
+            except TypeError:
+                pass
+            worker.wait(2000)
+            if self.tts_worker is worker:
+                self.tts_worker = None
+
         event.accept()
 
     # ------------------------------------------------------------------
@@ -1002,13 +1017,18 @@ class BarskyApp(QMainWindow):
     # TTS
     # ------------------------------------------------------------------
     def speak_text(self, text, btn):
+        if self.tts_worker is not None and self.tts_worker.isRunning():
+            # Avoid stacking workers; ignore while one is already generating.
+            return
+
         btn.setEnabled(False)
         btn.setText("⏳ Preparing...")
 
         voice = self.settings.get("tts_voice", "en-US-AvaMultilingualNeural")
-        self.tts_worker = TTSWorker(text, voice)
+        worker = TTSWorker(text, voice)
+        self.tts_worker = worker
 
-        def on_finished(file_path):
+        def on_audio_ready(file_path):
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.play()
             btn.setEnabled(True)
@@ -1019,9 +1039,15 @@ class BarskyApp(QMainWindow):
             btn.setEnabled(True)
             btn.setText("🔊 Listen")
 
-        self.tts_worker.finished.connect(on_finished)
-        self.tts_worker.error.connect(on_error)
-        self.tts_worker.start()
+        def on_thread_finished():
+            if self.tts_worker is worker:
+                self.tts_worker = None
+
+        worker.audio_ready.connect(on_audio_ready)
+        worker.error.connect(on_error)
+        worker.finished.connect(on_thread_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     # ------------------------------------------------------------------
     # Add / Browse cards
@@ -1657,8 +1683,18 @@ class BarskyApp(QMainWindow):
         if self.current_card is not None:
             self.cards_due.insert(0, self.current_card)
 
-        # Pop last card from history and show it.
+        # Pop last card from history and re-fetch so display matches DB.
         prev_card = self._daily_review_history.pop()
+        prev_id = prev_card[0]
+        if self.conn is not None:
+            c = self.conn.cursor()
+            c.execute(
+                "SELECT id, front, back, box FROM cards WHERE id = ?",
+                (prev_id,),
+            )
+            fresh = c.fetchone()
+            if fresh is not None:
+                prev_card = fresh
 
         if self.card_ui:
             self.scene.removeItem(self.card_ui)
@@ -1806,7 +1842,16 @@ class BarskyApp(QMainWindow):
             and self._paused_review_mode == "daily"
         )
 
-        if not resume_daily:
+        if resume_daily:
+            # Restore deep session state preserved by close_review() before
+            # re-inserting the paused card at the front of the queue.
+            self.cards_due = list(self._paused_cards_due)
+            self._daily_queue_snapshot = list(self._paused_daily_queue)
+            self._daily_review_history = list(self._paused_review_history)
+            self._paused_cards_due = []
+            self._paused_daily_queue = []
+            self._paused_review_history = []
+        else:
             # ── First start: query all due cards ──
             today_str = datetime.date.today().isoformat()
             c.execute(
@@ -1821,20 +1866,11 @@ class BarskyApp(QMainWindow):
                 self.cards_due.sort(key=lambda x: x[0])
 
             self._daily_review_history = []
+            # First start: snapshot the complete queue for Restart.
+            self._daily_queue_snapshot = list(self.cards_due)
 
         # Resume paused card (inserts at front, de-duplicates).
         self._resume_paused_card(c)
-
-        if resume_daily:
-            # Restore deep session state preserved by close_review().
-            self._daily_queue_snapshot = list(self._paused_daily_queue)
-            self._daily_review_history = list(self._paused_review_history)
-            self._paused_cards_due = []
-            self._paused_daily_queue = []
-            self._paused_review_history = []
-        else:
-            # First start: snapshot the complete queue for Restart.
-            self._daily_queue_snapshot = list(self.cards_due)
 
         if not self.cards_due:
             QMessageBox.information(self, "Done", "No cards due for review today!")
@@ -2031,8 +2067,21 @@ class BarskyApp(QMainWindow):
     def process_answer(self, correct):
         if not self.current_card:
             return
-        card_id, _, _, current_box = self.current_card
+        # Drop zones and other paths must not grade an unrevealed card.
+        if not self.is_current_flipped:
+            return
+
+        card_id, front, back, _stale_box = self.current_card
         today = datetime.date.today()
+
+        c = self.conn.cursor()
+        # Always grade from the latest DB box so Previous/re-grade is correct.
+        c.execute("SELECT box FROM cards WHERE id = ?", (card_id,))
+        row = c.fetchone()
+        if row is None:
+            self.show_next_card()
+            return
+        current_box = int(row[0])
 
         new_box = min(current_box + 1, 5) if correct else (3 if current_box >= 3 else 1)
         intervals = {1: 1, 2: 3, 3: 7, 4: 30, 5: 365}
@@ -2040,16 +2089,15 @@ class BarskyApp(QMainWindow):
             today + datetime.timedelta(days=intervals[new_box])
         ).isoformat()
 
-        c = self.conn.cursor()
         c.execute(
             "UPDATE cards SET box = ?, next_review = ? WHERE id = ?",
             (new_box, next_review_str, card_id),
         )
         self.conn.commit()
 
-        # Track graded card in daily session history (for Previous navigation).
+        # Track graded card with the post-grade box for Previous navigation.
         if self.review_mode == "daily":
-            self._daily_review_history.append(self.current_card)
+            self._daily_review_history.append((card_id, front, back, new_box))
 
         self.show_next_card()
 
