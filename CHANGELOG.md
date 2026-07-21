@@ -2,6 +2,25 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [2.1.0] — 2026-07-22
+
+### Changes
+
+- AI provider refactor: stage profiles before save, richer test feedback,
+  multi-model support with model listing from provider endpoints.
+- Sentence dialog improvements: refined validation flow, duplicate detection
+  fixes, atomic card + sense persistence with rollback on error.
+- Settings dialog expanded with categorized tabs, UI/content font separation,
+  default database path scoped to configured root.
+- Word/Phrase projection hardening: canonical path enforcement, re-sync on
+  open/save/startup, Unicode duplicate detection.
+- Validation: inflection-tolerant matching expanded with full irregular-verb
+  map, continuous-script bypass, and regex-literal passthrough.
+- Expanded test coverage: settings dialog, review controls, main-window
+  helpers, regression suite, AI provider integration tests.
+- Documentation: IGNORED.md for deferred decisions, updated README and
+  file structure reference.
+
 ## [2.0.0] — 2026-07-21
 
 Major language-learning release: sentence databases become the source of truth,
