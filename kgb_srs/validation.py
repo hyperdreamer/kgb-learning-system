@@ -4,6 +4,7 @@ Matching is Unicode-safe, case-insensitive, and whitespace-normalized.
 Primary path is literal substring match. When that fails, a flexible
 token-sequence path accepts common English inflections (tense / number)
 so a lemma like ``insist on`` matches surface forms such as ``insists on``.
+Hyphen compounds also match: lemma ``staple`` is found inside ``non-staple``.
 
 All matching treats item text as literal content (regex metacharacters are
 escaped on the literal path). Local matching uses no network; optional AI
@@ -34,7 +35,11 @@ def normalize_sentence(text: str) -> str:
 _RE_ESCAPE_RE = re.compile(r"([.^$*+?{}[\]\\|()])")
 
 # Leading/trailing punctuation stripped from tokens for flex matching.
-_PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…—–-«»"
+# Hyphen is intentionally NOT stripped here — compounds like non-staple stay
+# intact so we can match lemmas against individual hyphen segments.
+_PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…«»"
+# Hyphen-like characters that split English compounds (non-staple, well–known).
+_HYPHEN_CHARS = frozenset("-–—")
 
 # Comprehensive irregular English verb / modal forms → shared lemma family.
 # Regular -s/-ed/-ing still handled by the stemmer; this map covers forms
@@ -236,6 +241,54 @@ _IRREGULAR_LOOKUP: dict[str, frozenset[str]] = {
 }
 
 
+def _iter_hyphen_segments(token: str) -> list[tuple[str, int, int]]:
+    """Return ``(segment, rel_start, rel_end)`` for hyphen-separated parts.
+
+    Offsets are relative to *token*. Leading/trailing punctuation is skipped
+    so ``non-staple,`` yields ``non`` and ``staple``. Unhyphenated tokens
+    yield a single segment (the core). Empty segments from ``--`` are dropped.
+    """
+    if not token:
+        return []
+    left = 0
+    right = len(token)
+    while left < right and token[left] in _PUNCT_STRIP:
+        left += 1
+    while right > left and token[right - 1] in _PUNCT_STRIP:
+        right -= 1
+    if left >= right:
+        return []
+
+    segments: list[tuple[str, int, int]] = []
+    i = left
+    while i < right:
+        if token[i] in _HYPHEN_CHARS:
+            i += 1
+            continue
+        j = i
+        while j < right and token[j] not in _HYPHEN_CHARS:
+            j += 1
+        if j > i:
+            segments.append((token[i:j], i, j))
+        i = j
+    return segments
+
+
+def _token_matches_lemma(surface_token: str, lemma: str) -> bool:
+    """True if *surface_token* equals *lemma* (flex) or contains it as a segment.
+
+    Whole-token flex first (``insists`` ↔ ``insist``). Then hyphen compounds:
+    lemma ``staple`` matches surface ``non-staple`` / ``non-staples``. Does
+    **not** match letter-substrings of solid words (``go`` ⊄ ``cargo``).
+    """
+    if _tokens_flex_equal(lemma, surface_token):
+        return True
+    segments = _iter_hyphen_segments(surface_token)
+    if len(segments) <= 1:
+        return False
+    return any(_tokens_flex_equal(lemma, seg) for seg, _a, _b in segments)
+
+
 def _escape_regex(text: str) -> str:
     """Escape regex metacharacters in *text*."""
     return _RE_ESCAPE_RE.sub(r"\\\1", text)
@@ -246,14 +299,24 @@ def _literal_find(pattern: str, haystack: str) -> bool:
 
     For single-token alphabetic patterns, require whole-token equality so
     short lemmas like ``go`` do not accidentally match inside ``gone`` /
-    ``going`` via pure substring. Multi-word / non-alpha patterns keep
-    plain substring matching.
+    ``going`` via pure substring. Hyphen compounds are an exception:
+    ``staple`` matches inside ``non-staple`` as a segment, not a letter
+    substring. Multi-word / non-alpha patterns keep plain substring matching.
     """
     if not pattern:
         return False
-    # Single simple alphabetic token → whole-token only (not substring).
+    # Single simple alphabetic token → whole-token or hyphen-segment only.
     if re.fullmatch(r"[a-z]+", pattern):
-        return any(_strip_token_punct(tok) == pattern for tok in haystack.split(" "))
+        for tok in haystack.split(" "):
+            if _strip_token_punct(tok) == pattern:
+                return True
+            # Hyphen compound: match lemma against a segment (staple ⊂ non-staple).
+            if any(
+                _strip_token_punct(seg).casefold() == pattern
+                for seg, _a, _b in _iter_hyphen_segments(tok)
+            ):
+                return True
+        return False
     # Phrases and patterns with punctuation/metacharacters: literal substring.
     escaped = _escape_regex(pattern)
     return bool(re.search(escaped, haystack))
@@ -400,7 +463,7 @@ def _flexible_phrase_match(norm_item: str, norm_sentence: str) -> bool:
     k = len(item_tokens)
     for i in range(0, len(sent_tokens) - k + 1):
         window = sent_tokens[i : i + k]
-        if all(_tokens_flex_equal(it, st) for it, st in zip(item_tokens, window)):
+        if all(_token_matches_lemma(st, it) for it, st in zip(item_tokens, window)):
             return True
     return False
 
@@ -472,11 +535,16 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     # Multi-word or punct-bearing: literal substring after escape.
     if " " in norm_surface or not re.fullmatch(r"[a-z]+", norm_surface):
         return _literal_find(norm_surface, norm_sentence)
-    # Single alphabetic token: whole-token only.
-    return any(
-        _strip_token_punct(tok) == norm_surface
-        for tok in norm_sentence.split(" ")
-    )
+    # Single alphabetic token: whole-token or hyphen-segment only.
+    for tok in norm_sentence.split(" "):
+        if _strip_token_punct(tok) == norm_surface:
+            return True
+        if any(
+            _strip_token_punct(seg).casefold() == norm_surface
+            for seg, _a, _b in _iter_hyphen_segments(tok)
+        ):
+            return True
+    return False
 
 
 def _ws_tokens_with_spans(text: str) -> list[tuple[str, int, int]]:
@@ -531,9 +599,18 @@ def locate_item_surface_span(
         for i in range(0, len(sent_tokens) - k + 1):
             window = sent_tokens[i : i + k]
             if all(
-                _tokens_flex_equal(it, st)
+                _token_matches_lemma(st, it)
                 for it, (st, _a, _b) in zip(item_tokens, window)
             ):
+                # Prefer the matched hyphen segment when lemma is only a part
+                # of a compound (staple ⊂ non-staple); else whole token window.
+                if len(item_tokens) == 1 and len(window) == 1:
+                    tok, t_start, t_end = window[0]
+                    segs = _iter_hyphen_segments(tok)
+                    if len(segs) > 1:
+                        for seg, rel_a, rel_b in segs:
+                            if _tokens_flex_equal(item_tokens[0], seg):
+                                return (t_start + rel_a, t_start + rel_b)
                 start = window[0][1]
                 end = window[-1][2]
                 return (start, end)
@@ -552,13 +629,15 @@ def locate_item_surface_span(
         if m is not None:
             return (m.start(), m.end())
 
-    # Path 3: whole-token match for single alphabetic lemmas (exact or flex).
+    # Path 3: whole-token or hyphen-segment match for single alphabetic lemmas.
     if single_alpha:
         for tok, start, end in sent_tokens:
-            core = _strip_token_punct(tok)
-            if core.casefold() == norm_item:
-                return (start, end)
-            if _tokens_flex_equal(norm_item, core):
+            if _token_matches_lemma(tok, norm_item):
+                segs = _iter_hyphen_segments(tok)
+                if len(segs) > 1:
+                    for seg, rel_a, rel_b in segs:
+                        if _tokens_flex_equal(norm_item, seg):
+                            return (start + rel_a, start + rel_b)
                 return (start, end)
     return None
 

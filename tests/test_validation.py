@@ -191,6 +191,38 @@ class TestValidateUnfamiliarItems:
         assert result.valid is False
         assert "go" in result.missing
 
+    def test_hyphen_compound_lemma_matches_segment(self):
+        """Lemma staple is found inside non-staple (hyphen segment, not substring)."""
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+            surface_form_in_sentence,
+        )
+
+        sentence = (
+            "Third, the pressure to supply rations, salt, and non-staple "
+            "foods to millions of engineering troops and civilian laborers "
+            "along the line was immense."
+        )
+        result = validate_unfamiliar_items(sentence, ["staple"])
+        assert result.valid is True
+        assert result.missing == []
+
+        span = locate_item_surface_span(sentence, "staple")
+        assert span is not None
+        assert sentence[span[0]:span[1]] == "staple"
+
+        assert surface_form_in_sentence(sentence, "staple") is True
+        bolded = highlight_unfamiliar_in_sentence(sentence, ["staple"])
+        assert "non-**staple**" in bolded
+
+        # Inflected segment inside compound
+        assert validate_unfamiliar_items(
+            "They bought non-staples yesterday.", ["staple"]
+        ).valid
+        # Still reject solid-word letter substrings
+        assert not surface_form_in_sentence("The cargo ship left.", "go")
+
     def test_choose_chose_chosen_irregular(self):
         """Irregular choose/chose/chosen share a lemma family."""
         assert validate_unfamiliar_items(
