@@ -373,7 +373,7 @@ class BarskyApp(QMainWindow):
         # Parent stylesheets (top bar) can break font inheritance; set
         # explicitly on non-styled chrome widgets.
         font = QFont(font_family, font_size)
-        for attr in ("db_label", "random_checkbox"):
+        for attr in ("db_label", "random_checkbox", "all_cards_checkbox"):
             widget = getattr(self, attr, None)
             if widget is not None:
                 widget.setFont(font)
@@ -499,6 +499,18 @@ class BarskyApp(QMainWindow):
             "If unchecked, cards are reviewed in the order they were added."
         )
         top_layout.addWidget(self.random_checkbox)
+
+        self.all_cards_checkbox = QCheckBox("All cards")
+        self.all_cards_checkbox.setEnabled(False)
+        self.all_cards_checkbox.setChecked(False)
+        self.all_cards_checkbox.stateChanged.connect(
+            self._on_all_cards_toggled
+        )
+        self.all_cards_checkbox.setToolTip(
+            "When checked, Start Review includes every card in the database,\n"
+            "not only cards due today. Grading still updates the schedule."
+        )
+        top_layout.addWidget(self.all_cards_checkbox)
 
         top_layout.addStretch()
 
@@ -883,6 +895,14 @@ class BarskyApp(QMainWindow):
         self.random_checkbox.setEnabled(True)
         self.random_checkbox.blockSignals(False)
 
+        # All-cards mode is session-only (not persisted) — default off so
+        # normal Start Review stays due-only unless the user opts in.
+        if hasattr(self, "all_cards_checkbox"):
+            self.all_cards_checkbox.blockSignals(True)
+            self.all_cards_checkbox.setChecked(False)
+            self.all_cards_checkbox.setEnabled(True)
+            self.all_cards_checkbox.blockSignals(False)
+
         self.current_card = None
         self.cards_due = []
         self.review_mode = ""
@@ -936,6 +956,42 @@ class BarskyApp(QMainWindow):
             ("1" if is_random else "0",),
         )
         self.conn.commit()
+
+    def _on_all_cards_toggled(self, state):
+        """Session option only — applies on the next Start Review / Restart.
+
+        Does not rewrite the active queue mid-session; Restart re-reads it.
+        """
+        # Intentionally no DB write: keep SRS default (due-only) unless the
+        # user opts in each time they open a database.
+        return
+
+    def _load_review_queue(self, cursor):
+        """Return the card queue for a fresh review session.
+
+        Due-only when *All cards* is unchecked; every card when checked.
+        """
+        all_cards = bool(
+            getattr(self, "all_cards_checkbox", None)
+            and self.all_cards_checkbox.isChecked()
+        )
+        if all_cards:
+            cursor.execute(
+                "SELECT id, front, back, box FROM cards ORDER BY id"
+            )
+        else:
+            today_str = datetime.date.today().isoformat()
+            cursor.execute(
+                "SELECT id, front, back, box FROM cards "
+                "WHERE next_review <= ?",
+                (today_str,),
+            )
+        queue = list(cursor.fetchall())
+        if self.random_checkbox.isChecked():
+            random.shuffle(queue)
+        else:
+            queue.sort(key=lambda x: x[0])
+        return queue
 
     # ------------------------------------------------------------------
     # Canvas
@@ -1792,8 +1848,9 @@ class BarskyApp(QMainWindow):
     def _restart_daily_review(self):
         """Restart the current daily session from the beginning.
 
-        Resets the queue to the original due-card snapshot and clears
-        review history.  Only has effect during an active daily review.
+        Re-reads the queue with the current *All cards* / Shuffle options
+        (so toggling All cards then Restart picks up the new mode).
+        Clears review history. Only has effect during an active daily review.
         """
         if self.review_mode != "daily":
             return
@@ -1802,7 +1859,13 @@ class BarskyApp(QMainWindow):
             self.scene.removeItem(self.card_ui)
             self.card_ui = None
 
-        self.cards_due = list(self._daily_queue_snapshot)
+        if self.conn is not None:
+            c = self.conn.cursor()
+            self.cards_due = self._load_review_queue(c)
+            self._daily_queue_snapshot = list(self.cards_due)
+        else:
+            self.cards_due = list(self._daily_queue_snapshot)
+
         self._daily_review_history = []
         self.current_card = None
 
@@ -1945,18 +2008,8 @@ class BarskyApp(QMainWindow):
             # Clear mode flag; _resume_paused_card clears the card pointer.
             self._paused_review_mode = ""
         else:
-            # ── First start: query all due cards ──
-            today_str = datetime.date.today().isoformat()
-            c.execute(
-                "SELECT id, front, back, box FROM cards WHERE next_review <= ?",
-                (today_str,),
-            )
-            self.cards_due = c.fetchall()
-
-            if self.random_checkbox.isChecked():
-                random.shuffle(self.cards_due)
-            else:
-                self.cards_due.sort(key=lambda x: x[0])
+            # ── First start: due-only, or all cards when opted in ──
+            self.cards_due = self._load_review_queue(c)
 
             self._daily_review_history = []
             # First start: snapshot the complete queue for Restart.
@@ -1974,7 +2027,16 @@ class BarskyApp(QMainWindow):
                 self.current_card = None
                 self._update_button_visibility()
                 return
-            QMessageBox.information(self, "Done", "No cards due for review today!")
+            all_mode = bool(
+                getattr(self, "all_cards_checkbox", None)
+                and self.all_cards_checkbox.isChecked()
+            )
+            empty_msg = (
+                "No cards in this database."
+                if all_mode
+                else "No cards due for review today!"
+            )
+            QMessageBox.information(self, "Done", empty_msg)
             self.review_mode = ""
             self._daily_queue_snapshot = []
             self._daily_review_history = []

@@ -664,3 +664,63 @@ class TestResumeRestoresPausedQueue:
         # should match original remaining (possibly reordered only by resume).
         assert len(app.cards_due) == len(remaining)
         assert app._paused_cards_due == []
+
+
+class TestAllCardsReviewMode:
+    """All cards checkbox: review every entry, not only due today."""
+
+    def test_default_due_only_excludes_future(self, app_with_db):
+        app, _, conn = app_with_db
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+        assert total == 4  # 3 due + 1 future from fixture
+
+        app.all_cards_checkbox.setChecked(False)
+        app.start_review()
+
+        seen = set()
+        if app.current_card is not None:
+            seen.add(app.current_card[0])
+        for card in app.cards_due:
+            seen.add(card[0])
+        # Snapshot has the full session queue at start (before first pop).
+        snap_ids = {c[0] for c in app._daily_queue_snapshot}
+        assert len(snap_ids) == 3
+        assert len(seen) == 3
+
+        future_id = conn.execute(
+            "SELECT id FROM cards WHERE front = ?", ("Future card",)
+        ).fetchone()[0]
+        assert future_id not in snap_ids
+
+    def test_all_cards_includes_future(self, app_with_db):
+        app, _, conn = app_with_db
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+        app.all_cards_checkbox.setChecked(True)
+        app.start_review()
+
+        snap_ids = {c[0] for c in app._daily_queue_snapshot}
+        assert len(snap_ids) == total
+
+        future_id = conn.execute(
+            "SELECT id FROM cards WHERE front = ?", ("Future card",)
+        ).fetchone()[0]
+        assert future_id in snap_ids
+
+    def test_all_cards_restart_rebuilds_queue(self, app_with_db):
+        """Toggling All cards then Restart re-reads the queue."""
+        app, _, conn = app_with_db
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+        app.all_cards_checkbox.setChecked(False)
+        app.start_review()
+        assert len(app._daily_queue_snapshot) == 3
+
+        app.all_cards_checkbox.setChecked(True)
+        app._restart_daily_review()
+        assert len(app._daily_queue_snapshot) == total
+
+    def test_checkbox_enabled_after_db_load(self, app_with_db):
+        app, _, _ = app_with_db
+        assert app.all_cards_checkbox.isEnabled()
+        assert not app.all_cards_checkbox.isChecked()
