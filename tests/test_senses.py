@@ -181,6 +181,12 @@ class TestDeriveWordPhrase:
         # insist on has one sense despite two sentences
         assert len(by_expr["insist on"][2]) == 1
 
+        # Back layout: meaning, then indented example with bold surface form.
+        insist_back = by_expr["insist on"][1]
+        assert "to demand firmly" in insist_back
+        assert "    He **insists on** speaking himself." in insist_back
+        assert "*" not in insist_back.replace("**", "")  # no italic-only wrapping
+
         target_path = tmp_path / "derived_barsky.db"
         target = init_db(str(target_path))
         try:
@@ -199,6 +205,23 @@ class TestDeriveWordPhrase:
             assert "side of a river" in bank_back
         finally:
             target.close()
+
+    def test_back_highlights_surface_and_indents_example(self):
+        from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
+
+        sense = Sense(
+            id=1,
+            expression="insist on",
+            meaning="to demand firmly",
+            expression_norm="insist on",
+            meaning_norm="to demand firmly",
+        )
+        back = build_word_phrase_back_from_senses(
+            [sense],
+            {1: ["He insists on speaking himself."]},
+        )
+        assert back.startswith("1. to demand firmly")
+        assert "\n\n    He **insists on** speaking himself." in back
 
 
 class TestLinkedWordPhraseSync:

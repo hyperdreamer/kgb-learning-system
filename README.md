@@ -57,10 +57,10 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 ### Word/Phrase-based (`language_word_phrase`)
 
-- **Front**: A word or phrase (one card per expression).
+- **Front**: A word or phrase (one card per expression), shown **bold** during review.
 - **Source of truth**: The **shared sense catalog** (`expression_senses`) built from sentence cards — not free-typed dictionary entries.
 - **No manual editing**: Add Entry, Delete Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by automatic projection from a sentence database.
-- **Derived projection**: One card per expression; back lists all senses with example sentences from the sentence corpus.
+- **Derived projection**: One card per expression; back lists each sense with its meaning and an indented example sentence where the surface form is **bold** (e.g. lemma `insist on` → **insists on**).
 - **Linked auto-sync**: The sentence DB stores `linked_word_phrase_db`. App startup, DB open, and every sentence Save ensure the link exists and re-derive the W/P DB.
 - **Review**: Standard front/back flip card with Markdown and MathJax rendering (SRS boxes still work).
 - **Search**: Searches front and back (meanings/examples) fields. Browse is view-only for W/P (Edit/Delete selected disabled).

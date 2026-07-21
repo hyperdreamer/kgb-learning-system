@@ -292,21 +292,48 @@ def example_sentences_for_sense(
     return examples
 
 
+def _highlight_expression_in_example(example: str, expression: str) -> str:
+    """Bold the surface form of *expression* inside an example sentence."""
+    from .validation import highlight_unfamiliar_in_sentence
+
+    text = (example or "").strip()
+    expr = (expression or "").strip()
+    if not text:
+        return ""
+    if not expr:
+        return text
+    return highlight_unfamiliar_in_sentence(text, [expr])
+
+
 def build_word_phrase_back_from_senses(
     senses: Iterable[Sense],
     examples_by_sense_id: dict[int, list[str]] | None = None,
 ) -> str:
-    """Render word/phrase card back text from senses + example sentences."""
+    """Render word/phrase card back text from senses + example sentences.
+
+    Layout per sense::
+
+        1. <meaning>
+
+            <example with **surface form** bolded>
+
+    The example sits on its own indented line under the meaning so review
+    HTML shows clear hierarchy (Qt Markdown treats a 4-space prefix as an
+    indented block).
+    """
     parts: list[str] = []
     for i, sense in enumerate(senses, 1):
         examples = []
         if examples_by_sense_id:
             examples = examples_by_sense_id.get(sense.id, [])
         example = examples[0] if examples else ""
+        meaning = (sense.meaning or "").strip()
+        block = f"{i}. {meaning}" if meaning else f"{i}."
         if example:
-            parts.append(f"{i}. {sense.meaning}\n*{example}*")
-        else:
-            parts.append(f"{i}. {sense.meaning}")
+            highlighted = _highlight_expression_in_example(example, sense.expression)
+            # 4 leading spaces → Qt Markdown indented paragraph under the sense.
+            block = f"{block}\n\n    {highlighted}"
+        parts.append(block)
     return "\n\n".join(parts)
 
 

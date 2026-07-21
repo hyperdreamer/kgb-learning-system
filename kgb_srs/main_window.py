@@ -1728,6 +1728,10 @@ class BarskyApp(QMainWindow):
                 display_md = self._build_sentence_card_display(
                     card_id, front, back, flipped=True, metadata=metadata_md
                 )
+            elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
+                display_md = self._build_word_phrase_card_display(
+                    front, back, flipped=True, metadata=metadata_md
+                )
             else:
                 display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
 
@@ -1738,6 +1742,10 @@ class BarskyApp(QMainWindow):
             if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
                 display_md = self._build_sentence_card_display(
                     card_id, front, back, flipped=False, metadata=metadata_md
+                )
+            elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
+                display_md = self._build_word_phrase_card_display(
+                    front, back, flipped=False, metadata=metadata_md
                 )
             else:
                 display_md = f"{metadata_md}\n\n{front}"
@@ -1776,6 +1784,22 @@ class BarskyApp(QMainWindow):
         # Front: focus on the sentence; bold only the learning targets.
         return f"{metadata}\n\n{highlighted}"
 
+    def _build_word_phrase_card_display(self, front, back, flipped, metadata):
+        """Build display content for a word/phrase dictionary card.
+
+        Front: bold expression only (``**insist on**``).
+        Back: bold expression, then sense list with indented examples
+        (examples already embed bold surface forms from derive).
+        """
+        expr = (front or "").strip()
+        bold_front = f"**{expr}**" if expr else ""
+        if not flipped:
+            return f"{metadata}\n\n{bold_front}"
+        body = (back or "").strip()
+        if body:
+            return f"{metadata}\n\n{bold_front}\n\n---\n\n{body}"
+        return f"{metadata}\n\n{bold_front}"
+
     def flip_card(self):
         if not self.current_card:
             return
@@ -1788,6 +1812,10 @@ class BarskyApp(QMainWindow):
         if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
             display_md = self._build_sentence_card_display(
                 card_id, front, back, flipped=True, metadata=metadata_md
+            )
+        elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
+            display_md = self._build_word_phrase_card_display(
+                front, back, flipped=True, metadata=metadata_md
             )
         else:
             display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
