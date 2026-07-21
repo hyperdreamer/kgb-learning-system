@@ -46,6 +46,17 @@ class FakeVoiceWorker(QObject):
         self.deleted = True
 
 
+class DeletedVoiceWorker(FakeVoiceWorker):
+    """Fake wrapper that raises once deleteLater has invalidated it."""
+
+    def isRunning(self):
+        if self.deleted:
+            raise RuntimeError(
+                "wrapped C/C++ object of type VoiceListWorker has been deleted"
+            )
+        return False
+
+
 class FakeTTSWorker(QObject):
     audio_ready = pyqtSignal(str)
     finished = pyqtSignal()
@@ -595,7 +606,42 @@ def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeyp
     ) == settings["tts_voice"]
     worker.finished.emit()
     assert worker.deleted
-    assert dialog.voice_worker is worker
+    assert dialog.voice_worker is None
+    dialog.reject()
+
+
+def test_save_accepts_after_finished_voice_worker_wrapper_is_deleted(
+    monkeypatch, settings
+):
+    """A deleted QThread wrapper does not break the dialog's save path."""
+    import kgb_srs.settings_dialog as module
+
+    _app()
+    worker = DeletedVoiceWorker()
+    monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
+    monkeypatch.setattr(module, "save_settings", lambda _settings: None)
+    dialog = module.SettingsDialog(settings)
+
+    worker.finished.emit()
+    assert worker.deleted
+    # A queued finished handler can leave this stale reference briefly visible.
+    dialog.voice_worker = worker
+
+    dialog.save_and_apply()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert dialog.voice_worker is None
+
+
+def test_finished_old_voice_worker_does_not_clear_replacement(monkeypatch, settings):
+    """An old worker finishing late preserves the newer worker reference."""
+    dialog, old_worker = _dialog(monkeypatch, settings)
+    replacement_worker = FakeVoiceWorker()
+    dialog.voice_worker = replacement_worker
+
+    old_worker.finished.emit()
+
+    assert dialog.voice_worker is replacement_worker
     dialog.reject()
 
 

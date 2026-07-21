@@ -751,12 +751,16 @@ class SettingsDialog(QDialog):
     def _start_voice_worker(self):
         if self._deferred_close_action is not None:
             return
-        self.voice_worker = VoiceListWorker()
-        self.voice_worker.voices_ready.connect(self._on_voices_ready)
-        self.voice_worker.error.connect(self._on_voice_error)
-        self.voice_worker.finished.connect(self._on_close_worker_finished)
-        self.voice_worker.finished.connect(self.voice_worker.deleteLater)
-        self.voice_worker.start()
+        worker = VoiceListWorker()
+        self.voice_worker = worker
+        worker.voices_ready.connect(self._on_voices_ready)
+        worker.error.connect(self._on_voice_error)
+        worker.finished.connect(
+            lambda: self._clear_worker_if_current("voice_worker", worker)
+        )
+        worker.finished.connect(self._on_close_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def _on_voices_ready(self, voices):
         self._all_voices = list(voices)
@@ -888,7 +892,7 @@ class SettingsDialog(QDialog):
         worker.audio_ready.connect(self._on_preview_finished)
         worker.error.connect(self._on_preview_error)
         # Real QThread.finished (not the payload signal) clears the ref.
-        worker.finished.connect(self._on_preview_worker_done)
+        worker.finished.connect(lambda: self._on_preview_worker_done(worker))
         worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
@@ -940,10 +944,20 @@ class SettingsDialog(QDialog):
             "ai_models_worker",
         ):
             worker = getattr(self, name, None)
-            is_running = getattr(worker, "isRunning", None)
-            if callable(is_running) and is_running():
-                workers.append(worker)
+            try:
+                is_running = getattr(worker, "isRunning", None)
+                if callable(is_running) and is_running():
+                    workers.append(worker)
+            except RuntimeError:
+                self._clear_worker_if_current(name, worker)
         return workers
+
+    def _clear_worker_if_current(self, name, worker):
+        """Clear a worker reference without discarding a newer replacement."""
+        if getattr(self, name, None) is worker:
+            setattr(self, name, None)
+            return True
+        return False
 
     def _defer_close_for_running_workers(self, action):
         """Remember a close action until every active QThread has finished."""
@@ -978,9 +992,9 @@ class SettingsDialog(QDialog):
     def _on_preview_error(self, message):
         QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")
 
-    def _on_preview_worker_done(self, *_args):
-        self.preview_tts_worker = None
-        self._set_preview_controls_enabled(True)
+    def _on_preview_worker_done(self, worker):
+        if self._clear_worker_if_current("preview_tts_worker", worker):
+            self._set_preview_controls_enabled(True)
 
     def _set_preview_controls_enabled(self, enabled):
         for i in range(self.tts_voice_list.count()):
@@ -1058,7 +1072,7 @@ class SettingsDialog(QDialog):
         worker = create_ai_test_worker(config)
         self.ai_test_worker = worker
         worker.result.connect(self._on_ai_test_result)
-        worker.finished.connect(self._on_ai_test_finished)
+        worker.finished.connect(lambda: self._on_ai_test_finished(worker))
         worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
@@ -1079,10 +1093,10 @@ class SettingsDialog(QDialog):
             self.ai_test_status_label.setStyleSheet("color: #cf222e;")
         self.ai_test_status_label.setText(text)
 
-    def _on_ai_test_finished(self):
-        self.ai_test_worker = None
-        self._ai_test_token = None
-        self.ai_test_button.setEnabled(True)
+    def _on_ai_test_finished(self, worker):
+        if self._clear_worker_if_current("ai_test_worker", worker):
+            self._ai_test_token = None
+            self.ai_test_button.setEnabled(True)
 
     def _start_ai_models_refresh(self):
         """Fetch /models for the staged Base URL + API Key (nonblocking)."""
@@ -1099,7 +1113,7 @@ class SettingsDialog(QDialog):
         worker = create_ai_models_worker(config)
         self.ai_models_worker = worker
         worker.result.connect(self._on_ai_models_result)
-        worker.finished.connect(self._on_ai_models_finished)
+        worker.finished.connect(lambda: self._on_ai_models_finished(worker))
         worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
@@ -1119,10 +1133,10 @@ class SettingsDialog(QDialog):
             self.ai_test_status_label.setStyleSheet("color: #cf222e;")
             self.ai_test_status_label.setText(f"Models — {message}")
 
-    def _on_ai_models_finished(self):
-        self.ai_models_worker = None
-        self._ai_models_refresh_token = None
-        self.ai_models_refresh_btn.setEnabled(True)
+    def _on_ai_models_finished(self, worker):
+        if self._clear_worker_if_current("ai_models_worker", worker):
+            self._ai_models_refresh_token = None
+            self.ai_models_refresh_btn.setEnabled(True)
 
     def _staged_settings(self):
         staged = dict(self.settings)
