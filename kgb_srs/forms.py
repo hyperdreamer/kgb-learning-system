@@ -1495,11 +1495,7 @@ class WordPhraseCardDialog(QDialog):
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _on_ai_thread_stopped(self, worker):
-        if self._ai_worker is worker:
-            self._ai_worker = None
-            self._restore_ui_after_ai()
-
+    def _clear_all_rows(self):
         """Remove all meaning tabs."""
         while self._meanings_tabs.count():
             page = self._meanings_tabs.widget(0)
@@ -1508,6 +1504,11 @@ class WordPhraseCardDialog(QDialog):
                 page.deleteLater()
         self._meaning_rows.clear()
         self._update_meaning_controls()
+
+    def _on_ai_thread_stopped(self, worker):
+        if self._ai_worker is worker:
+            self._ai_worker = None
+            self._restore_ui_after_ai()
 
     def _set_controls_enabled(self, enabled: bool):
         """Enable/disable all controls during AI generation or close."""

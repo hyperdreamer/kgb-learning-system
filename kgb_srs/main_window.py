@@ -1468,7 +1468,6 @@ class BarskyApp(QMainWindow):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(table)
 
-        getattr(self, "_db_type", None)
 
         def refresh_list():
             table.setRowCount(0)

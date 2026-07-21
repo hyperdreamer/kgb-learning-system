@@ -234,7 +234,7 @@ def _build_search_sql(
 def search_sentence_cards(
     conn,
     query: str,
-    logic: str = "AND",
+    logic: str = "AND",  # retained for backward compatibility; parsed from query by parse_search_tokens
     field_filter: Optional[str] = None,
 ) -> list[dict]:
     """Search sentence-based cards.
@@ -273,7 +273,7 @@ def search_sentence_cards(
 def search_word_phrase_cards(
     conn,
     query: str,
-    logic: str = "AND",
+    logic: str = "AND",  # retained for backward compatibility; parsed from query by parse_search_tokens
     field_filter: Optional[str] = None,
 ) -> list[dict]:
     """Search word/phrase-based cards.
