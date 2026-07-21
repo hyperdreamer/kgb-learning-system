@@ -1615,7 +1615,7 @@ class DBCreationDialog(QDialog):
         )
         self._word_phrase_radio.setToolTip(
             "Read-only dictionary projection of the shared sense catalog. "
-            "Create via Derive W/P from a sentence database — "
+            "Created automatically with each sentence database — "
             "manual add/edit is disabled."
         )
         group_layout.addWidget(self._word_phrase_radio)

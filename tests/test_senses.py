@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pytest
@@ -201,48 +202,102 @@ class TestDeriveWordPhrase:
 
 
 class TestLinkedWordPhraseSync:
-    def test_link_and_auto_sync(self, conn, tmp_path):
+    def test_ensure_linked_creates_and_syncs(self, conn, tmp_path):
         from kgb_srs.senses import (
-            set_linked_word_phrase_db,
+            ensure_linked_word_phrase_database,
             get_linked_word_phrase_db,
-            sync_linked_word_phrase_database,
-            derive_word_phrase_database,
+            default_word_phrase_path_for_sentence,
         )
+        from kgb_srs.catalog import DB_DIR_LANGUAGE_WORD_PHRASE
 
         insert_sentence_card(
             conn,
             "He insists on speaking himself.",
             [("insist on", "to demand firmly")],
         )
-        target_path = tmp_path / "dict_barsky.db"
-        target = init_db(str(target_path))
-        try:
-            stats = derive_word_phrase_database(conn, target)
-            assert stats["expressions"] == 1
-        finally:
-            target.close()
+        # Mimic sentence DB path under a fake root.
+        db_root = tmp_path / "db"
+        sent_dir = db_root / "Language-based" / "Sentence-based"
+        sent_dir.mkdir(parents=True)
+        sentence_path = str(sent_dir / "English_barsky.db")
 
-        set_linked_word_phrase_db(conn, str(target_path))
+        wp_path, stats = ensure_linked_word_phrase_database(
+            conn, sentence_path, str(db_root), sync=True
+        )
+        assert stats is not None
+        assert stats["expressions"] == 1
         assert get_linked_word_phrase_db(conn) is not None
+        assert os.path.isfile(wp_path)
+        expected = default_word_phrase_path_for_sentence(sentence_path, str(db_root))
+        assert os.path.abspath(wp_path) == os.path.abspath(expected)
+        assert DB_DIR_LANGUAGE_WORD_PHRASE in wp_path
 
-        # Add another sense and sync
+        # Add another sense and re-ensure (sync)
         insert_sentence_card(
             conn,
             "I went to the bank.",
             [("bank", "financial institution")],
         )
-        stats2 = sync_linked_word_phrase_database(conn)
+        wp_path2, stats2 = ensure_linked_word_phrase_database(
+            conn, sentence_path, str(db_root), sync=True
+        )
+        assert wp_path2 == wp_path
         assert stats2 is not None
         assert stats2["expressions"] == 2
 
-        target2 = init_db(str(target_path))
+        target = init_db(wp_path)
         try:
-            cur = target2.cursor()
+            cur = target.cursor()
             cur.execute("SELECT front FROM cards ORDER BY front")
             fronts = {r[0].lower() for r in cur.fetchall()}
             assert fronts == {"bank", "insist on"}
         finally:
-            target2.close()
+            target.close()
+
+    def test_startup_backfill_links_old_sentence_dbs(self, tmp_path):
+        from kgb_srs.senses import (
+            ensure_all_sentence_databases_linked,
+            get_linked_word_phrase_db,
+        )
+        from kgb_srs.catalog import (
+            DatabaseType,
+            write_database_type,
+            DB_DIR_LANGUAGE_SENTENCE,
+            DB_DIR_LANGUAGE_WORD_PHRASE,
+        )
+        from kgb_srs.config import ensure_database_root_structure
+        from kgb_srs.schema import ensure_sentence_schema
+
+        db_root = tmp_path / "db"
+        ensure_database_root_structure(str(db_root))
+        sent_path = (
+            db_root / DB_DIR_LANGUAGE_SENTENCE / "Legacy_barsky.db"
+        )
+        conn = init_db(str(sent_path))
+        try:
+            write_database_type(conn, DatabaseType.LANGUAGE_SENTENCE)
+            ensure_sentence_schema(conn)
+            insert_sentence_card(
+                conn,
+                "I went to the bank.",
+                [("bank", "financial institution")],
+            )
+            assert get_linked_word_phrase_db(conn) is None
+        finally:
+            conn.close()
+
+        results = ensure_all_sentence_databases_linked(str(db_root))
+        assert len(results) == 1
+        assert results[0]["stats"]["expressions"] == 1
+        wp = results[0]["word_phrase_path"]
+        assert os.path.isfile(wp)
+        assert DB_DIR_LANGUAGE_WORD_PHRASE in wp
+
+        reopened = init_db(str(sent_path))
+        try:
+            assert get_linked_word_phrase_db(reopened) is not None
+        finally:
+            reopened.close()
 
     def test_sync_without_link_returns_none(self, conn):
         from kgb_srs.senses import sync_linked_word_phrase_database

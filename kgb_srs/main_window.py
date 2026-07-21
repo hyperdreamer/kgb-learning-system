@@ -197,6 +197,12 @@ class BarskyApp(QMainWindow):
         except OSError as exc:
             print(f"Could not create database directory structure: {exc}")
 
+        # Auto-link + sync W/P projections for every sentence DB (new or old).
+        try:
+            self._ensure_all_word_phrase_projections()
+        except Exception as exc:
+            print(f"Word/phrase auto-link backfill failed: {exc}")
+
         default_db = resolve_default_database(self.settings)
         if default_db and os.path.exists(default_db):
             for display, path in find_databases(
@@ -328,7 +334,7 @@ class BarskyApp(QMainWindow):
             self.new_db_btn.setStyleSheet(
                 self._toolbar_button_style("new_db", font_family, font_size)
             )
-        for attr in ("add_entry_btn", "browse_btn", "settings_btn", "derive_wp_btn"):
+        for attr in ("add_entry_btn", "browse_btn", "settings_btn"):
             btn = getattr(self, attr, None)
             if btn is not None:
                 btn.setStyleSheet(
@@ -488,15 +494,6 @@ class BarskyApp(QMainWindow):
 
         self.browse_btn = action_btn(" Browse", "edit-find", self.browse_cards)
         top_layout.addWidget(self.browse_btn)
-        self.derive_wp_btn = action_btn(
-            " Derive W/P", "document-save-as", self.derive_word_phrase_database
-        )
-        self.derive_wp_btn.setToolTip(
-            "Project this sentence database into a word/phrase database "
-            "keyed by (expression, sense)."
-        )
-        self.derive_wp_btn.setVisible(False)
-        top_layout.addWidget(self.derive_wp_btn)
         self.settings_btn = action_btn(
             " Settings", "preferences-system", self.open_settings_window
         )
@@ -683,8 +680,13 @@ class BarskyApp(QMainWindow):
         conn = init_db(path)
         write_database_type(conn, db_type)
         if db_type == DatabaseType.LANGUAGE_SENTENCE:
-            ensure_unfamiliar_items_table(conn)
-            migrate_unfamiliar_items_meaning(conn)
+            from .schema import ensure_sentence_schema
+            from .senses import ensure_linked_word_phrase_database
+
+            ensure_sentence_schema(conn)
+            ensure_linked_word_phrase_database(
+                conn, path, db_root, sync=True
+            )
         conn.close()
 
         display = os.path.join(subdir, name)
@@ -726,7 +728,19 @@ class BarskyApp(QMainWindow):
 
         if db_type == DatabaseType.LANGUAGE_SENTENCE:
             from .schema import ensure_sentence_schema
+            from .senses import ensure_linked_word_phrase_database
+
             ensure_sentence_schema(self.conn)
+            # Old sentence DBs without a link get one automatically.
+            try:
+                ensure_linked_word_phrase_database(
+                    self.conn,
+                    self.current_db_path,
+                    get_database_root(self.settings),
+                    sync=True,
+                )
+            except Exception:
+                pass
 
         # --- Restore random review ---
         c = self.conn.cursor()
@@ -932,9 +946,9 @@ class BarskyApp(QMainWindow):
                 self,
                 "Read-only Word/Phrase Database",
                 "Word/phrase cards come only from the shared sense catalog.\n\n"
-                "Add or edit sentences in a sentence-based database, then "
-                "use Derive W/P (or the linked auto-sync) to update this "
-                "dictionary. Manual add/edit is disabled.",
+                "Add or edit sentences in a sentence-based database; the "
+                "linked dictionary updates automatically. Manual add/edit "
+                "is disabled.",
             )
         else:
             self._add_knowledge_card()
@@ -996,141 +1010,31 @@ class BarskyApp(QMainWindow):
         self._sync_linked_word_phrase_quiet()
 
     def _sync_linked_word_phrase_quiet(self) -> None:
-        """Re-derive linked W/P DB from expression_senses after sentence changes."""
+        """Ensure link + re-derive W/P projection after sentence changes."""
         if not self.conn:
             return
         if getattr(self, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE:
             return
+        if not self.current_db_path:
+            return
         try:
-            from .senses import sync_linked_word_phrase_database
+            from .senses import ensure_linked_word_phrase_database
 
-            sync_linked_word_phrase_database(self.conn)
+            ensure_linked_word_phrase_database(
+                self.conn,
+                self.current_db_path,
+                get_database_root(self.settings),
+                sync=True,
+            )
         except Exception:
             # Never block sentence save on projection failure.
             pass
 
-    def derive_word_phrase_database(self):
-        """Project the open sentence DB into a word/phrase DB by (expression, sense)."""
-        if not self.conn or getattr(self, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE:
-            QMessageBox.information(
-                self,
-                "Derive Word/Phrase",
-                "Open a sentence-based database first.",
-            )
-            return
+    def _ensure_all_word_phrase_projections(self) -> None:
+        """Startup: link + sync W/P for every sentence DB under the root."""
+        from .senses import ensure_all_sentence_databases_linked
 
-        from .senses import (
-            derive_word_phrase_database,
-            list_all_senses,
-            get_linked_word_phrase_db,
-            set_linked_word_phrase_db,
-        )
-
-        if not list_all_senses(self.conn):
-            # Try backfill from items first.
-            from .senses import backfill_senses_from_items
-
-            backfill_senses_from_items(self.conn)
-            if not list_all_senses(self.conn):
-                QMessageBox.information(
-                    self,
-                    "Derive Word/Phrase",
-                    "No expression senses yet.\n\n"
-                    "Add sentence cards and Generate Meaning first.",
-                )
-                return
-
-        # Prefer reusing the already-linked target when present.
-        linked = get_linked_word_phrase_db(self.conn)
-        target_path = None
-        if linked and os.path.isfile(linked):
-            reply = QMessageBox.question(
-                self,
-                "Linked Word/Phrase Database",
-                f"Update the linked word/phrase database?\n\n{linked}",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                target_path = linked
-
-        if target_path is None:
-            # Default target name from source leaf name.
-            source_path = self.current_db_path or ""
-            leaf = os.path.basename(source_path)
-            if leaf.endswith("_barsky.db"):
-                leaf = leaf[: -len("_barsky.db")]
-            default_name = f"{leaf}-senses" if leaf else "derived-senses"
-
-            name_dialog = DynamicInputDialog(
-                self,
-                "Derive Word/Phrase Database",
-                "New word/phrase database name "
-                "(content is derived only — no manual editing):",
-                default_name,
-            )
-            if name_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            name = (name_dialog.text_value or "").strip()
-            if not name:
-                return
-            if not validate_db_name(name):
-                QMessageBox.warning(
-                    self,
-                    "Invalid Name",
-                    f"Database name '{name}' contains invalid characters.",
-                )
-                return
-
-            db_root = get_database_root(self.settings)
-            try:
-                ensure_database_root_structure(db_root)
-            except OSError as exc:
-                QMessageBox.warning(
-                    self,
-                    "Database Directory",
-                    f"Could not prepare database directory:\n{db_root}\n\n{exc}",
-                )
-                return
-
-            subdir = DB_DIR_LANGUAGE_WORD_PHRASE
-            target_dir = os.path.join(db_root, subdir)
-            os.makedirs(target_dir, exist_ok=True)
-            filename = safe_db_filename(name)
-            target_path = os.path.join(target_dir, filename)
-
-            if os.path.exists(target_path):
-                reply = QMessageBox.question(
-                    self,
-                    "Database Exists",
-                    f"'{name}' already exists.\n\n"
-                    "Rebuild it from the shared sense catalog?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
-                    return
-
-        target_conn = init_db(target_path)
-        try:
-            stats = derive_word_phrase_database(self.conn, target_conn)
-        finally:
-            target_conn.close()
-
-        # Always keep the sentence DB linked for auto-sync on future saves.
-        set_linked_word_phrase_db(self.conn, target_path)
-
-        QMessageBox.information(
-            self,
-            "Derived Word/Phrase Database",
-            (
-                f"Wrote {stats['expressions']} expression(s) / "
-                f"{stats['senses']} sense(s).\n"
-                f"Inserted: {stats['inserted']}  Updated: {stats['updated']}"
-                f"  Pruned: {stats.get('pruned', 0)}\n\n"
-                f"{target_path}\n\n"
-                "This dictionary is read-only. Future sentence saves will "
-                "auto-sync it from the shared sense catalog."
-            ),
-        )
+        ensure_all_sentence_databases_linked(get_database_root(self.settings))
 
     def _add_knowledge_card(self, edit_card_id=None, existing_front=""):
         """Add/edit a knowledge-based (generic front/back) card.
@@ -1387,8 +1291,8 @@ class BarskyApp(QMainWindow):
                     dialog,
                     "Read-only Word/Phrase Card",
                     "This dictionary is derived from the shared sense catalog.\n\n"
-                    "Edit the expression/sense via sentence cards, then "
-                    "re-derive or rely on auto-sync. Manual edit is disabled.",
+                    "Edit the expression/sense via sentence cards; the "
+                    "dictionary updates automatically. Manual edit is disabled.",
                 )
                 return
 
@@ -1473,10 +1377,6 @@ class BarskyApp(QMainWindow):
         has_paused = self._paused_review_card is not None
 
         self.delete_entry_btn.setEnabled(has_db and has_card)
-        is_sentence = (
-            has_db
-            and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE
-        )
         is_wp = (
             has_db
             and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
@@ -1485,9 +1385,6 @@ class BarskyApp(QMainWindow):
         if hasattr(self, "add_entry_btn"):
             self.add_entry_btn.setVisible(has_db and not is_wp)
             self.add_entry_btn.setEnabled(has_db and not is_wp)
-        if hasattr(self, "derive_wp_btn"):
-            self.derive_wp_btn.setVisible(is_sentence)
-            self.derive_wp_btn.setEnabled(is_sentence)
 
         if not has_db:
             self.start_btn.setEnabled(False)

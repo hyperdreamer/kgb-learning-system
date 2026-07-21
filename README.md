@@ -49,7 +49,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 - **TTS**: Reads the sentence aloud.
 - **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, optional `sense_id` FK to global `expression_senses`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). Global sense identity is `(expression_norm, meaning_norm)`. The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
 - **Sense inventory**: Generate Meaning asks AI to **reuse** a prior sense for the expression when it fits this sentence, or **create** a new sense. The meaning field is AI-primary (read-only); double-click unlocks rare manual repair.
-- **Derive Word/Phrase**: From an open sentence DB, **Derive W/P** projects unique `(expression, sense)` units into a **read-only** word/phrase database (one card per expression; multiple senses on the back with example sentences). The target path is stored as `linked_word_phrase_db` so later sentence Saves auto-sync it.
+- **Automatic Word/Phrase projection**: Creating a sentence DB (or opening an old one / starting the app) automatically creates and links a same-named read-only word/phrase DB under Word-Phrase-based. Unique `(expression, sense)` units are projected there; later sentence Saves re-sync it.
 - **Duplicate detection**: A new card with the same normalized sentence and same normalized ordered list of expressions triggers an edit-offer rather than a silent duplicate.
 - **Migration**: Existing databases without the `meaning` / `sense_id` columns are safely migrated on next open — `ALTER TABLE ADD COLUMN` and `expression_senses` creation are applied idempotently with no data loss.
 - **Atomicity**: Card + child record insertion uses transactions with rollback on any error.
@@ -59,9 +59,9 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 - **Front**: A word or phrase (one card per expression).
 - **Source of truth**: The **shared sense catalog** (`expression_senses`) built from sentence cards — not free-typed dictionary entries.
-- **No manual editing**: Add Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by **Derive W/P** / linked auto-sync from a sentence database.
+- **No manual editing**: Add Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by automatic projection from a sentence database.
 - **Derived projection**: One card per expression; back lists all senses with example sentences from the sentence corpus.
-- **Linked auto-sync**: After the first Derive W/P, the sentence DB stores `linked_word_phrase_db`. Every later sentence Save re-derives that W/P DB automatically.
+- **Linked auto-sync**: The sentence DB stores `linked_word_phrase_db`. App startup, DB open, and every sentence Save ensure the link exists and re-derive the W/P DB.
 - **Review**: Standard front/back flip card with Markdown and MathJax rendering (SRS boxes still work).
 - **Search**: Searches front and back (meanings/examples) fields.
 - **Delete**: You may still delete projected cards from Browse if needed; a later sync may re-create them from the catalog.
@@ -109,7 +109,7 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
 6. **Validate** (optional) to verify all items appear in the sentence.
 7. **Save** commits the card with expression+meaning pairs linked to global senses.
-8. Optional: on a sentence DB, click **Derive W/P** once to create/link a word/phrase dictionary. Later sentence Saves auto-sync that linked dictionary from the shared sense catalog (no manual W/P editing).
+8. The linked word/phrase dictionary is created automatically with the sentence DB (and backfilled for older DBs on app startup). Sentence Saves keep it in sync — no manual Derive step.
 
 ---
 

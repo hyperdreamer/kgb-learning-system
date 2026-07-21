@@ -473,27 +473,129 @@ def derive_word_phrase_database(
     }
 
 
+def default_word_phrase_path_for_sentence(
+    sentence_db_path: str,
+    db_root: str,
+) -> str:
+    """Return the canonical W/P projection path for a sentence DB.
+
+    Same leaf name, under the Word-Phrase-based directory:
+      .../Sentence-based/English_barsky.db
+      → .../Word-Phrase-based/English_barsky.db
+    """
+    from .catalog import DB_DIR_LANGUAGE_WORD_PHRASE
+    from .schema import DB_SUFFIX
+
+    leaf = os.path.basename(sentence_db_path or "")
+    if leaf.endswith(DB_SUFFIX):
+        name = leaf[: -len(DB_SUFFIX)]
+    else:
+        name = os.path.splitext(leaf)[0] or "dictionary"
+    target_dir = os.path.join(os.path.abspath(db_root), DB_DIR_LANGUAGE_WORD_PHRASE)
+    return os.path.join(target_dir, f"{name}{DB_SUFFIX}")
+
+
+def ensure_linked_word_phrase_database(
+    source_conn,
+    sentence_db_path: str,
+    db_root: str,
+    *,
+    sync: bool = True,
+) -> tuple[str, dict | None]:
+    """Ensure a sentence DB has a linked W/P projection file and optionally sync it.
+
+    Creates the target file and settings link when missing. Returns
+    ``(target_path, stats_or_None)``.
+    """
+    from .schema import init_db
+
+    ensure_expression_senses_table(source_conn)
+    backfill_senses_from_items(source_conn)
+
+    path = get_linked_word_phrase_db(source_conn)
+    if not path or not os.path.isfile(path):
+        path = default_word_phrase_path_for_sentence(sentence_db_path, db_root)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Create empty DB shell if needed, then link.
+        target = init_db(path)
+        try:
+            from .catalog import DatabaseType, write_database_type
+
+            write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
+        finally:
+            target.close()
+        set_linked_word_phrase_db(source_conn, path)
+
+    stats = None
+    if sync:
+        stats = sync_linked_word_phrase_database(source_conn)
+    return path, stats
+
+
 def sync_linked_word_phrase_database(source_conn) -> dict | None:
     """If the sentence DB has a linked W/P path, fully re-derive it.
 
-    Returns stats dict, or None if no link / path missing.
+    Creates the target file when the link exists but the file is missing.
+    Returns stats dict, or None if no link.
     """
-    import sqlite3
-
     path = get_linked_word_phrase_db(source_conn)
     if not path:
-        return None
-    if not os.path.isfile(path):
         return None
 
     from .schema import init_db
 
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     target = init_db(path)
     try:
         stats = derive_word_phrase_database(source_conn, target)
     finally:
         target.close()
     return stats
+
+
+def ensure_all_sentence_databases_linked(db_root: str) -> list[dict]:
+    """Startup/open backfill: link + sync W/P for every sentence DB under *db_root*.
+
+    Returns a list of {sentence_path, word_phrase_path, stats} for each
+    sentence DB processed. Failures are skipped (best-effort).
+    """
+    from .catalog import DatabaseType, infer_database_type, read_database_type
+    from .schema import find_databases, init_db, ensure_sentence_schema
+
+    results: list[dict] = []
+    if not db_root or not os.path.isdir(db_root):
+        return results
+
+    for _display, path in find_databases(db_root):
+        try:
+            conn = init_db(path)
+        except Exception:
+            continue
+        try:
+            db_type = read_database_type(conn)
+            if db_type is None:
+                db_type = infer_database_type(path)
+            if db_type != DatabaseType.LANGUAGE_SENTENCE:
+                continue
+            ensure_sentence_schema(conn)
+            wp_path, stats = ensure_linked_word_phrase_database(
+                conn, path, db_root, sync=True
+            )
+            results.append(
+                {
+                    "sentence_path": path,
+                    "word_phrase_path": wp_path,
+                    "stats": stats,
+                }
+            )
+        except Exception:
+            continue
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return results
 
 
 def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
