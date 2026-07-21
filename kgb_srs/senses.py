@@ -430,11 +430,16 @@ def upsert_word_phrase_card(
 
     today = datetime.date.today().isoformat()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id, front, back FROM cards WHERE front = ? COLLATE NOCASE",
-        (front,),
+    normalized_front = normalize_sentence(front)
+    cur.execute("SELECT id, front, back FROM cards")
+    row = next(
+        (
+            candidate
+            for candidate in cur.fetchall()
+            if normalize_sentence(candidate[1] or "") == normalized_front
+        ),
+        None,
     )
-    row = cur.fetchone()
     if row:
         card_id = int(row[0])
         existing_front = row[1] or ""

@@ -504,9 +504,15 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
 
     started = time.monotonic()
     try:
-        http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
+        raw = http_request(
+            url, headers, body=body, timeout=config.timeout_seconds, method="POST"
+        )
+        AIClient(config).parse_response(raw)
         latency_ms = (time.monotonic() - started) * 1000.0
         return True, f"OK — {config.model} reachable", latency_ms
+    except ValueError as exc:
+        latency_ms = (time.monotonic() - started) * 1000.0
+        return False, str(exc), latency_ms
     except urllib.error.HTTPError as exc:
         latency_ms = (time.monotonic() - started) * 1000.0
         detail = _http_error_message(exc)

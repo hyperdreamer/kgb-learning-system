@@ -199,3 +199,29 @@ See commit:
 | **Behavior** | `_apply_toolbar_font_styles` uses `hasattr(self, "db_btn")` etc. If a widget is renamed, styling is silently skipped with no warning. |
 | **Why deferred** | Design concern, not a bug. Moving to explicit attribute registration would add fragility to initialization ordering. |
 | **Suggested fix (when ready)** | Register toolbar widgets in a class-level list/tuple and iterate over known names.
+
+---
+
+## 13. Main-window close can orphan a running TTS worker and late temp audio
+
+| Field | Value |
+|-------|-------|
+| **Severity** | Medium (lifecycle/resource cleanup) |
+| **Files** | `kgb_srs/main_window.py:243-267, 1113-1148` |
+| **Behavior** | `closeEvent()` disconnects TTS payload signals, waits only 2 seconds, clears `tts_worker` even if it is still running, then accepts closure. A late `audio_ready` result has no cleanup owner; a live QThread can outlast the window. |
+| **Why deferred** | Fixing requires a deferred-close state machine: retain the worker until its real `finished`, safely unlink late audio instead of playing it, and only complete teardown after worker cleanup. Changing main-window close timing risks shutdown regressions. |
+| **Risk if fixed** | Medium — must preserve normal fast closes, player cleanup, and avoid re-entrant close events. |
+| **Suggested fix (when ready)** | Add a pending-close flag and finish the close from the worker's `finished` handler; add a controllable blocking TTS-worker test that exercises late audio cleanup. |
+
+---
+
+## 14. Sentence dialog can accept while residual-membership worker is still finishing
+
+| Field | Value |
+|-------|-------|
+| **Severity** | Medium (worker/dialog lifetime) |
+| **Files** | `kgb_srs/forms.py:918-1028, 1085-1104` |
+| **Behavior** | A valid `_on_membership_ai_result()` calls `_finish_accept()` and `accept()` before the worker emits `finished`. Close/reject guards protect active workers, but accept does not, so the modal caller can proceed while callbacks still target the dialog. |
+| **Why deferred** | Deferring acceptance until `finished` changes the Save/modal completion sequence and needs a precise signal-order test using a worker that emits a valid result before blocking. |
+| **Risk if fixed** | Medium — must not leave the dialog disabled after error/invalid responses or lose the accepted result. |
+| **Suggested fix (when ready)** | Store a pending accepted result, clear the membership worker in `_on_membership_ai_finished()`, then invoke `_finish_accept()` only for the pending valid result. |

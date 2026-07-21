@@ -366,6 +366,34 @@ class TestUpsertPreservesSrs:
         assert box == 4
         assert next_review == future
 
+    def test_unicode_casefold_match_updates_existing_card_and_preserves_srs(self, conn):
+        from kgb_srs.senses import upsert_word_phrase_card
+        import datetime
+
+        future = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES (?, ?, ?, ?)",
+            ("École", "old meaning", 4, future),
+        )
+        conn.commit()
+        card_id = int(cur.lastrowid)
+
+        updated_id, action = upsert_word_phrase_card(conn, "école", "school")
+
+        assert action == "updated"
+        assert updated_id == card_id
+        assert conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 1
+        front, back, box, next_review = conn.execute(
+            "SELECT front, back, box, next_review FROM cards WHERE id=?",
+            (card_id,),
+        ).fetchone()
+        assert front == "école"
+        assert back == "school"
+        assert box == 4
+        assert next_review == future
+
     def test_insert_still_starts_box_one_today(self, conn):
         from kgb_srs.senses import upsert_word_phrase_card
         import datetime

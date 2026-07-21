@@ -373,6 +373,18 @@ class TestTestConnection:
         assert "test-model" in message
         assert latency >= 0
 
+    def test_http_200_error_envelope_is_failure(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+
+        def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
+            return json.dumps({"error": {"message": "model not available"}})
+
+        monkeypatch.setattr(module, "http_request", fake_http)
+        ok, message, latency = check_ai_connection(self._cfg())
+        assert ok is False
+        assert "model not available" in message
+        assert latency >= 0
+
     def test_http_401(self, monkeypatch):
         import kgb_srs.ai_provider as module
 

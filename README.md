@@ -164,9 +164,11 @@ When creating a new sentence card, if a card with the same normalized sentence a
 
 Click **＋ New**. A dialog appears:
 
-1. Select the category and subtype (Sentence-based, Word/Phrase-based, or Knowledge-based).
+1. Select Sentence-based or Knowledge-based.
 2. Enter a name (validated for path safety).
-3. The database is created in the canonical directory with metadata.
+3. The database is created in the canonical directory with metadata. Each
+   sentence database automatically gets a linked, read-only Word/Phrase-based
+   projection.
 
 ### 2. Selecting a Database
 
@@ -194,7 +196,7 @@ All shortcuts use **Alt** so they never steal plain typing.
 - **Incorrect / Correct** — grade after flip: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card onto the drop zones).
 - **Listen** — speak the card (shortcut: **Alt+L**).
 - **Previous** — returns to the last graded card in this session (shortcut: **Alt+P**).
-- **Restart** — restarts the current daily session from its original due-card queue and clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
+- **Restart** — rebuilds the current daily queue from current eligibility and the current **All cards** / Shuffle settings, then clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
 - **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database. Shortcut: **Alt+X**.
 - **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only). Shortcut: **Alt+D**.
 
@@ -300,7 +302,7 @@ python -m pytest tests/test_regression.py -v
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - PyQt6
 - edge-tts
 - PyQt6-WebEngine *(optional, for MathJax rendering)*

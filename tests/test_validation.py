@@ -281,6 +281,13 @@ class TestValidateUnfamiliarItems:
             result = validate_unfamiliar_items(sentence, [item])
             assert result.valid is True, f"{item!r} should match in {sentence!r}"
 
+    def test_become_come_and_overcome_are_independent_irregular_families(self):
+        assert validate_unfamiliar_items("He became angry.", ["become"]).valid
+        assert validate_unfamiliar_items("He came home.", ["come"]).valid
+        assert validate_unfamiliar_items("She overcame her fear.", ["overcome"]).valid
+        assert not validate_unfamiliar_items("He became angry.", ["come"]).valid
+        assert not validate_unfamiliar_items("He came home.", ["become"]).valid
+
     def test_surface_form_in_sentence(self):
         from kgb_srs.validation import surface_form_in_sentence
         assert surface_form_in_sentence("He has gone home.", "gone")

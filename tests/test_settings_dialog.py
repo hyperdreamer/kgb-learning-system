@@ -1084,6 +1084,49 @@ def test_ai_models_refresh_success_populates_combo_and_keeps_current(monkeypatch
     dialog.reject()
 
 
+def test_ai_models_refresh_discards_result_after_provider_switch(monkeypatch, settings):
+    settings["ai_providers"] = {
+        "Profile A": {
+            "base_url": "https://a.example/v1",
+            "model": "a-model",
+            "api_key": "a-key",
+            "timeout": 30,
+        },
+        "Profile B": {
+            "base_url": "https://b.example/v1",
+            "model": "b-model",
+            "api_key": "b-key",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "Profile A"
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_models_refresh_btn.click()
+    worker = FakeAIModelsWorker.instances[0]
+
+    dialog.ai_provider_combo.setCurrentText("Profile B")
+    _app().processEvents()
+    before_items = [
+        dialog.ai_model_input.itemText(i)
+        for i in range(dialog.ai_model_input.count())
+    ]
+    assert dialog.ai_model_input.currentText() == "b-model"
+
+    worker.result.emit(True, "2 model(s)", ["a-model-new", "a-model-other"])
+    worker.finished.emit()
+    _app().processEvents()
+
+    after_items = [
+        dialog.ai_model_input.itemText(i)
+        for i in range(dialog.ai_model_input.count())
+    ]
+    assert after_items == before_items == ["b-model"]
+    assert dialog.ai_model_input.currentText() == "b-model"
+    assert dialog.ai_models_refresh_btn.isEnabled() is True
+    assert dialog.ai_models_worker is None
+    dialog.reject()
+
+
 def test_ai_models_refresh_failure_updates_status_and_reenables(monkeypatch, settings):
     dialog, _ = _dialog(monkeypatch, settings)
     dialog.ai_models_refresh_btn.click()

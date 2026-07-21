@@ -139,6 +139,7 @@ class SettingsDialog(QDialog):
         self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
         self.ai_models_worker = None
+        self._ai_models_refresh_token = None
         self.preview_tts_worker = None
         self._closing_workers = []
         self._deferred_close_action = None
@@ -1031,6 +1032,18 @@ class SettingsDialog(QDialog):
             timeout_seconds=self.ai_timeout_input.value(),
         )
 
+    def _ai_models_token(
+        self, provider_name: str, config: AIProviderConfig
+    ) -> tuple[str, str, str, str, int]:
+        """Immutable identity for a pending model-list request."""
+        return (
+            provider_name,
+            config.base_url,
+            config.model,
+            config.api_key,
+            config.timeout_seconds,
+        )
+
     def _start_ai_test(self):
         if self.ai_test_worker is not None or self._deferred_close_action is not None:
             return
@@ -1069,6 +1082,10 @@ class SettingsDialog(QDialog):
         self.ai_test_status_label.setStyleSheet("")
         self.ai_test_status_label.setText("Loading models…")
         config = self._staged_ai_config()
+        provider_name = self._current_ai_provider_name()
+        self._ai_models_refresh_token = self._ai_models_token(
+            provider_name, config
+        )
         worker = create_ai_models_worker(config)
         self.ai_models_worker = worker
         worker.result.connect(self._on_ai_models_result)
@@ -1078,6 +1095,11 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_ai_models_result(self, ok, message, models):
+        current_token = self._ai_models_token(
+            self._current_ai_provider_name(), self._staged_ai_config()
+        )
+        if self._ai_models_refresh_token != current_token:
+            return
         if ok:
             self._populate_ai_models(list(models or []), keep=self._ai_model_text())
             count = len(models or [])
@@ -1089,6 +1111,7 @@ class SettingsDialog(QDialog):
 
     def _on_ai_models_finished(self):
         self.ai_models_worker = None
+        self._ai_models_refresh_token = None
         self.ai_models_refresh_btn.setEnabled(True)
 
     def _staged_settings(self):
