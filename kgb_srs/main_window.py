@@ -1634,17 +1634,20 @@ class BarskyApp(QMainWindow):
         """Review-control state machine: idle vs active.
 
         IDLE   (no active review):
-          - primary button → \"Start Daily Review\" or \"Resume Daily Review\"
+          - primary button → "Start Daily Review" or "Resume Daily Review"
           - Restart / Previous / Close → disabled
 
         ACTIVE (daily review in progress):
-          - primary button → \"Next\"
-          - Restart / Previous / Close → enabled
+          - primary button → "Next"
+          - Restart / Close → enabled
+          - Previous → enabled only when at least one card was graded
+            this session (history non-empty)
         """
         has_db = self.conn is not None
         has_card = self.current_card is not None
         is_active = self.review_mode == "daily"
         has_paused = self._paused_review_card is not None
+        has_history = bool(self._daily_review_history)
         is_wp = (
             has_db
             and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
@@ -1670,7 +1673,9 @@ class BarskyApp(QMainWindow):
             self.start_btn.setText(" Next")
             self.start_btn.setIcon(self._icon("go-next"))
             self.restart_review_btn.setEnabled(True)
-            self.previous_review_btn.setEnabled(True)
+            # Previous is only useful after at least one grade; keep it
+            # disabled (not a fake clickable no-op) until then.
+            self.previous_review_btn.setEnabled(has_history)
             self.close_review_btn.setEnabled(True)
         else:
             # ── IDLE state ──
@@ -1740,6 +1745,7 @@ class BarskyApp(QMainWindow):
             break
 
         if prev_card is None:
+            self._update_button_visibility()
             return
 
         # Push current (ungraded) card to front of queue only after success.
@@ -1753,6 +1759,7 @@ class BarskyApp(QMainWindow):
         self.current_card = prev_card
         self.is_current_flipped = False
         self.draw_card_ui()
+        self._update_button_visibility()
 
     def _restart_daily_review(self):
         """Restart the current daily session from the beginning.
@@ -1780,9 +1787,11 @@ class BarskyApp(QMainWindow):
         review history are all preserved so the session can be resumed
         exactly where it left off.  Closing does not modify the database.
         """
-        if not self.current_card or self.review_mode != "daily":
+        if self.review_mode != "daily":
             return
 
+        # Queue may already be empty (finished session still active so
+        # Previous can restore the last graded card). Pause whatever remains.
         self._paused_review_card = self.current_card
         self._paused_review_mode = self.review_mode
         self._paused_cards_due = list(self.cards_due)
@@ -1887,9 +1896,13 @@ class BarskyApp(QMainWindow):
         c = self.conn.cursor()
 
         # Distinguish first-start from resume-after-close.
-        resume_daily = (
+        # A finished queue may pause with no current card but with history /
+        # snapshot still worth restoring for Previous / Restart.
+        resume_daily = self._paused_review_mode == "daily" and (
             self._paused_review_card is not None
-            and self._paused_review_mode == "daily"
+            or bool(self._paused_review_history)
+            or bool(self._paused_cards_due)
+            or bool(self._paused_daily_queue)
         )
 
         if resume_daily:
@@ -1901,6 +1914,8 @@ class BarskyApp(QMainWindow):
             self._paused_cards_due = []
             self._paused_daily_queue = []
             self._paused_review_history = []
+            # Clear mode flag; _resume_paused_card clears the card pointer.
+            self._paused_review_mode = ""
         else:
             # ── First start: query all due cards ──
             today_str = datetime.date.today().isoformat()
@@ -1923,6 +1938,14 @@ class BarskyApp(QMainWindow):
         self._resume_paused_card(c)
 
         if not self.cards_due:
+            # Finished-but-paused session: restore active shell so Previous
+            # can still walk graded history. Do not treat as "nothing due".
+            if resume_daily and (
+                self._daily_review_history or self._daily_queue_snapshot
+            ):
+                self.current_card = None
+                self._update_button_visibility()
+                return
             QMessageBox.information(self, "Done", "No cards due for review today!")
             self.review_mode = ""
             self._daily_queue_snapshot = []
@@ -1958,7 +1981,17 @@ class BarskyApp(QMainWindow):
                 self.draw_card_ui()
                 return
 
-        # Queue exhausted — daily review is complete.
+        # Queue exhausted — no more ungraded due cards.
+        # Keep daily mode + graded history so Previous can still restore the
+        # last graded card (clearing history here made Previous a permanent
+        # no-op after the final grade). Restart / Close still work.
+        # If there is nothing to go back to either, fully end the session.
+        if self._daily_review_history:
+            QMessageBox.information(self, "Done", "You have finished your reviews.")
+            self.current_card = None
+            self._update_button_visibility()
+            return
+
         QMessageBox.information(self, "Done", "You have finished your reviews.")
         self.current_card = None
         self.review_mode = ""
@@ -2147,6 +2180,8 @@ class BarskyApp(QMainWindow):
         # Track graded card with the post-grade box for Previous navigation.
         if self.review_mode == "daily":
             self._daily_review_history.append((card_id, front, back, new_box))
+            # Reflect Previous availability immediately (before next card draw).
+            self._update_button_visibility()
 
         self.show_next_card()
 

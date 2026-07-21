@@ -207,11 +207,17 @@ class TestActiveStateButtons:
         )
 
     def test_previous_enabled_in_active(self, app_with_db):
+        """Previous stays disabled until a card is graded (history non-empty)."""
         app, _, _ = app_with_db
         app.start_review()
         assert app.review_mode == "daily"
+        assert not app.previous_review_btn.isEnabled(), (
+            "Previous must stay disabled until at least one card is graded"
+        )
+        app.is_current_flipped = True
+        app.process_answer(correct=True)
         assert app.previous_review_btn.isEnabled(), (
-            "Previous must be enabled during active daily review"
+            "Previous must enable after a card is graded"
         )
 
     def test_close_enabled_in_active(self, app_with_db):
@@ -357,9 +363,9 @@ class TestResumeTransition:
 
 
 class TestQueueCompletion:
-    """When the daily queue is exhausted, return to idle."""
+    """When the daily queue is exhausted, keep session active for Previous."""
 
-    def test_all_cards_reviewed_returns_to_idle(self, app_with_db):
+    def test_all_cards_reviewed_keeps_session_for_previous(self, app_with_db):
         app, db_path, conn = app_with_db
 
         today = datetime.date.today().isoformat()
@@ -379,12 +385,18 @@ class TestQueueCompletion:
             app.is_current_flipped = True
             app.process_answer(correct=True)
 
-        assert app.review_mode == "", (
-            "Review mode must be cleared after all cards are reviewed"
+        # Queue empty, but daily mode + history stay so Previous can restore.
+        assert app.current_card is None
+        assert app.review_mode == "daily", (
+            "Review mode must stay daily after finishing so Previous works"
         )
-        assert "Start Daily Review" in app.start_btn.text(), (
-            "Primary button must return to 'Start Daily Review' after completion"
-        )
+        assert app._daily_review_history, "History must survive final grade"
+        assert app.previous_review_btn.isEnabled()
+        assert "Next" in app.start_btn.text()
+        # Explicit Close returns to idle.
+        app.close_review()
+        assert app.review_mode == ""
+        assert "Start Daily Review" in app.start_btn.text()
 
 
 class TestRestartDailyReview:
@@ -553,6 +565,45 @@ class TestProcessAnswerFreshBox:
         assert app.current_card is not None
         assert app.current_card[0] == graded_id
         assert app.current_card[3] == 5
+
+    def test_previous_works_after_final_grade(self, app_with_db):
+        """Grading the last due card must not wipe history / kill Previous."""
+        app, _, conn = app_with_db
+        app.start_review()
+        graded_ids = []
+        # Grade every due card until the queue is empty.
+        while app.current_card is not None and app.review_mode == "daily":
+            graded_ids.append(app.current_card[0])
+            app.is_current_flipped = True
+            app.process_answer(correct=True)
+            # Guard against infinite loop if something breaks.
+            if len(graded_ids) > 20:
+                break
+
+        assert graded_ids, "Expected at least one graded card"
+        assert app.review_mode == "daily", (
+            "Session must stay active after finishing the queue"
+        )
+        assert app._daily_review_history, (
+            "History must survive the final grade so Previous works"
+        )
+        assert app.previous_review_btn.isEnabled()
+
+        last_graded = graded_ids[-1]
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == last_graded
+
+    def test_previous_disabled_before_any_grade(self, app_with_db):
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.review_mode == "daily"
+        assert app._daily_review_history == []
+        assert not app.previous_review_btn.isEnabled()
+        # Click path is a no-op when history is empty.
+        before = app.current_card
+        app._previous_daily_card()
+        assert app.current_card == before
 
 
 class TestResumeRestoresPausedQueue:
