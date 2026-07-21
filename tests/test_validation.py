@@ -313,7 +313,41 @@ class TestValidateUnfamiliarItems:
             verified_surfaces=residual.accepted_surfaces,
         )
         assert card_id > 0
+
+        from kgb_srs.schema import get_sentence_card
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        loaded = get_sentence_card(conn, card_id)
+        assert loaded is not None
+        front, _back, _box, items = loaded
+        assert front == sentence
+        assert items[0][0] == "lie"
+        assert items[0][3] == "lay"  # persisted AI surface
+        # Highlight must bold the stored surface, not fail on local flex alone.
+        out = highlight_unfamiliar_in_sentence(sentence, items)
+        assert "**lay**" in out
         conn.close()
+
+    def test_highlight_uses_preferred_surface_for_lie_lay(self):
+        """Preferred surface bolds lay when lemma is recline-lie."""
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        s = (
+            "Behind every official document, every ban, and every "
+            "seemingly casual dispatch lay a much larger chessboard."
+        )
+        # Without preferred surface: local flex does not map lie ↔ lay.
+        bare = highlight_unfamiliar_in_sentence(s, ["dispatch", "lie"])
+        assert "**dispatch**" in bare
+        assert "**lay**" not in bare
+        # With structured preferred surface (as stored after AI residual).
+        items = [
+            ("dispatch", "message", None, ""),
+            ("lie", "exist", None, "lay"),
+        ]
+        out = highlight_unfamiliar_in_sentence(s, items)
+        assert "**dispatch**" in out
+        assert "**lay**" in out
 
 
 # ---------------------------------------------------------------------------

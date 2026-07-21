@@ -497,17 +497,30 @@ def _ws_tokens_with_spans(text: str) -> list[tuple[str, int, int]]:
     return tokens
 
 
-def locate_item_surface_span(sentence: str, item: str) -> tuple[int, int] | None:
+def locate_item_surface_span(
+    sentence: str,
+    item: str,
+    preferred_surface: str | None = None,
+) -> tuple[int, int] | None:
     """Return ``(start, end)`` of the first surface match for *item* in *sentence*.
 
     Uses the same local matching ideas as validation:
-    1. Inflection-tolerant consecutive whitespace tokens (English phrases)
-    2. Case-insensitive literal substring (CJK / continuous / exact)
+    1. Preferred surface (AI residual / stored span), if provided and present
+    2. Inflection-tolerant consecutive whitespace tokens (English phrases)
+    3. Case-insensitive literal substring (CJK / continuous / exact)
+    4. Whole-token flex match for single alphabetic lemmas
 
     Offsets are into the original *sentence* string (not normalized).
     """
     if not sentence or not item:
         return None
+
+    # Preferred surface first (e.g. lemma lie with surface lay).
+    pref = (preferred_surface or "").strip()
+    if pref and pref.casefold() != str(item).strip().casefold():
+        span = locate_item_surface_span(sentence, pref, preferred_surface=None)
+        if span is not None:
+            return span
 
     item_tokens = _tokenize(normalize_sentence(item))
     sent_tokens = _ws_tokens_with_spans(sentence)
@@ -550,20 +563,39 @@ def locate_item_surface_span(sentence: str, item: str) -> tuple[int, int] | None
     return None
 
 
+def _item_expression_and_surface(item) -> tuple[str, str | None]:
+    """Unpack expression (+ optional preferred surface) from a structured item."""
+    if isinstance(item, (tuple, list)):
+        expr = str(item[0] or "")
+        surface = None
+        if len(item) > 3 and item[3]:
+            surface = str(item[3]).strip() or None
+        return expr, surface
+    return str(item or ""), None
+
+
 def locate_unfamiliar_spans(
     sentence: str,
-    items: list[str],
+    items: list,
 ) -> list[tuple[int, int]]:
     """Locate non-overlapping surface spans for *items* in *sentence*.
 
     Longer spans win over shorter overlapping ones; earlier items win ties.
     Returns sorted ``(start, end)`` pairs.
+
+    *items* may be expression strings or structured rows with an optional
+    preferred surface at index 3 (``surface_form``).
     """
     candidates: list[tuple[int, int, int]] = []  # start, end, -length
     for item in items:
         if not item:
             continue
-        span = locate_item_surface_span(sentence, item)
+        expr, preferred = _item_expression_and_surface(item)
+        if not expr:
+            continue
+        span = locate_item_surface_span(
+            sentence, expr, preferred_surface=preferred
+        )
         if span is None:
             continue
         start, end = span
@@ -587,6 +619,7 @@ def sort_items_by_sentence_order(sentence: str, items: list) -> list:
 
     Items that cannot be located keep relative order after all located ones.
     Accepts structured ``(expression, meaning, ...)`` tuples or plain strings.
+    Optional preferred surface at index 3 is used for location.
     """
     if not items:
         return []
@@ -594,8 +627,10 @@ def sort_items_by_sentence_order(sentence: str, items: list) -> list:
     located: list[tuple[int, int, object]] = []  # (start, original_idx, item)
     missing: list[tuple[int, object]] = []
     for idx, item in enumerate(items):
-        expr = item[0] if isinstance(item, (tuple, list)) else item
-        span = locate_item_surface_span(sentence or "", str(expr or ""))
+        expr, preferred = _item_expression_and_surface(item)
+        span = locate_item_surface_span(
+            sentence or "", str(expr or ""), preferred_surface=preferred
+        )
         if span is None:
             missing.append((idx, item))
         else:
@@ -635,17 +670,19 @@ def format_sentence_meaning_lines(items: list) -> list[str]:
 
 def highlight_unfamiliar_in_sentence(
     sentence: str,
-    items: list[str],
+    items: list,
 ) -> str:
     """Return Markdown with matched unfamiliar surface spans wrapped in ``**bold**``.
 
     The rest of the sentence stays normal weight. If no span is found for an
     item, that item is simply not highlighted (the sentence text is preserved).
+
+    *items* may be expression strings or structured rows; optional preferred
+    surface at index 3 (AI residual) is used when local inflection fails.
     """
     if not sentence:
         return ""
-    exprs = [str(i) for i in items if i]
-    spans = locate_unfamiliar_spans(sentence, exprs)
+    spans = locate_unfamiliar_spans(sentence, items)
     if not spans:
         return sentence
 

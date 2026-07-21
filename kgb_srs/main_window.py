@@ -118,15 +118,22 @@ def _open_and_infer_type(db_path):
 
 def _fetch_expressions_for_card(conn, card_id):
     """Fetch unfamiliar expressions for a sentence card.
-    Returns list of (expression, meaning) tuples.
+
+    Returns list of (expression, meaning, sense_id, surface_form) tuples.
     """
+    from .schema import ensure_sentence_schema
+
+    ensure_sentence_schema(conn)
     cur = conn.cursor()
     cur.execute(
-        "SELECT expression, meaning FROM unfamiliar_items "
-        "WHERE card_id=? ORDER BY id",
+        "SELECT expression, meaning, sense_id, surface_form "
+        "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
         (card_id,),
     )
-    return [(r[0], r[1]) for r in cur.fetchall()]
+    return [
+        (r[0], r[1], r[2], r[3] or "")
+        for r in cur.fetchall()
+    ]
 
 
 def _expression_labels(items):
@@ -147,9 +154,13 @@ def _format_sentence_meaning_lines(items) -> list[str]:
 
 
 def _highlight_sentence_for_items(sentence, items):
-    """Bold matched surface forms of unfamiliar items inside *sentence*."""
+    """Bold matched surface forms of unfamiliar items inside *sentence*.
+
+    Passes structured items so preferred ``surface_form`` (AI residual)
+    can bold irregulars the local inflection map does not cover.
+    """
     from .validation import highlight_unfamiliar_in_sentence
-    return highlight_unfamiliar_in_sentence(sentence, _expression_labels(items))
+    return highlight_unfamiliar_in_sentence(sentence, items)
 
 # ---------------------------------------------------------------------------
 # BarskyApp

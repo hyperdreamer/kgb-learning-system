@@ -995,7 +995,8 @@ class SentenceCardDialog(QDialog):
         """Finalize Save after membership validation has passed."""
         self._persist_active_meaning()
 
-        result_items: list[tuple[str, str, int | None]] = []
+        surfaces = dict(verified_surfaces or {})
+        result_items: list[tuple[str, str, int | None, str]] = []
         for expr in items:
             meaning = (self._meanings.get(expr) or "").strip()
             if not meaning:
@@ -1013,11 +1014,13 @@ class SentenceCardDialog(QDialog):
                 self._on_item_selection_changed()
                 return
             sense_id = self._sense_ids.get(expr)
-            result_items.append((expr, meaning, sense_id))
+            # AI residual surface (e.g. lie → lay) for highlight / order.
+            surface = str(surfaces.get(expr) or "").strip()
+            result_items.append((expr, meaning, sense_id, surface))
 
         self._result_sentence = sentence
         self._result_items = result_items
-        self._result_verified_surfaces = dict(verified_surfaces or {})
+        self._result_verified_surfaces = surfaces
         # Back is derived from structured meanings (no separate editor).
         # Order by first surface appearance in the sentence; number when >1.
         from .validation import (

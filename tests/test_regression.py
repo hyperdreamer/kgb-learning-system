@@ -607,7 +607,7 @@ class TestFinalFormRegressions:
         )
         dialog._accept()
 
-        assert [(e, m) for e, m, _s in dialog.result_items] == [
+        assert [(e, m) for e, m, _s, _surf in dialog.result_items] == [
             ("Hello", "greeting"),
             ("world", "earth"),
         ]

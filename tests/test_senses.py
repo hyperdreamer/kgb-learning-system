@@ -57,10 +57,11 @@ class TestSenseInventory:
             [("insist on", "to demand firmly")],
         )
         result = get_sentence_card(conn, cid)
-        expr, meaning, sense_id = result[3][0]
+        expr, meaning, sense_id, surface = result[3][0]
         assert expr == "insist on"
         assert meaning == "to demand firmly"
         assert sense_id is not None
+        assert surface == ""
         found = find_sense_by_meaning(conn, "insist on", "to demand firmly")
         assert found is not None
         assert found.id == sense_id
