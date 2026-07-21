@@ -2,6 +2,8 @@
 
 import os
 
+import pytest
+
 from kgb_srs.config import (
     CANONICAL_DB_SUBDIRS,
     DIR_DB,
@@ -94,6 +96,48 @@ class TestPathUnderRoot:
         assert is_path_under_root("", str(tmp_path)) is False
         assert is_path_under_root(str(tmp_path), "") is False
 
+    def test_symlink_to_outside_root_is_not_contained(self, tmp_path):
+        root = tmp_path / "root"
+        outside = tmp_path / "outside"
+        root.mkdir()
+        outside.mkdir()
+        outside_link = root / "outside-link"
+        try:
+            outside_link.symlink_to(outside, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        escaped = outside_link / "escaped_barsky.db"
+        assert is_path_under_root(str(escaped), str(root)) is False
+        assert relative_db_path(str(escaped), str(root)) is None
+        assert resolve_default_database({
+            "database_root": str(root),
+            "default_database": str(escaped),
+        }) == ""
+        assert resolve_default_database({
+            "database_root": str(root),
+            "default_database": os.path.join(
+                "outside-link", "escaped_barsky.db"
+            ),
+        }) == ""
+        assert normalize_default_database(str(escaped), str(root)) == ""
+        assert normalize_default_database(
+            os.path.join("outside-link", "escaped_barsky.db"), str(root)
+        ) == ""
+
+        normal = root / "normal" / "inside_barsky.db"
+        assert is_path_under_root(str(normal), str(root)) is True
+        assert relative_db_path(str(normal), str(root)) == os.path.join(
+            "normal", "inside_barsky.db"
+        )
+        assert resolve_default_database({
+            "database_root": str(root),
+            "default_database": os.path.join("normal", "inside_barsky.db"),
+        }) == str(normal)
+        assert normalize_default_database(str(normal), str(root)) == os.path.join(
+            "normal", "inside_barsky.db"
+        )
+
 
 class TestRelativeDbPath:
     def test_under_root_returns_relative(self, tmp_path):
@@ -145,7 +189,7 @@ class TestResolveDefaultDatabase:
     def test_absolute_outside_root(self, tmp_path):
         settings = {
             "database_root": str(tmp_path / "dbs"),
-            "default_database": "/tmp/outside_barsky.db",
+            "default_database": str(tmp_path / "outside_barsky.db"),
         }
         assert resolve_default_database(settings) == ""
 
@@ -181,7 +225,9 @@ class TestNormalizeDefaultDatabase:
 
     def test_absolute_outside_becomes_empty(self, tmp_path):
         assert (
-            normalize_default_database("/tmp/outside.db", str(tmp_path))
+            normalize_default_database(
+                str(tmp_path.parent / "outside.db"), str(tmp_path)
+            )
             == ""
         )
 

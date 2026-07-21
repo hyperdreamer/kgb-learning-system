@@ -93,11 +93,11 @@ def ensure_database_root_structure(root: str | None = None) -> str:
 
 
 def is_path_under_root(path: str, root: str) -> bool:
-    """True if *path* is the same as or under *root* (after abspath/expanduser)."""
+    """True if *path* is the same as or under *root* after canonicalization."""
     if not path or not root:
         return False
-    abs_path = os.path.abspath(os.path.expanduser(path))
-    abs_root = os.path.abspath(os.path.expanduser(root))
+    abs_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    abs_root = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
     try:
         common = os.path.commonpath([abs_path, abs_root])
     except ValueError:
@@ -112,8 +112,8 @@ def relative_db_path(path: str, root: str) -> str | None:
         return None
     if not is_path_under_root(path, root):
         return None
-    abs_path = os.path.abspath(os.path.expanduser(path))
-    abs_root = os.path.abspath(os.path.expanduser(root))
+    abs_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    abs_root = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
     rel = os.path.relpath(abs_path, abs_root)
     return os.path.normpath(rel)
 

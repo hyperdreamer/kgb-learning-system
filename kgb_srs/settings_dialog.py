@@ -140,6 +140,9 @@ class SettingsDialog(QDialog):
         self.ai_test_worker = None
         self.ai_models_worker = None
         self.preview_tts_worker = None
+        self._closing_workers = []
+        self._deferred_close_action = None
+        self._allow_deferred_close = False
         self._tts_temp_path = None
         self.setWindowTitle("App Settings")
         self.setMinimumSize(620, 480)
@@ -744,9 +747,12 @@ class SettingsDialog(QDialog):
     # Voice list / picker
     # ------------------------------------------------------------------
     def _start_voice_worker(self):
+        if self._deferred_close_action is not None:
+            return
         self.voice_worker = VoiceListWorker()
         self.voice_worker.voices_ready.connect(self._on_voices_ready)
         self.voice_worker.error.connect(self._on_voice_error)
+        self.voice_worker.finished.connect(self._on_close_worker_finished)
         self.voice_worker.finished.connect(self.voice_worker.deleteLater)
         self.voice_worker.start()
 
@@ -865,7 +871,11 @@ class SettingsDialog(QDialog):
         self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
 
     def _preview_voice(self, short_name):
-        if not short_name or self.preview_tts_worker is not None:
+        if (
+            not short_name
+            or self.preview_tts_worker is not None
+            or self._deferred_close_action is not None
+        ):
             return
         # Stop any currently playing sample before starting a new one.
         self.preview_player.stop()
@@ -877,6 +887,7 @@ class SettingsDialog(QDialog):
         worker.error.connect(self._on_preview_error)
         # Real QThread.finished (not the payload signal) clears the ref.
         worker.finished.connect(self._on_preview_worker_done)
+        worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
@@ -886,8 +897,81 @@ class SettingsDialog(QDialog):
         self.preview_player.play()
 
     def closeEvent(self, event):
+        if not self._allow_deferred_close and self._defer_close_for_running_workers(
+            "close"
+        ):
+            event.ignore()
+            return
+        # QDialog.closeEvent() calls reject(), so retain this guard through the
+        # superclass call to avoid re-entering the worker-close deferral.
+        self._allow_deferred_close = True
+        try:
+            self._cleanup_tts_temp()
+            super().closeEvent(event)
+        finally:
+            self._allow_deferred_close = False
+
+    def accept(self):
+        """Accept immediately unless a worker thread must finish first."""
+        if self._defer_close_for_running_workers("accept"):
+            return
         self._cleanup_tts_temp()
-        super().closeEvent(event)
+        super().accept()
+
+    def reject(self):
+        """Reject immediately unless a worker thread must finish first."""
+        if self._allow_deferred_close:
+            super().reject()
+            return
+        if self._defer_close_for_running_workers("reject"):
+            return
+        self._cleanup_tts_temp()
+        super().reject()
+
+    def _running_workers(self):
+        """Return this dialog's QThread workers that are currently running."""
+        workers = []
+        for name in (
+            "voice_worker",
+            "preview_tts_worker",
+            "ai_test_worker",
+            "ai_models_worker",
+        ):
+            worker = getattr(self, name, None)
+            is_running = getattr(worker, "isRunning", None)
+            if callable(is_running) and is_running():
+                workers.append(worker)
+        return workers
+
+    def _defer_close_for_running_workers(self, action):
+        """Remember a close action until every active QThread has finished."""
+        workers = self._running_workers()
+        if not workers:
+            return False
+        if self._deferred_close_action is None:
+            self._deferred_close_action = action
+        for worker in workers:
+            if worker not in self._closing_workers:
+                self._closing_workers.append(worker)
+        return True
+
+    def _on_close_worker_finished(self):
+        """Complete a deferred close only after each QThread.finished signal."""
+        worker = self.sender()
+        if worker in self._closing_workers:
+            self._closing_workers.remove(worker)
+        if self._deferred_close_action is not None and not self._closing_workers:
+            action = self._deferred_close_action
+            self._deferred_close_action = None
+            if action == "close":
+                self._allow_deferred_close = True
+                self.close()
+            else:
+                self._cleanup_tts_temp()
+                if action == "accept":
+                    super().accept()
+                else:
+                    super().reject()
 
     def _on_preview_error(self, message):
         QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")
@@ -948,7 +1032,7 @@ class SettingsDialog(QDialog):
         )
 
     def _start_ai_test(self):
-        if self.ai_test_worker is not None:
+        if self.ai_test_worker is not None or self._deferred_close_action is not None:
             return
         self.ai_test_button.setEnabled(False)
         self.ai_test_status_label.setStyleSheet("")
@@ -958,6 +1042,7 @@ class SettingsDialog(QDialog):
         self.ai_test_worker = worker
         worker.result.connect(self._on_ai_test_result)
         worker.finished.connect(self._on_ai_test_finished)
+        worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
@@ -978,7 +1063,7 @@ class SettingsDialog(QDialog):
 
     def _start_ai_models_refresh(self):
         """Fetch /models for the staged Base URL + API Key (nonblocking)."""
-        if self.ai_models_worker is not None:
+        if self.ai_models_worker is not None or self._deferred_close_action is not None:
             return
         self.ai_models_refresh_btn.setEnabled(False)
         self.ai_test_status_label.setStyleSheet("")
@@ -988,6 +1073,7 @@ class SettingsDialog(QDialog):
         self.ai_models_worker = worker
         worker.result.connect(self._on_ai_models_result)
         worker.finished.connect(self._on_ai_models_finished)
+        worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 

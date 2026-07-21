@@ -1,13 +1,14 @@
 """Focused tests for the categorized application settings dialog."""
 
 import os
+import threading
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -105,6 +106,40 @@ class FakeAIModelsWorker(QObject):
 
     def deleteLater(self):
         self.deleted = True
+
+
+class BlockingVoiceWorker(QThread):
+    """Controllable real QThread used to exercise dialog-close lifetime."""
+
+    voices_ready = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def run(self):
+        self.started_event.set()
+        self.release_event.wait()
+
+
+class BlockingTTSWorker(QThread):
+    """Controllable preview worker that remains alive until released."""
+
+    audio_ready = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, text, voice):
+        super().__init__()
+        self.text = text
+        self.voice = voice
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def run(self):
+        self.started_event.set()
+        self.release_event.wait()
 
 
 SAMPLE_VOICES = [
@@ -562,6 +597,62 @@ def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeyp
     assert worker.deleted
     assert dialog.voice_worker is worker
     dialog.reject()
+
+
+def test_close_waits_for_running_workers_before_destroying_dialog(
+    monkeypatch, settings
+):
+    """A close request waits for real QThread.finished signals from all workers."""
+    _app()
+    import kgb_srs.settings_dialog as module
+
+    voice_worker = BlockingVoiceWorker()
+    monkeypatch.setattr(module, "VoiceListWorker", lambda: voice_worker)
+    monkeypatch.setattr(module, "TTSWorker", BlockingTTSWorker)
+    dialog = module.SettingsDialog(settings)
+    cleanup_calls = []
+    monkeypatch.setattr(
+        dialog, "_cleanup_tts_temp", lambda: cleanup_calls.append(True)
+    )
+    preview_worker = None
+    voice_finished = False
+    preview_finished = False
+
+    try:
+        assert voice_worker.started_event.wait(1)
+        dialog.show()
+        _app().processEvents()
+        dialog._preview_voice("en-US-AndrewNeural")
+        preview_worker = dialog.preview_tts_worker
+        assert preview_worker is not None
+        assert preview_worker.started_event.wait(1)
+        cleanup_calls.clear()
+
+        assert dialog.close() is False
+        assert dialog.isVisible()
+        assert cleanup_calls == []
+
+        voice_worker.release_event.set()
+        assert voice_worker.wait(1000)
+        voice_finished = True
+        _app().processEvents()
+        assert dialog.isVisible()
+        assert cleanup_calls == []
+
+        preview_worker.release_event.set()
+        assert preview_worker.wait(1000)
+        preview_finished = True
+        _app().processEvents()
+        assert not dialog.isVisible()
+        assert cleanup_calls == [True]
+    finally:
+        if not voice_finished:
+            voice_worker.release_event.set()
+            voice_worker.wait(1000)
+        if preview_worker is not None and not preview_finished:
+            preview_worker.release_event.set()
+            preview_worker.wait(1000)
+        dialog.close()
 
 
 def test_api_key_uses_existing_secret_line_edit(monkeypatch, settings):
