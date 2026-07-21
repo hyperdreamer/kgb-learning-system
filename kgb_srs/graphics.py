@@ -33,6 +33,30 @@ except ImportError:
 from .markdown_utils import build_review_html
 
 
+# ── Reusable button stylesheet helper ────────────────────────────────────────
+
+def _button_stylesheet(object_name, base_color, hover_color, pressed_color,
+                       font_fam, font_sz, dyn_pad):
+    """Return a full QPushButton stylesheet covering normal, hover, pressed,
+    and disabled states."""
+    shared = (
+        f"color: white; "
+        f"padding: {dyn_pad}px; "
+        f"font-family: '{font_fam}'; "
+        f"font-size: {font_sz}px; "
+        f"font-weight: bold; "
+        f"border-radius: 5px;"
+    )
+
+    return (
+        f"QPushButton#{object_name} {{ background-color: {base_color}; {shared} }}\n"
+        f"QPushButton#{object_name}:hover {{ background-color: {hover_color}; }}\n"
+        f"QPushButton#{object_name}:pressed {{ background-color: {pressed_color}; }}\n"
+        f"QPushButton#{object_name}:disabled "
+        f"{{ background-color: #CFD8DC; color: #78909C; }}"
+    )
+
+
 class DropZoneItem(QGraphicsRectItem):
     """A rounded drop zone (correct/incorrect) at the bottom of the canvas."""
 
@@ -55,6 +79,10 @@ class DropZoneItem(QGraphicsRectItem):
 
         bottom_y = y + h
         adjusted_y = bottom_y - actual_h
+        # Never allow the zone to extend above the scene origin —
+        # the viewport clips from below automatically.
+        if adjusted_y < 0:
+            adjusted_y = 0
 
         self.setRect(0, 0, w, actual_h)
         self.setPos(x, adjusted_y)
@@ -158,19 +186,25 @@ class FlashCardItem(QGraphicsRectItem):
 
         self.tts_btn = QPushButton(" Listen")
         self.tts_btn.setIcon(QIcon.fromTheme("audio-volume-high"))
+        self.tts_btn.setObjectName("ttsBtn")
+        self.tts_btn.setToolTip("Speak this card (Alt+L)")
         self.tts_btn.setStyleSheet(
-            f"background-color: #9C27B0; color: white; padding: {dyn_pad}px; "
-            f"font-family: '{font_fam}'; font-size: {font_sz}px; "
-            f"font-weight: bold; border-radius: 5px;"
+            _button_stylesheet(
+                "ttsBtn", "#9C27B0", "#AB47BC", "#8E24AA",
+                font_fam, font_sz, dyn_pad,
+            )
         )
         self.tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tts_btn.clicked.connect(self.trigger_tts)
 
         self.flip_btn = QPushButton(" Reveal Answer")
+        self.flip_btn.setObjectName("revealBtn")
+        self.flip_btn.setToolTip("Reveal the answer (Alt+R)")
         self.flip_btn.setStyleSheet(
-            f"background-color: #2196F3; color: white; padding: {dyn_pad}px; "
-            f"font-family: '{font_fam}'; font-size: {font_sz}px; "
-            f"font-weight: bold; border-radius: 5px;"
+            _button_stylesheet(
+                "revealBtn", "#2196F3", "#42A5F5", "#1E88E5",
+                font_fam, font_sz, dyn_pad,
+            )
         )
         self.flip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flip_btn.clicked.connect(self.app_ref.flip_card)
@@ -214,13 +248,13 @@ class FlashCardItem(QGraphicsRectItem):
         if text_to_speak:
             self.speech_text = text_to_speak
 
-        font_fam = self.app_ref.settings.get("font_family", "Arial")
-        font_sz = self.app_ref.settings.get("font_size", 14)
+        font_fam = self.app_ref.settings.get("content_font_family", "Arial")
+        font_sz = self.app_ref.settings.get("content_font_size", 18)
 
         html_template = build_review_html(
             display_text,
             font_family=font_fam,
-            font_size=font_sz + 4,
+            font_size=font_sz,
             include_mathjax=HAS_WEBENGINE,
         )
 
