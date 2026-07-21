@@ -23,6 +23,9 @@ CANONICAL_DB_SUBDIRS = (
 DEFAULT_SETTINGS = {
     "width": 900,
     "height": 700,
+    # Sentence card editor dialog (persisted on dialog close)
+    "sentence_dialog_width": 720,
+    "sentence_dialog_height": 640,
     "font_family": "Arial",
     "font_size": 14,
     # Flashcard study content (separate from UI chrome)

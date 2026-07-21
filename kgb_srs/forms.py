@@ -310,10 +310,9 @@ class SentenceCardDialog(QDialog):
         btn_layout.addWidget(self._save_btn)
         layout.addLayout(btn_layout)
 
-        if parent:
-            w = min(max(580, int(parent.width() * 0.6)), 850)
-            h = min(max(520, int(parent.height() * 0.75)), 750)
-            self.resize(w, h)
+        # Restore last-used size (or defaults). Do this after widgets exist
+        # so it is not overridden by layout defaults / parent-relative sizing.
+        self._restore_dialog_geometry()
 
         # Connect double-click on list to removal
         self._items_list.itemDoubleClicked.connect(self._remove_selected)
@@ -1049,6 +1048,44 @@ class SentenceCardDialog(QDialog):
         """Lemma→surface pairs accepted by residual membership checks."""
         return dict(self._result_verified_surfaces)
 
+    def _restore_dialog_geometry(self) -> None:
+        """Open at last-used size (or defaults), never below the minimum."""
+        from .config import DEFAULT_SETTINGS
+
+        try:
+            w = int(
+                self._settings.get(
+                    "sentence_dialog_width",
+                    DEFAULT_SETTINGS["sentence_dialog_width"],
+                )
+            )
+            h = int(
+                self._settings.get(
+                    "sentence_dialog_height",
+                    DEFAULT_SETTINGS["sentence_dialog_height"],
+                )
+            )
+        except (TypeError, ValueError):
+            w = int(DEFAULT_SETTINGS["sentence_dialog_width"])
+            h = int(DEFAULT_SETTINGS["sentence_dialog_height"])
+        self.resize(max(self.minimumWidth(), w), max(self.minimumHeight(), h))
+
+    def _persist_dialog_geometry(self) -> None:
+        """Remember current size for the next open (main-window settings bag)."""
+        if not self._settings:
+            return
+        # Only write when this is a real app settings dict (has main geometry).
+        if "width" not in self._settings or "height" not in self._settings:
+            return
+        self._settings["sentence_dialog_width"] = self.width()
+        self._settings["sentence_dialog_height"] = self.height()
+        try:
+            from .config import save_settings
+
+            save_settings(self._settings)
+        except OSError:
+            pass
+
     def closeEvent(self, event):
         """Do not destroy the dialog while its blocking HTTP worker is active."""
         if self._ai_worker is not None and self._ai_worker.isRunning():
@@ -1058,6 +1095,7 @@ class SentenceCardDialog(QDialog):
         if membership is not None and membership.isRunning():
             event.ignore()
             return
+        self._persist_dialog_geometry()
         super().closeEvent(event)
 
     def reject(self):

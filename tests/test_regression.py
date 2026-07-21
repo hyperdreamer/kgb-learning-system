@@ -3152,6 +3152,58 @@ class TestProgrammaticMeaningSenseId:
         dialog.close()
 
 
+class TestSentenceDialogGeometryPersistence:
+    """Sentence card dialog remembers last-used size across opens."""
+
+    def test_restores_persisted_size_and_saves_on_close(self, tmp_path, monkeypatch):
+        _qt_app()
+        from kgb_srs import config, forms
+
+        settings_file = tmp_path / "barsky_settings.json"
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+
+        settings = {
+            "width": 900,
+            "height": 700,
+            "sentence_dialog_width": 888,
+            "sentence_dialog_height": 666,
+        }
+        dialog = forms.SentenceCardDialog(
+            sentence="Hello world",
+            items=["world"],
+            settings=settings,
+        )
+        assert dialog.width() == 888
+        assert dialog.height() == 666
+
+        dialog.resize(910, 700)
+        dialog.close()
+
+        assert settings["sentence_dialog_width"] == 910
+        assert settings["sentence_dialog_height"] == 700
+        assert settings_file.is_file()
+
+        # Re-open with the updated bag → same size.
+        dialog2 = forms.SentenceCardDialog(
+            sentence="Hello again",
+            items=["Hello"],
+            settings=settings,
+        )
+        assert dialog2.width() == 910
+        assert dialog2.height() == 700
+        dialog2.close()
+
+    def test_default_size_when_settings_missing_keys(self):
+        _qt_app()
+        from kgb_srs.config import DEFAULT_SETTINGS
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello", items=["Hello"])
+        assert dialog.width() == DEFAULT_SETTINGS["sentence_dialog_width"]
+        assert dialog.height() == DEFAULT_SETTINGS["sentence_dialog_height"]
+        dialog.close()
+
+
 class TestDBCreationDialogNoWordPhrase:
     """FIX 9: dialog must not offer manual W/P database creation."""
 
