@@ -187,6 +187,7 @@ class FlashCardItem(QGraphicsRectItem):
         self.tts_btn = QPushButton(" Listen")
         self.tts_btn.setIcon(QIcon.fromTheme("audio-volume-high"))
         self.tts_btn.setObjectName("ttsBtn")
+        self.tts_btn.setToolTip("Speak this card (L)")
         self.tts_btn.setStyleSheet(
             _button_stylesheet(
                 "ttsBtn", "#9C27B0", "#AB47BC", "#8E24AA",
@@ -198,6 +199,7 @@ class FlashCardItem(QGraphicsRectItem):
 
         self.flip_btn = QPushButton(" Reveal Answer")
         self.flip_btn.setObjectName("revealBtn")
+        self.flip_btn.setToolTip("Reveal the answer (Space)")
         self.flip_btn.setStyleSheet(
             _button_stylesheet(
                 "revealBtn", "#2196F3", "#42A5F5", "#1E88E5",

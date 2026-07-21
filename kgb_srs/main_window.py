@@ -25,9 +25,12 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QMenu,
+    QApplication,
+    QTextEdit,
+    QPlainTextEdit,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
+from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon, QShortcut, QKeySequence
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import (
@@ -187,6 +190,7 @@ class BarskyApp(QMainWindow):
         self.player.setAudioOutput(self.audio_output)
 
         self.setup_ui()
+        self._install_shortcuts()
         self.apply_font_settings()
 
         # Ensure the configured database root has the canonical category/
@@ -486,17 +490,21 @@ class BarskyApp(QMainWindow):
             return btn
 
         self.add_entry_btn = action_btn(" Add Entry", "list-add", self.add_word)
+        self.add_entry_btn.setToolTip("Add a new card (Ctrl+N)")
         top_layout.addWidget(self.add_entry_btn)
 
         self.delete_entry_btn = action_btn(" Delete Entry", "edit-delete", self.delete_current_card)
         self.delete_entry_btn.setEnabled(False)
+        self.delete_entry_btn.setToolTip("Delete the displayed card (Ctrl+D)")
         top_layout.addWidget(self.delete_entry_btn)
 
         self.browse_btn = action_btn(" Browse", "edit-find", self.browse_cards)
+        self.browse_btn.setToolTip("Browse / search cards (Ctrl+B)")
         top_layout.addWidget(self.browse_btn)
         self.settings_btn = action_btn(
             " Settings", "preferences-system", self.open_settings_window
         )
+        self.settings_btn.setToolTip("Open settings (Ctrl+,)")
         top_layout.addWidget(self.settings_btn)
         main_layout.addWidget(top_frame)
 
@@ -528,6 +536,9 @@ class BarskyApp(QMainWindow):
         self.start_btn = QPushButton(" Start Daily Review")
         self.start_btn.setIcon(self._icon("media-playback-start"))
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.start_btn.setToolTip(
+            "Start / resume daily review, or Next during review (Enter)"
+        )
         self.start_btn.clicked.connect(self._on_primary_button_clicked)
         main_layout.addWidget(self.start_btn)
 
@@ -537,18 +548,20 @@ class BarskyApp(QMainWindow):
         self.restart_review_btn = QPushButton(" Restart")
         self.restart_review_btn.setIcon(self._icon("view-refresh"))
         self.restart_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.restart_review_btn.setToolTip("Restart this review session (Ctrl+R)")
         self.restart_review_btn.clicked.connect(self._restart_daily_review)
 
         self.previous_review_btn = QPushButton(" Previous")
         self.previous_review_btn.setIcon(self._icon("go-previous"))
         self.previous_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.previous_review_btn.setToolTip("Go to previous graded card (Ctrl+Left)")
         self.previous_review_btn.clicked.connect(self._previous_daily_card)
 
         review_controls_layout.addWidget(self.restart_review_btn)
         review_controls_layout.addWidget(self.previous_review_btn)
 
         self.close_review_btn = QPushButton("×", self.view)
-        self.close_review_btn.setToolTip("Close review")
+        self.close_review_btn.setToolTip("Close review (Esc)")
         self.close_review_btn.setAccessibleName("Close review")
         self.close_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_review_btn.setEnabled(False)
@@ -584,6 +597,138 @@ class BarskyApp(QMainWindow):
         self.correct_zone = None
 
         self._update_button_visibility()
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _text_input_focused() -> bool:
+        """True when the user is typing in a text field (don't steal keys)."""
+        w = QApplication.focusWidget()
+        if w is None:
+            return False
+        if isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            return True
+        if isinstance(w, QComboBox) and w.isEditable():
+            return True
+        # WebEngine / embedded editors often report as generic QWidget with
+        # focusProxy; treat editable Qt text flags when available.
+        try:
+            from PyQt6.QtWidgets import QAbstractSpinBox
+
+            if isinstance(w, QAbstractSpinBox):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _install_shortcuts(self) -> None:
+        """Wire window-level shortcuts for frequent review / chrome actions."""
+
+        def add(key: str, slot, *, context=Qt.ShortcutContext.WindowShortcut):
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(context)
+            sc.activated.connect(slot)
+            return sc
+
+        # Review flow
+        add("Return", self._shortcut_primary)
+        add("Enter", self._shortcut_primary)
+        add("Space", self._shortcut_reveal)
+        add("Left", self._shortcut_incorrect)
+        add("Right", self._shortcut_correct)
+        add("1", self._shortcut_incorrect)
+        add("2", self._shortcut_correct)
+        add("Escape", self._shortcut_close_review)
+        add("Ctrl+R", self._shortcut_restart)
+        add("Ctrl+Left", self._shortcut_previous)
+        add("L", self._shortcut_listen)
+
+        # Chrome
+        add("Ctrl+B", self._shortcut_browse)
+        add("Ctrl+N", self._shortcut_add_entry)
+        add("Ctrl+D", self._shortcut_delete_entry)
+        add("Ctrl+,", self._shortcut_settings)
+
+    def _shortcut_primary(self):
+        if self._text_input_focused():
+            return
+        if not self.start_btn.isEnabled():
+            return
+        self._on_primary_button_clicked()
+
+    def _shortcut_reveal(self):
+        if self._text_input_focused():
+            return
+        if not self.current_card or self.is_current_flipped:
+            return
+        self.flip_card()
+
+    def _shortcut_incorrect(self):
+        if self._text_input_focused():
+            return
+        if not self.current_card or not self.is_current_flipped:
+            return
+        self.process_answer(correct=False)
+
+    def _shortcut_correct(self):
+        if self._text_input_focused():
+            return
+        if not self.current_card or not self.is_current_flipped:
+            return
+        self.process_answer(correct=True)
+
+    def _shortcut_close_review(self):
+        if self._text_input_focused():
+            return
+        if self.review_mode == "daily" and self.current_card is not None:
+            self.close_review()
+
+    def _shortcut_restart(self):
+        if self._text_input_focused():
+            return
+        if self.restart_review_btn.isEnabled():
+            self._restart_daily_review()
+
+    def _shortcut_previous(self):
+        if self._text_input_focused():
+            return
+        if self.previous_review_btn.isEnabled():
+            self._previous_daily_card()
+
+    def _shortcut_listen(self):
+        if self._text_input_focused():
+            return
+        card = getattr(self, "card_ui", None)
+        if card is not None and hasattr(card, "trigger_tts"):
+            card.trigger_tts()
+
+    def _shortcut_browse(self):
+        if self._text_input_focused():
+            return
+        if self.conn is not None:
+            self.browse_cards()
+
+    def _shortcut_add_entry(self):
+        if self._text_input_focused():
+            return
+        if getattr(self, "add_entry_btn", None) is None:
+            return
+        if self.add_entry_btn.isVisible() and self.add_entry_btn.isEnabled():
+            self.add_word()
+
+    def _shortcut_delete_entry(self):
+        if self._text_input_focused():
+            return
+        if getattr(self, "delete_entry_btn", None) is None:
+            return
+        if self.delete_entry_btn.isVisible() and self.delete_entry_btn.isEnabled():
+            self.delete_current_card()
+
+    def _shortcut_settings(self):
+        if self._text_input_focused():
+            return
+        self.open_settings_window()
 
     # ------------------------------------------------------------------
     # Database selection
@@ -1203,7 +1348,13 @@ class BarskyApp(QMainWindow):
         table = QTableWidget()
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels(["ID", "Front", "Box", "Next Review"])
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header = table.horizontalHeader()
+        # ID / Box / Next Review size to content (header + date); Front takes the rest.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setMinimumSectionSize(48)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(table)
@@ -1272,6 +1423,9 @@ class BarskyApp(QMainWindow):
         edit_btn = QPushButton("Edit Selected")
         del_btn = QPushButton("Delete Selected")
         del_btn.setStyleSheet("background-color: #ffcccc;")
+        review_btn.setToolTip("Review the selected card (Enter / Ctrl+R)")
+        edit_btn.setToolTip("Edit the selected card (Ctrl+E)")
+        del_btn.setToolTip("Delete the selected card (Del)")
         btn_layout.addWidget(review_btn)
         btn_layout.addWidget(edit_btn)
         btn_layout.addWidget(del_btn)
@@ -1284,7 +1438,9 @@ class BarskyApp(QMainWindow):
             del_btn.setEnabled(False)
             edit_btn.setToolTip("Word/phrase dictionary is read-only.")
             del_btn.setToolTip("Word/phrase dictionary is read-only.")
-            review_btn.setToolTip("Open the selected dictionary entry for review.")
+            review_btn.setToolTip(
+                "Open the selected dictionary entry for review (Enter / double-click)"
+            )
 
         def on_review():
             selected = table.selectedItems()
@@ -1393,6 +1549,46 @@ class BarskyApp(QMainWindow):
         edit_btn.clicked.connect(on_edit)
         del_btn.clicked.connect(on_delete)
         table.itemDoubleClicked.connect(on_row_activate)
+
+        # Dialog-local shortcuts (don't fight the search field for typing).
+        def dialog_text_focused() -> bool:
+            w = QApplication.focusWidget()
+            return isinstance(w, (QLineEdit, QTextEdit, QPlainTextEdit))
+
+        def add_dialog_shortcut(key: str, slot, *, allow_while_typing: bool = True):
+            sc = QShortcut(QKeySequence(key), dialog)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+
+            def guarded():
+                if dialog_text_focused() and not allow_while_typing:
+                    return
+                slot()
+
+            sc.activated.connect(guarded)
+            return sc
+
+        def on_review_key():
+            # Enter only when table has focus, not while typing in Search.
+            if dialog_text_focused():
+                return
+            on_review()
+
+        def on_edit_key():
+            if not edit_btn.isEnabled():
+                return
+            on_edit()
+
+        def on_delete_key():
+            if not del_btn.isEnabled():
+                return
+            on_delete()
+
+        add_dialog_shortcut("Return", on_review_key, allow_while_typing=False)
+        add_dialog_shortcut("Enter", on_review_key, allow_while_typing=False)
+        add_dialog_shortcut("Ctrl+R", on_review)
+        add_dialog_shortcut("Ctrl+E", on_edit_key)
+        add_dialog_shortcut("Delete", on_delete_key)
+        add_dialog_shortcut("Del", on_delete_key)
 
         dialog.exec()
 

@@ -2538,6 +2538,72 @@ class TestReviewControls:
         assert w.review_mode == ""
         conn.close(); w.close()
 
+    def test_keyboard_shortcuts_are_installed(self):
+        """Main window installs review/chrome shortcuts."""
+        from PyQt6.QtGui import QShortcut
+
+        conn = self._db(1)
+        w = self._win(conn=conn)
+        shortcuts = w.findChildren(QShortcut)
+        keys = {sc.key().toString() for sc in shortcuts}
+        for expected in (
+            "Return",
+            "Space",
+            "Left",
+            "Right",
+            "Esc",
+            "Ctrl+B",
+            "Ctrl+N",
+            "Ctrl+D",
+            "Ctrl+R",
+        ):
+            assert any(expected in k or k == expected for k in keys), (
+                f"Missing shortcut {expected!r} in {sorted(keys)}"
+            )
+        conn.close(); w.close()
+
+    def test_shortcut_reveal_and_grade(self):
+        """Space reveals; Right grades correct only after flip."""
+        from unittest.mock import MagicMock
+
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+        w.is_current_flipped = False
+        card_ui = MagicMock()
+        w.card_ui = card_ui
+        # Avoid real scene item removal when grading advances.
+        w.scene = MagicMock()
+        q, i = self._mock_dialogs()
+
+        with q, i:
+            w._shortcut_correct()  # ignored before flip
+            cur = conn.cursor()
+            cur.execute("SELECT box FROM cards WHERE id=1")
+            assert cur.fetchone()[0] == 1
+
+            w._shortcut_reveal()
+            assert w.is_current_flipped is True
+            card_ui.set_text.assert_called()
+
+            w._shortcut_correct()
+            cur.execute("SELECT box FROM cards WHERE id=1")
+            assert cur.fetchone()[0] == 2
+        conn.close(); w.close()
+
+    def test_shortcut_ignores_text_input_focus(self):
+        """Shortcuts no-op while a text field has focus."""
+        from unittest.mock import patch
+        from PyQt6.QtWidgets import QLineEdit
+
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+        w.is_current_flipped = False
+        edit = QLineEdit()
+        with patch("kgb_srs.main_window.QApplication.focusWidget", return_value=edit):
+            w._shortcut_reveal()
+        assert w.is_current_flipped is False
+        conn.close(); w.close()
+
     # -- finding #2: close preserves queue ---------------------------------
 
     def test_close_preserves_cards_due(self):
@@ -2831,7 +2897,7 @@ class TestReviewControls:
         assert isinstance(btn, QPushButton)
         assert btn.parent() is w.view
         assert btn.text().strip() == "×"
-        assert btn.toolTip() == "Close review"
+        assert btn.toolTip() == "Close review (Esc)"
         assert btn.accessibleName() == "Close review"
         assert btn.cursor().shape() == Qt.CursorShape.PointingHandCursor
         assert (btn.width(), btn.height()) == (28, 28)
