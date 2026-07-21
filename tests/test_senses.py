@@ -212,6 +212,57 @@ class TestSentenceCardSenseAtomicity:
             "FROM expression_senses ORDER BY id"
         ).fetchall() == before_senses
 
+    def test_update_rolls_back_when_orphan_cleanup_fails(self, conn, monkeypatch):
+        card_id = insert_sentence_card(
+            conn, "known", [("known", "known meaning")], back="original back"
+        )
+        before_card = conn.execute(
+            "SELECT id, front, back, box, next_review FROM cards WHERE id=?",
+            (card_id,),
+        ).fetchone()
+        before_items = conn.execute(
+            "SELECT id, card_id, expression, meaning, sense_id, surface_form "
+            "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
+            (card_id,),
+        ).fetchall()
+        before_senses = conn.execute(
+            "SELECT id, expression, meaning, expression_norm, meaning_norm "
+            "FROM expression_senses ORDER BY id"
+        ).fetchall()
+
+        from kgb_srs import senses
+
+        cleanup = senses.purge_orphan_senses
+
+        def fail_after_cleanup(*args, **kwargs):
+            cleanup(*args, **kwargs)
+            raise RuntimeError("cleanup failed")
+
+        monkeypatch.setattr(senses, "purge_orphan_senses", fail_after_cleanup)
+
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            update_sentence_card(
+                conn,
+                card_id,
+                front="replacement",
+                back="replacement back",
+                items=[("replacement", "replacement meaning")],
+            )
+
+        assert conn.execute(
+            "SELECT id, front, back, box, next_review FROM cards WHERE id=?",
+            (card_id,),
+        ).fetchone() == before_card
+        assert conn.execute(
+            "SELECT id, card_id, expression, meaning, sense_id, surface_form "
+            "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
+            (card_id,),
+        ).fetchall() == before_items
+        assert conn.execute(
+            "SELECT id, expression, meaning, expression_norm, meaning_norm "
+            "FROM expression_senses ORDER BY id"
+        ).fetchall() == before_senses
+
 
 class TestSenseAssignmentParser:
     def test_reuse(self):

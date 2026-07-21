@@ -155,7 +155,7 @@ def init_db(db_path_or_conn):
 # Migration: unfamiliar_items
 # ---------------------------------------------------------------------------
 
-def ensure_unfamiliar_items_table(conn):
+def ensure_unfamiliar_items_table(conn, *, commit: bool = True):
     """Create the unfamiliar_items table if it doesn't exist.
 
     Safe to call multiple times; uses IF NOT EXISTS.
@@ -171,7 +171,8 @@ def ensure_unfamiliar_items_table(conn):
             UNIQUE(card_id, expression)
         )"""
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def migrate_unfamiliar_items_meaning(conn):

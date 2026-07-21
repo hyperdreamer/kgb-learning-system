@@ -24,7 +24,8 @@ with a shared sense catalog and automatic word/phrase projections.
 - **Alt+ keyboard shortcuts** for all frequent actions (never steals typing).
 - **Validation** — literal + inflection-tolerant matching, irregular verbs,
   optional AI residual membership check.
-- **437 tests** covering catalog, schema, senses, validation, search, AI, UI.
+- **Comprehensive automated coverage** across catalog, schema, senses,
+  validation, search, AI, and UI.
 
 ### Breaking / migration notes
 

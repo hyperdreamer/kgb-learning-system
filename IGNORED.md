@@ -1,6 +1,6 @@
 # IGNORED.md — Deferred Decisions and Low-Priority Work
 
-This file contains only items that remain intentionally deferred after the audit/reconsideration work through `d490c0c`. Completed fixes are recorded in Git history, not duplicated here.
+This file contains only items that remain intentionally deferred after the audit/reconsideration work through the current `dev` state. Completed fixes are recorded in Git history, not duplicated here.
 
 ## Intentional Behavior
 
@@ -39,6 +39,14 @@ The method mutates the AI stage before returning settings. Its name is imperfect
 `search.py` retains connection objects after function registration. The natural weak-reference approach is incompatible with `sqlite3.Connection`, and `id(conn)` reuse is unsafe. The effect is negligible for the application’s long-lived UI connections; defer a fix until a connection lifecycle API exists.
 
 ## Deferred Lifecycle and Data Policy
+
+### Canonical projection target symlink escape
+
+The canonical word/phrase projection path can itself be a symlink resolving outside the configured database root. During sync, the current ownership comparison accepts this and can write/prune that external SQLite database. Rejecting this layout is the safest correction, but it would break existing users who intentionally store their canonical projections externally. Add a migration/discovery path and regression tests for both supported in-root links and rejected escape links before changing the policy.
+
+### Markdown local-resource and navigation policy
+
+Review cards render user-controlled Markdown in `QWebEngineView` with local-file and remote-network access enabled. Tightening this would prevent `file://` content access and arbitrary navigation, but can break existing card images/links and remote MathJax. Define the supported content policy, bundle or explicitly allow MathJax, then add URL sanitization and navigation tests before changing production settings.
 
 ### Main-window shutdown while TTS is still running
 

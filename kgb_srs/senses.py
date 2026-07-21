@@ -268,8 +268,8 @@ def purge_orphan_senses(conn, *, commit: bool = False) -> int:
     """
     from .schema import ensure_unfamiliar_items_table
 
-    ensure_unfamiliar_items_table(conn)
-    ensure_expression_senses_table(conn)
+    ensure_unfamiliar_items_table(conn, commit=commit)
+    ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
     cur.execute(
         """
