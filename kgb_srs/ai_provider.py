@@ -391,7 +391,7 @@ def build_membership_prompt(sentence: str, missing_items: list[str]) -> str:
 # HTTP helper (stdlib only — no extra dependency)
 # ---------------------------------------------------------------------------
 
-def _http_request(
+def http_request(
     url: str,
     headers: dict,
     *,
@@ -415,7 +415,7 @@ class AIClient:
     Usage:
         client = AIClient(config)
         url, headers, body = client.build_request(user_prompt)
-        raw = _http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
+        raw = http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
         text = client.parse_response(raw)
     """
 
@@ -504,7 +504,7 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
 
     started = time.monotonic()
     try:
-        _http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
+        http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
         latency_ms = (time.monotonic() - started) * 1000.0
         return True, f"OK — {config.model} reachable", latency_ms
     except urllib.error.HTTPError as exc:
@@ -543,7 +543,7 @@ def list_models(config: AIProviderConfig) -> tuple[bool, str, list[str]]:
     }
 
     try:
-        raw = _http_request(
+        raw = http_request(
             url, headers, body=None, timeout=config.timeout_seconds, method="GET"
         )
     except urllib.error.HTTPError as exc:
@@ -642,7 +642,7 @@ def _get_ai_worker_class():
             try:
                 client = AIClient(self._config)
                 url, headers, body = client.build_request(self._prompt)
-                raw = _http_request(
+                raw = http_request(
                     url, headers,
                     body=json.dumps(body).encode("utf-8"),
                     timeout=self._config.timeout_seconds,
@@ -653,7 +653,7 @@ def _get_ai_worker_class():
             except AIMissingConfigError as e:
                 self.error.emit(str(e))
             except urllib.error.URLError as e:
-                self.error.emit(f"Network error: {e.reason}")
+                self.error.emit(f"Network error: {getattr(e, 'reason', str(e))}")
             except ValueError as e:
                 self.error.emit(str(e))
             except Exception as e:
@@ -662,12 +662,6 @@ def _get_ai_worker_class():
     return AIWorker
 
 
-def create_ai_worker(config: AIProviderConfig, prompt: str):
-    """Create an AIWorker thread for the given config and prompt.
-
-    Safe to call from any context where PyQt6 is available.
-    """
-    return _get_ai_worker_class()(config, prompt)
 
 
 def _get_ai_test_worker_class():

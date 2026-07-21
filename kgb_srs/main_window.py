@@ -105,7 +105,7 @@ def _open_and_infer_type(db_path):
         conn.close()
         if db_type is not None:
             return db_type
-    except Exception:
+    except (sqlite3.Error, OSError):
         pass
     return infer_database_type(db_path)
 

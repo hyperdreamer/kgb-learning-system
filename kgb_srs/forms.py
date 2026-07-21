@@ -39,7 +39,7 @@ from .validation import (
 from .ai_provider import (
     AIProviderConfig,
     AIClient,
-    _http_request,
+    http_request,
     build_sense_assignment_prompt,
     build_word_phrase_prompt,
     build_membership_prompt,
@@ -97,7 +97,7 @@ class _AIGenerateWorker(QThread):
         try:
             client = AIClient(self._config)
             url, headers, body = client.build_request(self._prompt)
-            raw = _http_request(
+            raw = http_request(
                 url, headers,
                 body=json.dumps(body).encode("utf-8"),
                 timeout=self._config.timeout_seconds,
@@ -108,7 +108,7 @@ class _AIGenerateWorker(QThread):
         except AIMissingConfigError as e:
             self.error.emit(str(e))
         except urllib.error.URLError as e:
-            self.error.emit(f"Network error: {e.reason}")
+            self.error.emit(f"Network error: {getattr(e, 'reason', str(e))}")
         except ValueError as e:
             self.error.emit(str(e))
         except Exception as e:

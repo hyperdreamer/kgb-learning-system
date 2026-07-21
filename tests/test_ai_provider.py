@@ -367,7 +367,7 @@ class TestTestConnection:
                 "choices": [{"message": {"content": "pong"}}]
             })
 
-        monkeypatch.setattr(module, "_http_request", fake_http)
+        monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is True
         assert "test-model" in message
@@ -387,7 +387,7 @@ class TestTestConnection:
                 }).encode("utf-8")),
             )
 
-        monkeypatch.setattr(module, "_http_request", fake_http)
+        monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is False
         assert "Invalid API key" in message
@@ -399,7 +399,7 @@ class TestTestConnection:
         def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
             raise urllib.error.URLError(TimeoutError("timed out"))
 
-        monkeypatch.setattr(module, "_http_request", fake_http)
+        monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is False
         assert "timed out" in message.lower()
@@ -411,7 +411,7 @@ class TestTestConnection:
         def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
             raise urllib.error.URLError("connection refused")
 
-        monkeypatch.setattr(module, "_http_request", fake_http)
+        monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is False
         assert "connection refused" in message.lower() or "Network error" in message
@@ -458,7 +458,7 @@ class TestListModels:
                 ]
             })
 
-        monkeypatch.setattr(module, "_http_request", fake_http)
+        monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, models = list_models(self._cfg())
         assert ok is True
         assert models == ["alpha-model", "zeta-model"]
@@ -479,7 +479,7 @@ class TestListModels:
                 }).encode("utf-8")),
             )
 
-        monkeypatch.setattr(module, "_http_request", fake_http)
+        monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, models = list_models(self._cfg())
         assert ok is False
         assert "Invalid API key" in message
@@ -491,7 +491,7 @@ class TestListModels:
 
         monkeypatch.setattr(
             module,
-            "_http_request",
+            "http_request",
             lambda *a, **k: json.dumps({"data": []}),
         )
         ok, message, models = list_models(self._cfg())
