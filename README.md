@@ -59,12 +59,11 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 - **Front**: A word or phrase (one card per expression).
 - **Source of truth**: The **shared sense catalog** (`expression_senses`) built from sentence cards — not free-typed dictionary entries.
-- **No manual editing**: Add Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by automatic projection from a sentence database.
+- **No manual editing**: Add Entry, Delete Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by automatic projection from a sentence database.
 - **Derived projection**: One card per expression; back lists all senses with example sentences from the sentence corpus.
 - **Linked auto-sync**: The sentence DB stores `linked_word_phrase_db`. App startup, DB open, and every sentence Save ensure the link exists and re-derive the W/P DB.
 - **Review**: Standard front/back flip card with Markdown and MathJax rendering (SRS boxes still work).
-- **Search**: Searches front and back (meanings/examples) fields.
-- **Delete**: You may still delete projected cards from Browse if needed; a later sync may re-create them from the catalog.
+- **Search**: Searches front and back (meanings/examples) fields. Browse is view-only for W/P (Edit/Delete selected disabled).
 
 ### Knowledge-based (`knowledge`)
 
@@ -175,7 +174,7 @@ Click **Add Entry**. The dialog adapts to the database type:
 - **Previous** — returns to the most recently graded card in the current daily session. It is disabled while no review is active.
 - **Restart** — restarts the current daily session from its original due-card queue and clears session history. It is disabled while no review is active.
 - **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database.
-- **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. **Delete Entry** is enabled whenever a database is loaded and a card is displayed (not only during reviews).
+- **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only).
 
 ### 5. Browse & Edit
 

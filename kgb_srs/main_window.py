@@ -1275,6 +1275,14 @@ class BarskyApp(QMainWindow):
         btn_layout.addWidget(del_btn)
         layout.addLayout(btn_layout)
 
+        is_wp_browse = getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
+        if is_wp_browse:
+            # Projection-only: no edit/delete in Browse.
+            edit_btn.setEnabled(False)
+            del_btn.setEnabled(False)
+            edit_btn.setToolTip("Word/phrase dictionary is read-only.")
+            del_btn.setToolTip("Word/phrase dictionary is read-only.")
+
         def on_edit():
             selected = table.selectedItems()
             if not selected:
@@ -1330,6 +1338,15 @@ class BarskyApp(QMainWindow):
                 self._refresh_current_card(card_id)
 
         def on_delete():
+            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
+                QMessageBox.information(
+                    dialog,
+                    "Read-only Word/Phrase Card",
+                    "This dictionary is derived from the shared sense catalog.\n\n"
+                    "Remove senses via sentence cards; the dictionary updates "
+                    "automatically. Manual delete is disabled.",
+                )
+                return
             selected = table.selectedItems()
             if not selected:
                 return
@@ -1375,16 +1392,18 @@ class BarskyApp(QMainWindow):
         has_card = self.current_card is not None
         is_active = self.review_mode == "daily"
         has_paused = self._paused_review_card is not None
-
-        self.delete_entry_btn.setEnabled(has_db and has_card)
         is_wp = (
             has_db
             and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
         )
-        # W/P is a derived projection — no manual Add Entry.
+
+        # W/P is a derived projection — no manual Add/Delete Entry.
         if hasattr(self, "add_entry_btn"):
             self.add_entry_btn.setVisible(has_db and not is_wp)
             self.add_entry_btn.setEnabled(has_db and not is_wp)
+        if hasattr(self, "delete_entry_btn"):
+            self.delete_entry_btn.setVisible(has_db and not is_wp)
+            self.delete_entry_btn.setEnabled(has_db and has_card and not is_wp)
 
         if not has_db:
             self.start_btn.setEnabled(False)
@@ -1536,6 +1555,16 @@ class BarskyApp(QMainWindow):
         self.cards_due.insert(0, fresh)
 
     def delete_current_card(self):
+        if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
+            QMessageBox.information(
+                self,
+                "Read-only Word/Phrase Database",
+                "Word/phrase cards are a projection of the shared sense catalog.\n\n"
+                "Delete or change senses via sentence cards; this dictionary "
+                "updates automatically. Manual delete is disabled.",
+            )
+            return
+
         if not self.current_card:
             QMessageBox.information(self, "Nothing to Delete", "No card is currently displayed.")
             return

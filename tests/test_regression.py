@@ -2486,6 +2486,30 @@ class TestReviewControls:
         assert not w.close_review_btn.isEnabled()
         conn.close(); w.close()
 
+    def test_wp_hides_add_and_delete_entry(self):
+        """Word/phrase DBs hide Add/Delete Entry (projection-only)."""
+        from kgb_srs.catalog import DatabaseType
+
+        conn = self._db(1)
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
+        w._db_type = DatabaseType.LANGUAGE_WORD_PHRASE
+        w._update_button_visibility()
+
+        assert not w.add_entry_btn.isVisible()
+        assert not w.add_entry_btn.isEnabled()
+        assert not w.delete_entry_btn.isVisible()
+        assert not w.delete_entry_btn.isEnabled()
+
+        # Guard remains even if called directly.
+        q, i = self._mock_dialogs()
+        with q, i as imock:
+            w.delete_current_card()
+            imock.assert_called()
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM cards")
+            assert cur.fetchone()[0] == 1
+        conn.close(); w.close()
+
     # -- finding #2: close preserves queue ---------------------------------
 
     def test_close_preserves_cards_due(self):
