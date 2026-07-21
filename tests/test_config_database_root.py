@@ -1,6 +1,7 @@
 """Tests for database root resolution and structure helpers."""
 
 import os
+import json
 
 import pytest
 
@@ -15,6 +16,61 @@ from kgb_srs.config import (
     normalize_default_database,
 )
 from kgb_srs.schema import find_databases, DB_SUFFIX
+
+
+def test_load_settings_ignores_invalid_scalar_values_and_starts_app(
+    tmp_path, monkeypatch
+):
+    """Malformed scalar settings retain defaults instead of breaking startup."""
+    import kgb_srs.config as config
+
+    settings_path = tmp_path / "barsky_settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "width": None,
+                "height": 0,
+                "sentence_dialog_width": "wide",
+                "sentence_dialog_height": -20,
+                "font_size": True,
+                "content_font_size": 0,
+                "database_root": 42,
+                "default_database": 99,
+                "font_family": ["Arial"],
+                "content_font_family": None,
+                "tts_voice": 123,
+                "tts_language": "fr-FR",
+                "explanation_language": "French",
+                "ai_active_provider": ["Default"],
+                "ai_providers": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
+
+    loaded = config.load_settings()
+    for key in config.DEFAULT_SETTINGS:
+        if key in {"tts_language", "explanation_language"}:
+            continue
+        assert loaded[key] == config.DEFAULT_SETTINGS[key]
+    assert loaded["tts_language"] == "fr-FR"
+    assert loaded["explanation_language"] == "French"
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+    import kgb_srs.main_window as main_window
+
+    monkeypatch.setattr(main_window, "HAS_WEBENGINE", False)
+    app = QApplication.instance() or QApplication([])
+    window = main_window.BarskyApp()
+    try:
+        assert window.width() == config.DEFAULT_SETTINGS["width"]
+        assert window.height() == config.DEFAULT_SETTINGS["height"]
+    finally:
+        window.close()
+        app.processEvents()
 
 
 class TestGetDatabaseRoot:

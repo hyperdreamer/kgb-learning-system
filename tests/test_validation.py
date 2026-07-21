@@ -182,6 +182,22 @@ class TestValidateUnfamiliarItems:
             "I go there every day.", ["went"]
         ).valid
 
+    def test_undergo_inflections_do_not_match_go(self):
+        """A prefixed verb keeps its own irregular family."""
+        assert validate_unfamiliar_items(
+            "He underwent surgery.", ["undergo"]
+        ).valid
+        result = validate_unfamiliar_items("He underwent surgery.", ["go"])
+        assert result.valid is False
+        assert result.missing == ["go"]
+
+    def test_rewrite_inflections_do_not_match_write(self):
+        """Derivational verbs must not validate the unprefixed lemma."""
+        assert validate_unfamiliar_items("She rewrote the report.", ["rewrite"]).valid
+        result = validate_unfamiliar_items("She rewrote the report.", ["write"])
+        assert result.valid is False
+        assert result.missing == ["write"]
+
     def test_go_does_not_substring_match_unrelated(self):
         """Short lemma must not match as a substring inside another word."""
         # "go" must not match merely because it is letters inside "cargo"
@@ -267,7 +283,7 @@ class TestValidateUnfamiliarItems:
             ("He has written a letter.", "write"),
             ("She rewrote the essay.", "rewrite"),
             ("He underwent surgery.", "undergo"),
-            ("They misunderstood the question.", "understand"),
+            ("They misunderstood the question.", "misunderstand"),
             ("She overcame her fear.", "overcome"),
             ("He has forgotten the password.", "forget"),
             ("They fled the scene.", "flee"),
@@ -364,6 +380,17 @@ class TestValidateUnfamiliarItems:
         # Highlight must bold the stored surface, not fail on local flex alone.
         out = highlight_unfamiliar_in_sentence(sentence, items)
         assert "**lay**" in out
+        conn.close()
+
+    def test_false_go_membership_cannot_be_persisted(self, tmp_path):
+        """Insert re-validation rejects a false go ↔ underwent membership."""
+        from kgb_srs.schema import init_db, insert_sentence_card
+
+        conn = init_db(str(tmp_path / "undergo.db"))
+        with pytest.raises(ValueError, match="go"):
+            insert_sentence_card(
+                conn, "He underwent surgery.", [("go", "move")], ""
+            )
         conn.close()
 
     def test_highlight_uses_preferred_surface_for_lie_lay(self):

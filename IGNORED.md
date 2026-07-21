@@ -225,3 +225,16 @@ See commit:
 | **Why deferred** | Deferring acceptance until `finished` changes the Save/modal completion sequence and needs a precise signal-order test using a worker that emits a valid result before blocking. |
 | **Risk if fixed** | Medium — must not leave the dialog disabled after error/invalid responses or lose the accepted result. |
 | **Suggested fix (when ready)** | Store a pending accepted result, clear the membership worker in `_on_membership_ai_finished()`, then invoke `_finish_accept()` only for the pending valid result. |
+
+---
+
+## 15. Legacy Unicode-normalization duplicates need an SRS reconciliation policy
+
+| Field | Value |
+|-------|-------|
+| **Severity** | Low (existing projection data consistency) |
+| **Files** | `kgb_srs/senses.py:432-461, 535-542` |
+| **Behavior** | The Unicode-aware W/P upsert updates one normalized match but intentionally retains any pre-existing additional cards that normalize to the same expression. Projection pruning also retains all of them because each matches the source normalized front. |
+| **Why deferred** | Removing or merging duplicate cards means selecting which independent SRS schedule/history survives. Blind deletion can discard learning progress. |
+| **Risk if fixed** | Medium — requires an explicit migration/archival/merge policy for conflicting box and next-review values. |
+| **Suggested fix (when ready)** | Detect multiple normalized matches during projection, surface them for deliberate repair, then add an explicit reconciliation policy with NFC/NFD duplicate and conflicting-SRS tests. |

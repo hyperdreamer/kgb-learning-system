@@ -139,6 +139,7 @@ class SettingsDialog(QDialog):
         self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
         self.ai_models_worker = None
+        self._ai_test_token = None
         self._ai_models_refresh_token = None
         self.preview_tts_worker = None
         self._closing_workers = []
@@ -1051,6 +1052,9 @@ class SettingsDialog(QDialog):
         self.ai_test_status_label.setStyleSheet("")
         self.ai_test_status_label.setText("Testing…")
         config = self._staged_ai_config()
+        self._ai_test_token = self._ai_models_token(
+            self._current_ai_provider_name(), config
+        )
         worker = create_ai_test_worker(config)
         self.ai_test_worker = worker
         worker.result.connect(self._on_ai_test_result)
@@ -1060,6 +1064,11 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_ai_test_result(self, ok, message, latency_ms):
+        current_token = self._ai_models_token(
+            self._current_ai_provider_name(), self._staged_ai_config()
+        )
+        if self._ai_test_token != current_token:
+            return
         model = self._ai_model_text() or "model"
         if ok:
             ms = int(round(latency_ms)) if latency_ms >= 0 else "?"
@@ -1072,6 +1081,7 @@ class SettingsDialog(QDialog):
 
     def _on_ai_test_finished(self):
         self.ai_test_worker = None
+        self._ai_test_token = None
         self.ai_test_button.setEnabled(True)
 
     def _start_ai_models_refresh(self):

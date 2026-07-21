@@ -53,6 +53,25 @@ DEFAULT_SETTINGS = {
     "explanation_language": "Chinese",
 }
 
+_POSITIVE_INT_SETTINGS = frozenset({
+    "width",
+    "height",
+    "sentence_dialog_width",
+    "sentence_dialog_height",
+    "font_size",
+    "content_font_size",
+})
+_STRING_SETTINGS = frozenset({
+    "database_root",
+    "default_database",
+    "font_family",
+    "content_font_family",
+    "tts_voice",
+    "tts_language",
+    "explanation_language",
+    "ai_active_provider",
+})
+
 
 def get_database_root(settings=None) -> str:
     """Resolve the configured database root directory.
@@ -185,13 +204,31 @@ def load_settings():
                 raw = json.load(f)
             if isinstance(raw, dict):
                 loaded = raw
-                settings.update(loaded)
+                for key, value in loaded.items():
+                    if key in _POSITIVE_INT_SETTINGS:
+                        if type(value) is int and value > 0:
+                            settings[key] = value
+                    elif key in _STRING_SETTINGS:
+                        if isinstance(value, str):
+                            settings[key] = value
+                    elif key == "ai_providers":
+                        # Provider mappings are normalized below. Other types
+                        # cannot be safely used as profile collections.
+                        if isinstance(value, dict):
+                            settings[key] = value
+                    elif key not in DEFAULT_SETTINGS:
+                        # Preserve extension keys, but never let an invalid
+                        # value replace a known default setting.
+                        settings[key] = value
         except Exception as e:
             print(f"Error loading settings: {e}")
-    # If the on-disk file is still flat-only (no ai_providers), drop the
-    # default bag so ensure_ai_provider_profiles migrates from flat keys.
-    # Otherwise an empty Default profile would clobber a real ai_api_key.
-    if "ai_providers" not in loaded:
+    # With no usable profile mapping, drop the default bag so
+    # ensure_ai_provider_profiles migrates legacy flat keys. Otherwise an
+    # empty Default profile would clobber a real ai_api_key.
+    if (
+        "ai_providers" not in loaded
+        or not isinstance(loaded.get("ai_providers"), dict)
+    ):
         settings.pop("ai_providers", None)
         if "ai_active_provider" not in loaded:
             settings.pop("ai_active_provider", None)
