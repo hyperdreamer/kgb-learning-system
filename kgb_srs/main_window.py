@@ -694,7 +694,7 @@ class BarskyApp(QMainWindow):
         self.process_answer(correct=True)
 
     def _shortcut_close_review(self):
-        if self.review_mode == "daily" and self.current_card is not None:
+        if self.review_mode == "daily":
             self.close_review()
 
     def _shortcut_restart(self):

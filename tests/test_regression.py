@@ -2852,6 +2852,23 @@ class TestReviewControls:
         conn.close()
         w.close()
 
+    def test_shortcut_closes_completed_daily_review(self):
+        """Alt+X closes an active daily session after its final grade."""
+        conn = self._db(1)
+        w = self._win(conn=conn, mode="daily")
+        w._daily_review_history = [(1, "c1", "b1", 2)]
+        w._update_button_visibility()
+        assert w.current_card is None
+        assert w.close_review_btn.isEnabled()
+
+        w._shortcut_close_review()
+
+        assert w.review_mode == ""
+        assert w._paused_review_mode == "daily"
+        assert w._paused_review_history == [(1, "c1", "b1", 2)]
+        conn.close()
+        w.close()
+
     def test_shortcut_tooltips_use_alt(self):
         """Button tooltips document Alt shortcuts."""
         conn = self._db(1)
@@ -3369,6 +3386,49 @@ class TestProgrammaticMeaningSenseId:
 
 class TestSentenceDialogGeometryPersistence:
     """Sentence card dialog remembers last-used size across opens."""
+
+    def test_save_persists_resized_dialog_geometry(self, tmp_path, monkeypatch):
+        _qt_app()
+        from kgb_srs import config, forms
+
+        saved = []
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(
+            config, "save_settings", lambda values: saved.append(dict(values))
+        )
+        settings = {"width": 900, "height": 700}
+        dialog = forms.SentenceCardDialog(
+            sentence="Hello world", items=["world"], settings=settings
+        )
+        dialog.resize(910, 700)
+        dialog._meaning_widgets[0][1].setPlainText("the earth")
+
+        dialog._save_btn.click()
+
+        assert settings["sentence_dialog_width"] == 910
+        assert settings["sentence_dialog_height"] == 700
+        assert len(saved) == 1
+
+    def test_cancel_persists_resized_dialog_geometry(self, tmp_path, monkeypatch):
+        _qt_app()
+        from kgb_srs import config, forms
+
+        saved = []
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(
+            config, "save_settings", lambda values: saved.append(dict(values))
+        )
+        settings = {"width": 900, "height": 700}
+        dialog = forms.SentenceCardDialog(
+            sentence="Hello world", items=["world"], settings=settings
+        )
+        dialog.resize(910, 700)
+
+        dialog._cancel_btn.click()
+
+        assert settings["sentence_dialog_width"] == 910
+        assert settings["sentence_dialog_height"] == 700
+        assert len(saved) == 1
 
     def test_restores_persisted_size_and_saves_on_close(self, tmp_path, monkeypatch):
         _qt_app()

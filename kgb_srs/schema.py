@@ -175,7 +175,7 @@ def ensure_unfamiliar_items_table(conn, *, commit: bool = True):
         conn.commit()
 
 
-def migrate_unfamiliar_items_meaning(conn):
+def migrate_unfamiliar_items_meaning(conn, *, commit: bool = True):
     """Add the 'meaning' column to unfamiliar_items if it doesn't exist.
 
     Safe to call on both legacy DBs (no meaning column) and new DBs
@@ -191,10 +191,11 @@ def migrate_unfamiliar_items_meaning(conn):
         conn.execute(
             "ALTER TABLE unfamiliar_items ADD COLUMN meaning TEXT NOT NULL DEFAULT ''"
         )
-        conn.commit()
+        if commit:
+            conn.commit()
 
 
-def migrate_unfamiliar_items_surface_form(conn):
+def migrate_unfamiliar_items_surface_form(conn, *, commit: bool = True):
     """Add surface_form column for AI residual / irregular surface spans.
 
     Stores the exact sentence span accepted for a lemma (e.g. lie → lay)
@@ -209,17 +210,18 @@ def migrate_unfamiliar_items_surface_form(conn):
             "ALTER TABLE unfamiliar_items "
             "ADD COLUMN surface_form TEXT NOT NULL DEFAULT ''"
         )
-        conn.commit()
+        if commit:
+            conn.commit()
 
 
-def ensure_sentence_schema(conn) -> None:
+def ensure_sentence_schema(conn, *, commit: bool = True) -> None:
     """Ensure all sentence-DB tables/columns (items + global senses)."""
-    ensure_unfamiliar_items_table(conn)
-    migrate_unfamiliar_items_meaning(conn)
-    migrate_unfamiliar_items_surface_form(conn)
+    ensure_unfamiliar_items_table(conn, commit=commit)
+    migrate_unfamiliar_items_meaning(conn, commit=commit)
+    migrate_unfamiliar_items_surface_form(conn, commit=commit)
     from .senses import ensure_expression_senses_table
 
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +395,7 @@ def insert_sentence_card(
     # Reject empty meanings for sentence cards (newly created)
     _require_nonempty_meanings(unfamiliar_items, "insert")
 
-    ensure_sentence_schema(conn)
+    ensure_sentence_schema(conn, commit=False)
 
     from .senses import create_or_get_sense
 
@@ -539,7 +541,7 @@ def update_sentence_card(
     # Reject empty meanings for sentence cards (newly edited)
     _require_nonempty_meanings(items, "update")
 
-    ensure_sentence_schema(conn)
+    ensure_sentence_schema(conn, commit=False)
 
     from .senses import create_or_get_sense, get_sense
 

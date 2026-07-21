@@ -145,6 +145,7 @@ class SentenceCardDialog(QDialog):
         # Lemma → surface accepted by residual AI membership (re-verified at insert).
         self._result_verified_surfaces: dict[str, str] = {}
         self._settings = settings or {}
+        self._geometry_persisted = False
         self._conn = conn  # optional: sentence DB for sense inventory
         _apply_ui_font(self, self._settings, parent)
         self._ai_worker: _AIGenerateWorker | None = None
@@ -1069,6 +1070,17 @@ class SentenceCardDialog(QDialog):
         except OSError:
             pass
 
+    def _persist_dialog_geometry_once(self) -> None:
+        """Persist geometry once for each completed dialog lifecycle."""
+        if self._geometry_persisted:
+            return
+        self._geometry_persisted = True
+        self._persist_dialog_geometry()
+
+    def accept(self):
+        self._persist_dialog_geometry_once()
+        super().accept()
+
     def closeEvent(self, event):
         """Do not destroy the dialog while its blocking HTTP worker is active."""
         if self._ai_worker is not None and self._ai_worker.isRunning():
@@ -1078,7 +1090,7 @@ class SentenceCardDialog(QDialog):
         if membership is not None and membership.isRunning():
             event.ignore()
             return
-        self._persist_dialog_geometry()
+        self._persist_dialog_geometry_once()
         super().closeEvent(event)
 
     def reject(self):
@@ -1088,6 +1100,7 @@ class SentenceCardDialog(QDialog):
         membership = getattr(self, "_membership_worker", None)
         if membership is not None and membership.isRunning():
             return
+        self._persist_dialog_geometry_once()
         super().reject()
 
 

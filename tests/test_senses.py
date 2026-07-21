@@ -151,6 +151,87 @@ class TestSenseInventory:
 
 
 class TestSentenceCardSenseAtomicity:
+    def test_insert_failure_rolls_back_outer_transaction(self, tmp_path):
+        path = tmp_path / "insert_sentence_transaction.db"
+        transaction_conn = init_db(str(path))
+        ensure_sentence_schema(transaction_conn)
+        transaction_conn.execute(
+            """
+            CREATE TRIGGER abort_second_unfamiliar_item
+            BEFORE INSERT ON unfamiliar_items
+            WHEN NEW.expression = 'second'
+            BEGIN
+                SELECT RAISE(ABORT, 'second child rejected');
+            END
+            """
+        )
+        transaction_conn.commit()
+
+        transaction_conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="second child rejected"):
+            insert_sentence_card(
+                transaction_conn,
+                "first second",
+                [("first", "first meaning"), ("second", "second meaning")],
+            )
+        transaction_conn.close()
+
+        with sqlite3.connect(path) as verify_conn:
+            assert verify_conn.execute(
+                "SELECT value FROM settings WHERE key='outer_write'"
+            ).fetchone() is None
+            assert verify_conn.execute("SELECT id FROM cards").fetchone() is None
+            assert verify_conn.execute(
+                "SELECT id FROM unfamiliar_items"
+            ).fetchone() is None
+
+    def test_update_failure_rolls_back_outer_transaction(self, tmp_path):
+        path = tmp_path / "update_sentence_transaction.db"
+        transaction_conn = init_db(str(path))
+        card_id = insert_sentence_card(
+            transaction_conn, "known", [("known", "known meaning")]
+        )
+        transaction_conn.execute(
+            """
+            CREATE TRIGGER abort_second_replacement_item
+            BEFORE INSERT ON unfamiliar_items
+            WHEN NEW.expression = 'second'
+            BEGIN
+                SELECT RAISE(ABORT, 'second replacement rejected');
+            END
+            """
+        )
+        transaction_conn.commit()
+
+        transaction_conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
+        )
+        with pytest.raises(
+            sqlite3.IntegrityError, match="second replacement rejected"
+        ):
+            update_sentence_card(
+                transaction_conn,
+                card_id,
+                front="first second",
+                back="replacement back",
+                items=[("first", "first meaning"), ("second", "second meaning")],
+            )
+        transaction_conn.close()
+
+        with sqlite3.connect(path) as verify_conn:
+            assert verify_conn.execute(
+                "SELECT value FROM settings WHERE key='outer_write'"
+            ).fetchone() is None
+            assert verify_conn.execute(
+                "SELECT front, back FROM cards WHERE id=?", (card_id,)
+            ).fetchone() == ("known", "")
+            assert verify_conn.execute(
+                "SELECT expression, meaning FROM unfamiliar_items WHERE card_id=?",
+                (card_id,),
+            ).fetchall() == [("known", "known meaning")]
+
     def test_insert_rolls_back_senses_when_second_child_insert_fails(self, conn):
         ensure_expression_senses_table(conn)
         conn.execute(
