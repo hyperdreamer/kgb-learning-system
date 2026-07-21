@@ -1,6 +1,10 @@
 # KGB 5-Box SRS System
 
+**Version 2.0.0**
+
 A spaced-repetition flashcard application with **Markdown**, **MathJax** (LaTeX math), **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
+
+Language learning is **sentence-first**: sentence databases feed a shared sense catalog, which automatically projects a read-only word/phrase dictionary. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ---
 
@@ -14,6 +18,12 @@ pip install PyQt6 edge-tts PyQt6-WebEngine   # WebEngine optional but recommende
 python main.py
 ```
 
+Package version:
+
+```bash
+python -c "from kgb_srs import __version__; print(__version__)"
+```
+
 ---
 
 ## Database Hierarchy
@@ -25,8 +35,8 @@ or the app starts, the canonical category/subtype folders are created:
 ```
 <database_root>/
 ├── Language-based/
-│   ├── Sentence-based/       # Cards with sentence + unfamiliar words
-│   └── Word-Phrase-based/    # Traditional word/phrase → meaning cards
+│   ├── Sentence-based/       # Cards with sentence + unfamiliar words (source of truth)
+│   └── Word-Phrase-based/    # Auto-projected dictionary (read-only)
 └── Knowledge-based/          # Generic front/back cards (math, etc.)
 ```
 
@@ -235,18 +245,20 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package
+kgb_srs/                    # Python package (__version__ = 2.0.0)
 ├── __init__.py
-├── config.py               # Settings, constants
+├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference
 ├── schema.py               # DB init, migration, CRUD helpers
 ├── db.py                   # Backward-compat re-exports from schema
+├── senses.py               # Shared sense catalog + W/P projection
 ├── validation.py           # Sentence matching (literal + inflection-tolerant)
 ├── search.py               # Subtype-aware AND/OR search
 ├── ai_provider.py          # OpenAI-compatible HTTP client
 ├── ai_parser.py            # AI JSON response parsing & validation
 ├── forms.py                # SentenceCardDialog, WordPhraseCardDialog, DBCreationDialog
 ├── dialogs.py              # Generic DynamicInputDialog
+├── settings_dialog.py      # Categorized settings UI
 ├── graphics.py             # Flash card & drop zones
 ├── main_window.py          # Main application window
 ├── markdown_utils.py       # Markdown + MathJax rendering
@@ -254,6 +266,7 @@ kgb_srs/                    # Python package
 
 main.py                     # Entry point
 kgb_srs.py                  # Launcher (backwards-compatible)
+CHANGELOG.md                # Release history
 tests/                      # pytest test suite
 db/                         # Database directory (git-ignored)
 ```

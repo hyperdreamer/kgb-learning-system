@@ -3,6 +3,8 @@
 A spaced-repetition learning application with Markdown + MathJax support.
 """
 
+__version__ = "2.0.0"
+
 # Non-PyQt modules are safe to import eagerly.
 from .config import (
     load_settings,
@@ -20,6 +22,7 @@ from .config import (
 
 __all__ = [
     "BarskyApp",
+    "__version__",
     "load_settings",
     "save_settings",
     "DEFAULT_SETTINGS",
