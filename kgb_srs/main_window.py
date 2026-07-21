@@ -580,7 +580,9 @@ class BarskyApp(QMainWindow):
         self.previous_review_btn = QPushButton(" Previous")
         self.previous_review_btn.setIcon(self._icon("go-previous"))
         self.previous_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.previous_review_btn.setToolTip("Go to previous graded card (Alt+P)")
+        self.previous_review_btn.setToolTip(
+            "Previous card in this review sequence (reverse of Next) (Alt+P)"
+        )
         self.previous_review_btn.clicked.connect(self._previous_daily_card)
 
         review_controls_layout.addWidget(self.restart_review_btn)
@@ -1657,8 +1659,8 @@ class BarskyApp(QMainWindow):
         ACTIVE (daily review in progress):
           - primary button → "Next"
           - Restart / Close → enabled
-          - Previous → enabled only when at least one card was graded
-            this session (history non-empty)
+          - Previous → enabled once the session path has a prior card
+            (after Next or a grade — reverse of Next)
         """
         has_db = self.conn is not None
         has_card = self.current_card is not None
@@ -1690,8 +1692,7 @@ class BarskyApp(QMainWindow):
             self.start_btn.setText(" Next")
             self.start_btn.setIcon(self._icon("go-next"))
             self.restart_review_btn.setEnabled(True)
-            # Previous is only useful after at least one grade; keep it
-            # disabled (not a fake clickable no-op) until then.
+            # Reverse of Next: enable only when there is a prior step.
             self.previous_review_btn.setEnabled(has_history)
             self.close_review_btn.setEnabled(True)
         else:
@@ -1724,20 +1725,25 @@ class BarskyApp(QMainWindow):
         """Skip the current card and advance to the next in the daily queue.
 
         The current (ungraded) card is returned to the end of the queue
-        so it will be reviewed later in this session.
+        so it will be reviewed later in this session.  It is also pushed
+        onto the session path so Previous is the reverse of Next.
         """
         if not self.current_card or self.review_mode != "daily":
             return
 
+        # Session path: Next leaves the current card behind.
+        self._daily_review_history.append(self.current_card)
         # Return ungraded card to end of queue.
         self.cards_due.append(self.current_card)
+        self._update_button_visibility()
         self.show_next_card()
 
     def _previous_daily_card(self):
-        """Navigate back to the previously graded card in this daily session.
+        """Step back one card in this daily session path (reverse of Next).
 
-        The current (ungraded) card goes to the front of the queue.
-        If there is no history yet, this is a no-op.
+        Works after Next (skip) or after a grade.  The current card returns
+        to the front of the queue; the prior path entry is restored.
+        If there is no prior step, this is a no-op.
         """
         if self.review_mode != "daily" or not self._daily_review_history:
             return
@@ -1765,9 +1771,14 @@ class BarskyApp(QMainWindow):
             self._update_button_visibility()
             return
 
-        # Push current (ungraded) card to front of queue only after success.
+        # Push current card to front of queue only after success.
         if self.current_card is not None:
             self.cards_due.insert(0, self.current_card)
+
+        # Next-skip puts the prior card at the end of the queue; remove it
+        # so we do not show a duplicate after restoring it as current.
+        prev_id = prev_card[0]
+        self.cards_due = [c for c in self.cards_due if c[0] != prev_id]
 
         if self.card_ui:
             self.scene.removeItem(self.card_ui)
@@ -2194,7 +2205,7 @@ class BarskyApp(QMainWindow):
         )
         self.conn.commit()
 
-        # Track graded card with the post-grade box for Previous navigation.
+        # Session path: grade also leaves the current card behind (like Next).
         if self.review_mode == "daily":
             self._daily_review_history.append((card_id, front, back, new_box))
             # Reflect Previous availability immediately (before next card draw).

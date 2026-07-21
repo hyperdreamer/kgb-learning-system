@@ -207,18 +207,25 @@ class TestActiveStateButtons:
         )
 
     def test_previous_enabled_in_active(self, app_with_db):
-        """Previous stays disabled until a card is graded (history non-empty)."""
+        """Previous enables after Next or grade (session path non-empty)."""
         app, _, _ = app_with_db
         app.start_review()
         assert app.review_mode == "daily"
+        first_id = app.current_card[0]
         assert not app.previous_review_btn.isEnabled(), (
-            "Previous must stay disabled until at least one card is graded"
+            "Previous must stay disabled on the first card (no prior step)"
         )
-        app.is_current_flipped = True
-        app.process_answer(correct=True)
+        # Next alone must enable Previous (reverse of Next — no grade needed).
+        app._advance_daily_queue()
         assert app.previous_review_btn.isEnabled(), (
-            "Previous must enable after a card is graded"
+            "Previous must enable after Next advances the session path"
         )
+        assert app.current_card is not None
+        assert app.current_card[0] != first_id or len(app._daily_review_history) >= 1
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == first_id
+
 
     def test_close_enabled_in_active(self, app_with_db):
         app, _, _ = app_with_db
@@ -466,8 +473,18 @@ class TestDailyReviewHistoryTracking:
         app, _, _ = app_with_db
         app.start_review()
         assert app._daily_review_history == [], (
-            "History must be empty when daily review starts"
+            "Session path must be empty when daily review starts"
         )
+
+    def test_next_adds_to_session_path(self, app_with_db):
+        """Next (skip) must push the current card onto the session path."""
+        app, _, _ = app_with_db
+        app.start_review()
+        first = app.current_card
+        app._advance_daily_queue()
+        assert len(app._daily_review_history) == 1
+        assert app._daily_review_history[0][0] == first[0]
+        assert app.previous_review_btn.isEnabled()
 
     def test_grading_adds_to_history(self, app_with_db):
         app, _, _ = app_with_db
@@ -478,7 +495,7 @@ class TestDailyReviewHistoryTracking:
         app.process_answer(correct=True)
 
         assert len(app._daily_review_history) == 1, (
-            "Grading a card must add it to review history"
+            "Grading a card must add it to the session path"
         )
         assert app._daily_review_history[0][0] == graded_card[0], (
             "History must contain the graded card"
@@ -594,13 +611,32 @@ class TestProcessAnswerFreshBox:
         assert app.current_card is not None
         assert app.current_card[0] == last_graded
 
+    def test_previous_is_reverse_of_next(self, app_with_db):
+        """Next then Previous returns to the same card (sequence reverse)."""
+        app, _, _ = app_with_db
+        app.start_review()
+        first = app.current_card
+        assert first is not None
+        app._on_primary_button_clicked()  # Next
+        second = app.current_card
+        assert second is not None
+        assert app.previous_review_btn.isEnabled()
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == first[0]
+        # One more Next should get back to the card we left.
+        app._on_primary_button_clicked()
+        assert app.current_card is not None
+        assert app.current_card[0] == second[0]
+
     def test_previous_disabled_before_any_grade(self, app_with_db):
+        """On the first card, Previous is disabled (no prior step yet)."""
         app, _, _ = app_with_db
         app.start_review()
         assert app.review_mode == "daily"
         assert app._daily_review_history == []
         assert not app.previous_review_btn.isEnabled()
-        # Click path is a no-op when history is empty.
+        # Click path is a no-op when path is empty.
         before = app.current_card
         app._previous_daily_card()
         assert app.current_card == before
