@@ -49,6 +49,111 @@ class TestAIProviderConfig:
         assert cfg.api_key == "sk-abc"
         assert cfg.model == "gpt-4o-mini"
 
+    def test_from_settings_uses_active_profile(self):
+        settings = {
+            "ai_active_provider": "DeepSeek",
+            "ai_providers": {
+                "OpenAI": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": "sk-openai",
+                    "timeout": 30,
+                },
+                "DeepSeek": {
+                    "base_url": "https://api.deepseek.com/v1",
+                    "model": "deepseek-chat",
+                    "api_key": "sk-deep",
+                    "timeout": 20,
+                },
+            },
+            # Stale flat keys must not win over active profile.
+            "ai_base_url": "https://stale.example/v1",
+            "ai_model": "stale",
+            "ai_api_key": "sk-stale",
+            "ai_timeout": 5,
+        }
+        cfg = AIProviderConfig.from_settings(settings)
+        assert cfg.base_url == "https://api.deepseek.com/v1"
+        assert cfg.model == "deepseek-chat"
+        assert cfg.api_key == "sk-deep"
+        assert cfg.timeout_seconds == 20
+        # Flat keys remirrored to active profile.
+        assert settings["ai_base_url"] == "https://api.deepseek.com/v1"
+        assert settings["ai_model"] == "deepseek-chat"
+
+    def test_legacy_flat_settings_migrate_to_default_profile(self):
+        from kgb_srs.ai_provider import ensure_ai_provider_profiles
+
+        settings = {
+            "ai_base_url": "https://tokenhub.example/v1",
+            "ai_model": "flash",
+            "ai_api_key": "sk-legacy",
+            "ai_timeout": 40,
+        }
+        ensure_ai_provider_profiles(settings)
+        assert "Default" in settings["ai_providers"]
+        assert settings["ai_active_provider"] == "Default"
+        assert settings["ai_providers"]["Default"]["model"] == "flash"
+        assert settings["ai_providers"]["Default"]["api_key"] == "sk-legacy"
+
+    def test_load_settings_preserves_legacy_flat_api_key(self, tmp_path, monkeypatch):
+        """Flat-only barsky_settings.json must not lose ai_api_key on load."""
+        import kgb_srs.config as config
+
+        settings_path = tmp_path / "barsky_settings.json"
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "ai_api_key": "sk-legacy-key",
+                    "ai_model": "deepseek-chat",
+                    "width": 900,
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = config.load_settings()
+        assert loaded["ai_api_key"] == "sk-legacy-key"
+        assert loaded["ai_model"] == "deepseek-chat"
+        assert loaded["ai_providers"][loaded["ai_active_provider"]]["api_key"] == (
+            "sk-legacy-key"
+        )
+
+    def test_switch_add_rename_delete_profiles(self):
+        from kgb_srs.ai_provider import (
+            delete_ai_provider,
+            ensure_ai_provider_profiles,
+            rename_ai_provider,
+            set_active_ai_provider,
+            upsert_ai_provider,
+        )
+
+        settings = {
+            "ai_base_url": "https://api.openai.com/v1",
+            "ai_model": "gpt-4o-mini",
+            "ai_api_key": "sk-a",
+            "ai_timeout": 30,
+        }
+        ensure_ai_provider_profiles(settings)
+        upsert_ai_provider(
+            settings,
+            "TokenHub",
+            base_url="https://tokenhub.example/v1",
+            model="deepseek-v4",
+            api_key="sk-b",
+            timeout=25,
+            make_active=True,
+        )
+        assert settings["ai_active_provider"] == "TokenHub"
+        assert settings["ai_model"] == "deepseek-v4"
+        assert set_active_ai_provider(settings, "Default")
+        assert settings["ai_model"] == "gpt-4o-mini"
+        assert rename_ai_provider(settings, "TokenHub", "TH") == "TH"
+        assert "TokenHub" not in settings["ai_providers"]
+        assert "TH" in settings["ai_providers"]
+        assert delete_ai_provider(settings, "TH") is True
+        assert delete_ai_provider(settings, "Default") is False  # last one
+
     def test_configured_property(self):
         assert AIProviderConfig().configured is False
         assert AIProviderConfig(api_key="sk-test").configured is True
@@ -57,6 +162,7 @@ class TestAIProviderConfig:
         cfg = AIProviderConfig(api_key="sk-secret-12345")
         r = repr(cfg)
         assert "sk-secret" not in r
+        assert "***" in r
 
 
 # ---------------------------------------------------------------------------

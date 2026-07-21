@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -25,7 +26,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .ai_provider import AIProviderConfig, create_ai_test_worker
+from .ai_provider import (
+    AIProviderConfig,
+    DEFAULT_AI_PROVIDER_NAME,
+    create_ai_test_worker,
+    delete_ai_provider,
+    ensure_ai_provider_profiles,
+    get_ai_provider_entry,
+    list_ai_provider_names,
+    rename_ai_provider,
+    set_active_ai_provider,
+    upsert_ai_provider,
+)
 from .config import (
     DIR_DB,
     ensure_database_root_structure,
@@ -103,6 +115,25 @@ class SettingsDialog(QDialog):
         if parent is not None:
             self.setFont(parent.font())
         self.settings = settings
+        # Staged AI provider bag (mutated by switch/add/rename/delete before Save).
+        self._ai_stage = {
+            "ai_base_url": settings.get("ai_base_url", "https://api.openai.com/v1"),
+            "ai_model": settings.get("ai_model", "gpt-4o-mini"),
+            "ai_api_key": settings.get("ai_api_key", ""),
+            "ai_timeout": settings.get("ai_timeout", 30),
+            "ai_active_provider": settings.get(
+                "ai_active_provider", DEFAULT_AI_PROVIDER_NAME
+            ),
+            "ai_providers": {
+                name: dict(entry)
+                for name, entry in (
+                    settings.get("ai_providers") or {}
+                ).items()
+                if isinstance(entry, dict)
+            },
+        }
+        ensure_ai_provider_profiles(self._ai_stage)
+        self._ai_loading_profile = False
         self.current_size = current_size
         self.current_voice = settings.get(
             "tts_voice", "en-US-AvaMultilingualNeural"
@@ -350,21 +381,47 @@ class SettingsDialog(QDialog):
 
     def _build_ai_page(self):
         page, layout = self._page()
-        self.ai_base_url_input = QLineEdit(
-            self.settings.get("ai_base_url", "https://api.openai.com/v1")
+
+        # --- Provider profile switcher ---
+        self.ai_provider_combo = QComboBox()
+        self.ai_provider_combo.setObjectName("aiProviderCombo")
+        self.ai_provider_combo.setEditable(False)
+        self.ai_provider_combo.setToolTip(
+            "Switch between saved OpenAI-compatible provider profiles."
         )
+        layout.addRow("Provider:", self.ai_provider_combo)
+
+        profile_btns = QWidget()
+        profile_btns_layout = QHBoxLayout(profile_btns)
+        profile_btns_layout.setContentsMargins(0, 0, 0, 0)
+        profile_btns_layout.setSpacing(6)
+        self.ai_provider_add_btn = QPushButton("Add")
+        self.ai_provider_add_btn.setObjectName("aiProviderAddButton")
+        self.ai_provider_add_btn.setToolTip(
+            "Save a new provider profile (copy of current fields)."
+        )
+        self.ai_provider_rename_btn = QPushButton("Rename")
+        self.ai_provider_rename_btn.setObjectName("aiProviderRenameButton")
+        self.ai_provider_delete_btn = QPushButton("Delete")
+        self.ai_provider_delete_btn.setObjectName("aiProviderDeleteButton")
+        self.ai_provider_delete_btn.setToolTip(
+            "Delete the selected profile (at least one must remain)."
+        )
+        profile_btns_layout.addWidget(self.ai_provider_add_btn)
+        profile_btns_layout.addWidget(self.ai_provider_rename_btn)
+        profile_btns_layout.addWidget(self.ai_provider_delete_btn)
+        profile_btns_layout.addStretch(1)
+        layout.addRow("", profile_btns)
+
+        self.ai_base_url_input = QLineEdit()
         self.ai_base_url_input.setObjectName("aiBaseUrlInput")
         layout.addRow("Base URL:", self.ai_base_url_input)
 
-        self.ai_model_input = QLineEdit(
-            self.settings.get("ai_model", "gpt-4o-mini")
-        )
+        self.ai_model_input = QLineEdit()
         self.ai_model_input.setObjectName("aiModelInput")
         layout.addRow("Model:", self.ai_model_input)
 
-        self.ai_api_key_input = SecretLineEdit(
-            self.settings.get("ai_api_key", "")
-        )
+        self.ai_api_key_input = SecretLineEdit("")
         self.ai_api_key_input.setObjectName("aiApiKeyInput")
         self.ai_api_key_input.setPlaceholderText(
             "sk-... (stored locally, never committed)"
@@ -374,9 +431,6 @@ class SettingsDialog(QDialog):
         self.ai_timeout_input = QSpinBox()
         self.ai_timeout_input.setObjectName("aiTimeoutInput")
         self.ai_timeout_input.setRange(5, 120)
-        self.ai_timeout_input.setValue(
-            int(self.settings.get("ai_timeout", 30))
-        )
         self.ai_timeout_input.setSuffix(" s")
         layout.addRow("Timeout:", self.ai_timeout_input)
 
@@ -401,7 +455,180 @@ class SettingsDialog(QDialog):
         test_layout.addWidget(self.ai_test_status_label, 1)
         layout.addRow("", test_row)
         self.ai_test_button.clicked.connect(self._start_ai_test)
+
+        self.ai_provider_combo.currentTextChanged.connect(
+            self._on_ai_provider_selected
+        )
+        self.ai_provider_add_btn.clicked.connect(self._add_ai_provider)
+        self.ai_provider_rename_btn.clicked.connect(self._rename_ai_provider)
+        self.ai_provider_delete_btn.clicked.connect(self._delete_ai_provider)
+
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
         self.pages.addWidget(page)
+
+    def _current_ai_provider_name(self) -> str:
+        name = self.ai_provider_combo.currentText().strip()
+        if name:
+            return name
+        return str(
+            self._ai_stage.get("ai_active_provider") or DEFAULT_AI_PROVIDER_NAME
+        )
+
+    def _capture_ai_fields_to_stage(
+        self, name: str | None = None, *, make_active: bool = True
+    ) -> None:
+        """Write current form fields into the staged profile bag."""
+        label = (name or self._current_ai_provider_name()).strip()
+        if not label:
+            label = DEFAULT_AI_PROVIDER_NAME
+        upsert_ai_provider(
+            self._ai_stage,
+            label,
+            base_url=self.ai_base_url_input.text().strip(),
+            model=self.ai_model_input.text().strip(),
+            api_key=self.ai_api_key_input.text().strip(),
+            timeout=self.ai_timeout_input.value(),
+            make_active=make_active,
+        )
+
+    def _load_active_ai_profile_into_fields(self) -> None:
+        entry = get_ai_provider_entry(self._ai_stage)
+        self._ai_loading_profile = True
+        try:
+            self.ai_base_url_input.setText(entry.get("base_url", ""))
+            self.ai_model_input.setText(entry.get("model", ""))
+            self.ai_api_key_input.setText(entry.get("api_key", ""))
+            self.ai_timeout_input.setValue(int(entry.get("timeout", 30)))
+        finally:
+            self._ai_loading_profile = False
+        self.ai_test_status_label.setText("")
+        self.ai_test_status_label.setStyleSheet("")
+        self._update_ai_profile_buttons()
+
+    def _reload_ai_provider_combo(self) -> None:
+        names = list_ai_provider_names(self._ai_stage)
+        active = self._ai_stage.get("ai_active_provider", DEFAULT_AI_PROVIDER_NAME)
+        self._ai_loading_profile = True
+        try:
+            self.ai_provider_combo.blockSignals(True)
+            self.ai_provider_combo.clear()
+            self.ai_provider_combo.addItems(names)
+            idx = self.ai_provider_combo.findText(active)
+            if idx < 0:
+                idx = 0
+            self.ai_provider_combo.setCurrentIndex(idx)
+        finally:
+            self.ai_provider_combo.blockSignals(False)
+            self._ai_loading_profile = False
+        self._update_ai_profile_buttons()
+
+    def _update_ai_profile_buttons(self) -> None:
+        count = len(self._ai_stage.get("ai_providers") or {})
+        self.ai_provider_delete_btn.setEnabled(count > 1)
+
+    def _on_ai_provider_selected(self, name: str) -> None:
+        if self._ai_loading_profile:
+            return
+        name = (name or "").strip()
+        if not name:
+            return
+        # Persist edits on the previous active profile before switching.
+        previous = self._ai_stage.get("ai_active_provider")
+        if previous and previous != name:
+            self._capture_ai_fields_to_stage(previous, make_active=False)
+        if not set_active_ai_provider(self._ai_stage, name):
+            return
+        self._load_active_ai_profile_into_fields()
+
+    def _prompt_provider_name(self, title: str, initial: str = "") -> str | None:
+        text, ok = QInputDialog.getText(
+            self,
+            title,
+            "Provider name:",
+            QLineEdit.EchoMode.Normal,
+            initial,
+        )
+        if not ok:
+            return None
+        name = (text or "").strip()
+        if not name:
+            QMessageBox.warning(self, title, "Provider name cannot be empty.")
+            return None
+        return name
+
+    def _add_ai_provider(self) -> None:
+        # Keep current edits on the active profile first.
+        self._capture_ai_fields_to_stage()
+        name = self._prompt_provider_name("Add AI Provider")
+        if not name:
+            return
+        if name in (self._ai_stage.get("ai_providers") or {}):
+            QMessageBox.warning(
+                self,
+                "Add AI Provider",
+                f"A provider named “{name}” already exists.",
+            )
+            return
+        # New profile starts as a copy of the current form fields.
+        upsert_ai_provider(
+            self._ai_stage,
+            name,
+            base_url=self.ai_base_url_input.text().strip(),
+            model=self.ai_model_input.text().strip(),
+            api_key=self.ai_api_key_input.text().strip(),
+            timeout=self.ai_timeout_input.value(),
+            make_active=True,
+        )
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
+
+    def _rename_ai_provider(self) -> None:
+        old = self._current_ai_provider_name()
+        self._capture_ai_fields_to_stage(old)
+        new = self._prompt_provider_name("Rename AI Provider", initial=old)
+        if not new or new == old:
+            return
+        result = rename_ai_provider(self._ai_stage, old, new)
+        if result is None:
+            QMessageBox.warning(
+                self,
+                "Rename AI Provider",
+                f"Could not rename to “{new}” "
+                f"(name may already exist).",
+            )
+            return
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
+
+    def _delete_ai_provider(self) -> None:
+        name = self._current_ai_provider_name()
+        providers = self._ai_stage.get("ai_providers") or {}
+        if len(providers) <= 1:
+            QMessageBox.information(
+                self,
+                "Delete AI Provider",
+                "At least one provider profile is required.",
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete AI Provider",
+            f"Delete provider “{name}”?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not delete_ai_provider(self._ai_stage, name):
+            QMessageBox.warning(
+                self,
+                "Delete AI Provider",
+                "Could not delete this provider.",
+            )
+            return
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
 
     def browse_database_root(self):
         start = self.database_root_input.text().strip() or DIR_DB
@@ -728,10 +955,20 @@ class SettingsDialog(QDialog):
         )
         staged["tts_voice"] = self.current_voice
         staged["tts_language"] = self.current_language or ""
-        staged["ai_base_url"] = self.ai_base_url_input.text().strip()
-        staged["ai_model"] = self.ai_model_input.text().strip()
-        staged["ai_api_key"] = self.ai_api_key_input.text().strip()
-        staged["ai_timeout"] = self.ai_timeout_input.value()
+        # Capture current form fields into the active staged profile first.
+        self._capture_ai_fields_to_stage()
+        ensure_ai_provider_profiles(self._ai_stage)
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in self._ai_stage["ai_providers"].items()
+        }
+        staged["ai_active_provider"] = self._ai_stage["ai_active_provider"]
+        # Flat keys always mirror the active profile.
+        active = get_ai_provider_entry(self._ai_stage)
+        staged["ai_base_url"] = active["base_url"]
+        staged["ai_model"] = active["model"]
+        staged["ai_api_key"] = active["api_key"]
+        staged["ai_timeout"] = active["timeout"]
         staged["explanation_language"] = (
             self.explanation_language_input.text().strip()
         )

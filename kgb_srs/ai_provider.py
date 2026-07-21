@@ -17,6 +17,164 @@ from dataclasses import dataclass
 # Configuration
 # ---------------------------------------------------------------------------
 
+DEFAULT_AI_PROVIDER_NAME = "Default"
+
+
+def _safe_timeout(value, default: int = 30) -> int:
+    try:
+        return max(5, min(120, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_provider_entry(raw: dict | None) -> dict:
+    """Normalize one provider profile dict (no secrets leaked in errors)."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "base_url": str(raw.get("base_url") or "https://api.openai.com/v1").strip(),
+        "model": str(raw.get("model") or "gpt-4o-mini").strip(),
+        "api_key": str(raw.get("api_key") or ""),
+        "timeout": _safe_timeout(raw.get("timeout", 30)),
+    }
+
+
+def _flat_entry_from_settings(settings: dict) -> dict:
+    return {
+        "base_url": str(
+            settings.get("ai_base_url") or "https://api.openai.com/v1"
+        ).strip(),
+        "model": str(settings.get("ai_model") or "gpt-4o-mini").strip(),
+        "api_key": str(settings.get("ai_api_key") or ""),
+        "timeout": _safe_timeout(settings.get("ai_timeout", 30)),
+    }
+
+
+def ensure_ai_provider_profiles(settings: dict) -> dict:
+    """Ensure *settings* has ``ai_providers`` + ``ai_active_provider``.
+
+    Migrates legacy flat keys into a single profile when profiles are
+    missing. Always mirrors the active profile back onto flat keys so
+    older readers keep working. Mutates and returns *settings*.
+    """
+    providers_raw = settings.get("ai_providers")
+    providers: dict[str, dict] = {}
+    if isinstance(providers_raw, dict):
+        for name, entry in providers_raw.items():
+            label = str(name or "").strip()
+            if not label:
+                continue
+            providers[label] = _normalize_provider_entry(entry)
+
+    if not providers:
+        providers[DEFAULT_AI_PROVIDER_NAME] = _flat_entry_from_settings(settings)
+
+    active = str(settings.get("ai_active_provider") or "").strip()
+    if active not in providers:
+        active = next(iter(providers))
+
+    settings["ai_providers"] = providers
+    settings["ai_active_provider"] = active
+    # Mirror active profile onto flat keys (backward-compatible surface).
+    entry = providers[active]
+    settings["ai_base_url"] = entry["base_url"]
+    settings["ai_model"] = entry["model"]
+    settings["ai_api_key"] = entry["api_key"]
+    settings["ai_timeout"] = entry["timeout"]
+    return settings
+
+
+def list_ai_provider_names(settings: dict) -> list[str]:
+    """Sorted provider profile names (active first, then alpha)."""
+    ensure_ai_provider_profiles(settings)
+    active = settings["ai_active_provider"]
+    names = sorted(settings["ai_providers"].keys(), key=str.casefold)
+    if active in names:
+        names.remove(active)
+        names.insert(0, active)
+    return names
+
+
+def get_ai_provider_entry(settings: dict, name: str | None = None) -> dict:
+    """Return a copy of the named (or active) provider profile."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or settings["ai_active_provider"]).strip()
+    entry = settings["ai_providers"].get(label)
+    if entry is None:
+        entry = settings["ai_providers"][settings["ai_active_provider"]]
+    return dict(entry)
+
+
+def set_active_ai_provider(settings: dict, name: str) -> bool:
+    """Switch active provider; return False if *name* is unknown."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or "").strip()
+    if label not in settings["ai_providers"]:
+        return False
+    settings["ai_active_provider"] = label
+    ensure_ai_provider_profiles(settings)
+    return True
+
+
+def upsert_ai_provider(
+    settings: dict,
+    name: str,
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    timeout: int,
+    make_active: bool = False,
+) -> str:
+    """Create or update a named provider profile. Returns the stored name."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or "").strip() or DEFAULT_AI_PROVIDER_NAME
+    settings["ai_providers"][label] = _normalize_provider_entry(
+        {
+            "base_url": base_url,
+            "model": model,
+            "api_key": api_key,
+            "timeout": timeout,
+        }
+    )
+    if make_active or settings.get("ai_active_provider") not in settings["ai_providers"]:
+        settings["ai_active_provider"] = label
+    ensure_ai_provider_profiles(settings)
+    return label
+
+
+def rename_ai_provider(settings: dict, old_name: str, new_name: str) -> str | None:
+    """Rename a profile. Returns new name, or None if rename failed."""
+    ensure_ai_provider_profiles(settings)
+    old = (old_name or "").strip()
+    new = (new_name or "").strip()
+    if not old or not new or old not in settings["ai_providers"]:
+        return None
+    if new != old and new in settings["ai_providers"]:
+        return None
+    if new == old:
+        return old
+    settings["ai_providers"][new] = settings["ai_providers"].pop(old)
+    if settings.get("ai_active_provider") == old:
+        settings["ai_active_provider"] = new
+    ensure_ai_provider_profiles(settings)
+    return new
+
+
+def delete_ai_provider(settings: dict, name: str) -> bool:
+    """Delete a profile. Refuses to delete the last remaining one."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or "").strip()
+    if label not in settings["ai_providers"]:
+        return False
+    if len(settings["ai_providers"]) <= 1:
+        return False
+    del settings["ai_providers"][label]
+    if settings.get("ai_active_provider") == label:
+        settings["ai_active_provider"] = next(iter(settings["ai_providers"]))
+    ensure_ai_provider_profiles(settings)
+    return True
+
+
 @dataclass
 class AIProviderConfig:
     """AI provider configuration.
@@ -32,11 +190,14 @@ class AIProviderConfig:
 
     @classmethod
     def from_settings(cls, settings: dict) -> "AIProviderConfig":
+        """Build config from the *active* provider profile (or flat keys)."""
+        ensure_ai_provider_profiles(settings)
+        entry = get_ai_provider_entry(settings)
         return cls(
-            base_url=settings.get("ai_base_url", cls.base_url),
-            model=settings.get("ai_model", cls.model),
-            api_key=settings.get("ai_api_key", ""),
-            timeout_seconds=int(settings.get("ai_timeout", cls.timeout_seconds)),
+            base_url=entry.get("base_url", cls.base_url),
+            model=entry.get("model", cls.model),
+            api_key=entry.get("api_key", ""),
+            timeout_seconds=int(entry.get("timeout", cls.timeout_seconds)),
         )
 
     @property

@@ -820,6 +820,88 @@ def test_ai_test_missing_api_key_fails_without_hanging(monkeypatch, settings):
     dialog.reject()
 
 
+def test_ai_provider_combo_loads_profiles_and_switches(monkeypatch, settings):
+    settings["ai_providers"] = {
+        "OpenAI": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-openai",
+            "timeout": 30,
+        },
+        "TokenHub": {
+            "base_url": "https://tokenhub.example/v1",
+            "model": "deepseek-v4",
+            "api_key": "sk-th",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "TokenHub"
+    settings["ai_base_url"] = "https://tokenhub.example/v1"
+    settings["ai_model"] = "deepseek-v4"
+    settings["ai_api_key"] = "sk-th"
+    settings["ai_timeout"] = 20
+
+    dialog, _ = _dialog(monkeypatch, settings)
+    assert dialog.ai_provider_combo.count() == 2
+    assert dialog.ai_provider_combo.currentText() == "TokenHub"
+    assert dialog.ai_model_input.text() == "deepseek-v4"
+    assert dialog.ai_api_key_input.text() == "sk-th"
+
+    # Edit TokenHub, switch to OpenAI, then back — TokenHub edit kept.
+    dialog.ai_model_input.setText("deepseek-edited")
+    dialog.ai_provider_combo.setCurrentText("OpenAI")
+    _app().processEvents()
+    assert dialog.ai_model_input.text() == "gpt-4o-mini"
+    assert dialog.ai_api_key_input.text() == "sk-openai"
+
+    dialog.ai_provider_combo.setCurrentText("TokenHub")
+    _app().processEvents()
+    assert dialog.ai_model_input.text() == "deepseek-edited"
+    dialog.reject()
+
+
+def test_ai_provider_profiles_saved_on_apply(monkeypatch, settings):
+    saved = []
+    settings["ai_providers"] = {
+        "OpenAI": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-openai",
+            "timeout": 30,
+        },
+        "TokenHub": {
+            "base_url": "https://tokenhub.example/v1",
+            "model": "deepseek-v4",
+            "api_key": "sk-th",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "OpenAI"
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.ai_provider_combo.setCurrentText("TokenHub")
+    _app().processEvents()
+    dialog.ai_model_input.setText("flash-2")
+    dialog.save_button.click()
+    _app().processEvents()
+
+    assert len(saved) == 1
+    assert saved[0]["ai_active_provider"] == "TokenHub"
+    assert saved[0]["ai_model"] == "flash-2"
+    assert saved[0]["ai_providers"]["TokenHub"]["model"] == "flash-2"
+    assert saved[0]["ai_providers"]["OpenAI"]["model"] == "gpt-4o-mini"
+    assert settings["ai_active_provider"] == "TokenHub"
+
+
+def test_ai_provider_delete_disabled_for_last_profile(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    # Fixture migrates to a single Default profile.
+    assert dialog.ai_provider_combo.count() == 1
+    assert dialog.ai_provider_delete_btn.isEnabled() is False
+    dialog.reject()
+
+
 # ---------------------------------------------------------------------------
 # Voice picker: filters, selection, preview, empty/error states
 # ---------------------------------------------------------------------------

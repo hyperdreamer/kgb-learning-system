@@ -37,11 +37,21 @@ DEFAULT_SETTINGS = {
     "tts_voice": "en-US-AvaMultilingualNeural",
     # Audio page language filter ("" = All languages)
     "tts_language": "",
-    # AI provider defaults (non-secret)
+    # AI provider defaults (non-secret). Flat keys mirror the active profile.
     "ai_base_url": "https://api.openai.com/v1",
     "ai_model": "gpt-4o-mini",
     "ai_api_key": "",
     "ai_timeout": 30,
+    # Named OpenAI-compatible provider profiles (switchable in Settings).
+    "ai_active_provider": "Default",
+    "ai_providers": {
+        "Default": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "",
+            "timeout": 30,
+        }
+    },
     # Language settings for AI prompts
     "explanation_language": "Chinese",
 }
@@ -166,12 +176,32 @@ def normalize_default_database(value: str, root: str) -> str:
 def load_settings():
     """Load settings from JSON file, merging with defaults."""
     settings = dict(DEFAULT_SETTINGS)
-    if os.path.exists(SETTINGS_FILE):
+    # Deep-copy nested defaults so callers cannot mutate the module constant.
+    settings["ai_providers"] = {
+        name: dict(entry)
+        for name, entry in DEFAULT_SETTINGS.get("ai_providers", {}).items()
+    }
+    loaded: dict = {}
+    if os.path.isfile(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                settings.update(json.load(f))
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                loaded = raw
+                settings.update(loaded)
         except Exception as e:
             print(f"Error loading settings: {e}")
+    # If the on-disk file is still flat-only (no ai_providers), drop the
+    # default bag so ensure_ai_provider_profiles migrates from flat keys.
+    # Otherwise an empty Default profile would clobber a real ai_api_key.
+    if "ai_providers" not in loaded:
+        settings.pop("ai_providers", None)
+        if "ai_active_provider" not in loaded:
+            settings.pop("ai_active_provider", None)
+    # Normalize AI provider profiles (migrates legacy flat-only configs).
+    from .ai_provider import ensure_ai_provider_profiles
+
+    ensure_ai_provider_profiles(settings)
     return settings
 
 
