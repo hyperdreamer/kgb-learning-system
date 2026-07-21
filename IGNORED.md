@@ -83,3 +83,27 @@ See commits:
 - `f48b8f3` — audit round 3 (meaning/example split via MeaningResult fields, atomic W/P derivation commit, DB-open error handling + conn close, search function registration cache, DB/TTS file permissions 0o600, non-integer sense_id silent fallback, 60+ irregular noun plurals)
 
 Round 4 re-audit: **CLEAN** — no actionable findings remain (473 tests).
+
+---
+
+## 6. `_REGISTERED_CONNS` global set retains connection references (minor memory leak)
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low (efficiency) |
+| **Files** | `kgb_srs/search.py:36` |
+| **Behavior** | Module-level `set()` accumulates every `sqlite3.Connection` for which `kgb_contains` was registered. Closed connections are never removed, preventing GC. Accumulation across `load_database` calls is unbounded. |
+| **Why deferred** | `sqlite3.Connection` objects are not hashable for `weakref.WeakSet` — the natural fix is incompatible. In practice connections are long-lived, making the leak negligible. |
+| **Risk if fixed** | Low — using `weakref` or connection-id-based schemes would work but adds complexity for minimal practical benefit. |
+| **Suggested fix (when ready)** | Use `id(conn)` as the cache key instead of `conn` itself, or accept the leak as de minimis.
+
+---
+
+## Round 4+ fixes (applied on `dev`)
+
+See commits:
+
+- `c9b89f7` — audit round 4 (15 findings: M1 duplicate test class, M2 dead _split_meaning_example, M4 92 ruff → 0, M5 double TTS signal wiring, L1-L12 unused imports/variables, _make_http_call inlined)
+- `641d0e2` — re-audit regression (C1 _clear_all_rows method restored, L1 dead getattr removed, L2 unused logic param documented)
+
+Round 5 final re-audit: **CLEAN** — 472 tests, ruff 0 violations, ACTIONABLE FINDINGS: None.
