@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 from .ai_provider import (
     AIProviderConfig,
     DEFAULT_AI_PROVIDER_NAME,
+    create_ai_models_worker,
     create_ai_test_worker,
     delete_ai_provider,
     ensure_ai_provider_profiles,
@@ -141,6 +142,7 @@ class SettingsDialog(QDialog):
         self.current_language = settings.get("tts_language", "") or ""
         self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
+        self.ai_models_worker = None
         self.preview_tts_worker = None
         self._tts_temp_path = None
         self.setWindowTitle("App Settings")
@@ -417,9 +419,27 @@ class SettingsDialog(QDialog):
         self.ai_base_url_input.setObjectName("aiBaseUrlInput")
         layout.addRow("Base URL:", self.ai_base_url_input)
 
-        self.ai_model_input = QLineEdit()
+        model_row = QWidget()
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        self.ai_model_input = QComboBox()
         self.ai_model_input.setObjectName("aiModelInput")
-        layout.addRow("Model:", self.ai_model_input)
+        self.ai_model_input.setEditable(True)
+        self.ai_model_input.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.ai_model_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self.ai_model_input.lineEdit().setPlaceholderText(
+            "model id (or Refresh to list)"
+        )
+        self.ai_models_refresh_btn = QPushButton("Refresh")
+        self.ai_models_refresh_btn.setObjectName("aiModelsRefreshButton")
+        self.ai_models_refresh_btn.setToolTip(
+            "Fetch available models from Base URL + API Key (/v1/models)."
+        )
+        model_layout.addWidget(self.ai_model_input, 1)
+        model_layout.addWidget(self.ai_models_refresh_btn)
+        layout.addRow("Model:", model_row)
 
         self.ai_api_key_input = SecretLineEdit("")
         self.ai_api_key_input.setObjectName("aiApiKeyInput")
@@ -455,6 +475,7 @@ class SettingsDialog(QDialog):
         test_layout.addWidget(self.ai_test_status_label, 1)
         layout.addRow("", test_row)
         self.ai_test_button.clicked.connect(self._start_ai_test)
+        self.ai_models_refresh_btn.clicked.connect(self._start_ai_models_refresh)
 
         self.ai_provider_combo.currentTextChanged.connect(
             self._on_ai_provider_selected
@@ -486,7 +507,7 @@ class SettingsDialog(QDialog):
             self._ai_stage,
             label,
             base_url=self.ai_base_url_input.text().strip(),
-            model=self.ai_model_input.text().strip(),
+            model=self._ai_model_text(),
             api_key=self.ai_api_key_input.text().strip(),
             timeout=self.ai_timeout_input.value(),
             make_active=make_active,
@@ -497,7 +518,8 @@ class SettingsDialog(QDialog):
         self._ai_loading_profile = True
         try:
             self.ai_base_url_input.setText(entry.get("base_url", ""))
-            self.ai_model_input.setText(entry.get("model", ""))
+            model = str(entry.get("model", "") or "").strip()
+            self._populate_ai_models([model] if model else [], keep=model)
             self.ai_api_key_input.setText(entry.get("api_key", ""))
             self.ai_timeout_input.setValue(int(entry.get("timeout", 30)))
         finally:
@@ -575,7 +597,7 @@ class SettingsDialog(QDialog):
             self._ai_stage,
             name,
             base_url=self.ai_base_url_input.text().strip(),
-            model=self.ai_model_input.text().strip(),
+            model=self._ai_model_text(),
             api_key=self.ai_api_key_input.text().strip(),
             timeout=self.ai_timeout_input.value(),
             make_active=True,
@@ -890,10 +912,43 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     # AI test
     # ------------------------------------------------------------------
+
+    def _ai_model_text(self) -> str:
+        """Current model id from the editable combo (typed or selected)."""
+        return self.ai_model_input.currentText().strip()
+
+    def _set_ai_model_text(self, model: str) -> None:
+        """Set the model combo text without wiping discovered items."""
+        value = (model or "").strip()
+        idx = self.ai_model_input.findText(value)
+        if idx >= 0:
+            self.ai_model_input.setCurrentIndex(idx)
+        else:
+            self.ai_model_input.setEditText(value)
+
+    def _populate_ai_models(self, models: list[str], *, keep: str | None = None) -> None:
+        """Fill the model combo with *models*, preserving *keep* selection."""
+        selected = (keep if keep is not None else self._ai_model_text()).strip()
+        self.ai_model_input.blockSignals(True)
+        try:
+            self.ai_model_input.clear()
+            if models:
+                self.ai_model_input.addItems(list(models))
+            if selected:
+                idx = self.ai_model_input.findText(selected)
+                if idx >= 0:
+                    self.ai_model_input.setCurrentIndex(idx)
+                else:
+                    # Keep user's current/custom model even if not in the list.
+                    self.ai_model_input.insertItem(0, selected)
+                    self.ai_model_input.setCurrentIndex(0)
+        finally:
+            self.ai_model_input.blockSignals(False)
+
     def _staged_ai_config(self) -> AIProviderConfig:
         return AIProviderConfig(
             base_url=self.ai_base_url_input.text().strip(),
-            model=self.ai_model_input.text().strip(),
+            model=self._ai_model_text(),
             api_key=self.ai_api_key_input.text().strip(),
             timeout_seconds=self.ai_timeout_input.value(),
         )
@@ -913,7 +968,7 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_ai_test_result(self, ok, message, latency_ms):
-        model = self.ai_model_input.text().strip() or "model"
+        model = self._ai_model_text() or "model"
         if ok:
             ms = int(round(latency_ms)) if latency_ms >= 0 else "?"
             text = f"OK — {ms} ms ({model})"
@@ -926,6 +981,35 @@ class SettingsDialog(QDialog):
     def _on_ai_test_finished(self):
         self.ai_test_worker = None
         self.ai_test_button.setEnabled(True)
+
+    def _start_ai_models_refresh(self):
+        """Fetch /models for the staged Base URL + API Key (nonblocking)."""
+        if self.ai_models_worker is not None:
+            return
+        self.ai_models_refresh_btn.setEnabled(False)
+        self.ai_test_status_label.setStyleSheet("")
+        self.ai_test_status_label.setText("Loading models…")
+        config = self._staged_ai_config()
+        worker = create_ai_models_worker(config)
+        self.ai_models_worker = worker
+        worker.result.connect(self._on_ai_models_result)
+        worker.finished.connect(self._on_ai_models_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_ai_models_result(self, ok, message, models):
+        if ok:
+            self._populate_ai_models(list(models or []), keep=self._ai_model_text())
+            count = len(models or [])
+            self.ai_test_status_label.setStyleSheet("color: #1a7f37;")
+            self.ai_test_status_label.setText(f"OK — {count} model(s) available")
+        else:
+            self.ai_test_status_label.setStyleSheet("color: #cf222e;")
+            self.ai_test_status_label.setText(f"Models — {message}")
+
+    def _on_ai_models_finished(self):
+        self.ai_models_worker = None
+        self.ai_models_refresh_btn.setEnabled(True)
 
     def _staged_settings(self):
         staged = dict(self.settings)

@@ -87,6 +87,26 @@ class FakeAITestWorker(QObject):
         self.deleted = True
 
 
+class FakeAIModelsWorker(QObject):
+    result = pyqtSignal(bool, str, list)
+    finished = pyqtSignal()
+
+    instances = []
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.started = False
+        self.deleted = False
+        FakeAIModelsWorker.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+
 SAMPLE_VOICES = [
     ("en-US-AvaMultilingualNeural", "en-US", "Female", "Ava"),
     ("en-US-AndrewNeural", "en-US", "Male", "Andrew"),
@@ -117,7 +137,14 @@ def settings():
     }
 
 
-def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory=None):
+def _dialog(
+    monkeypatch,
+    settings,
+    save=None,
+    current_size=None,
+    ai_test_factory=None,
+    ai_models_factory=None,
+):
     _app()
     import kgb_srs.settings_dialog as module
 
@@ -133,6 +160,15 @@ def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory
         FakeAITestWorker.instances = []
         monkeypatch.setattr(
             module, "create_ai_test_worker", lambda config: FakeAITestWorker(config)
+        )
+    if ai_models_factory is not None:
+        monkeypatch.setattr(module, "create_ai_models_worker", ai_models_factory)
+    else:
+        FakeAIModelsWorker.instances = []
+        monkeypatch.setattr(
+            module,
+            "create_ai_models_worker",
+            lambda config: FakeAIModelsWorker(config),
         )
     return module.SettingsDialog(
         settings, current_size=current_size
@@ -183,6 +219,7 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "ttsVoiceList": 2,
         "aiBaseUrlInput": 3,
         "aiModelInput": 3,
+        "aiModelsRefreshButton": 3,
         "aiApiKeyInput": 3,
         "aiTimeoutInput": 3,
         "explanationLanguageInput": 3,
@@ -748,7 +785,7 @@ def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatc
         monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
     )
     dialog.ai_base_url_input.setText(" https://example.test/v1 ")
-    dialog.ai_model_input.setText(" staged-model ")
+    dialog.ai_model_input.setEditText(" staged-model ")
     dialog.ai_api_key_input.setText(" staged-key ")
     dialog.ai_timeout_input.setValue(12)
 
@@ -771,7 +808,7 @@ def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatc
 
 def test_ai_test_success_updates_status_and_reenables_button(monkeypatch, settings):
     dialog, _ = _dialog(monkeypatch, settings)
-    dialog.ai_model_input.setText("gpt-test")
+    dialog.ai_model_input.setEditText("gpt-test")
     dialog.ai_test_button.click()
     worker = FakeAITestWorker.instances[0]
 
@@ -844,19 +881,19 @@ def test_ai_provider_combo_loads_profiles_and_switches(monkeypatch, settings):
     dialog, _ = _dialog(monkeypatch, settings)
     assert dialog.ai_provider_combo.count() == 2
     assert dialog.ai_provider_combo.currentText() == "TokenHub"
-    assert dialog.ai_model_input.text() == "deepseek-v4"
+    assert dialog.ai_model_input.currentText() == "deepseek-v4"
     assert dialog.ai_api_key_input.text() == "sk-th"
 
     # Edit TokenHub, switch to OpenAI, then back — TokenHub edit kept.
-    dialog.ai_model_input.setText("deepseek-edited")
+    dialog.ai_model_input.setEditText("deepseek-edited")
     dialog.ai_provider_combo.setCurrentText("OpenAI")
     _app().processEvents()
-    assert dialog.ai_model_input.text() == "gpt-4o-mini"
+    assert dialog.ai_model_input.currentText() == "gpt-4o-mini"
     assert dialog.ai_api_key_input.text() == "sk-openai"
 
     dialog.ai_provider_combo.setCurrentText("TokenHub")
     _app().processEvents()
-    assert dialog.ai_model_input.text() == "deepseek-edited"
+    assert dialog.ai_model_input.currentText() == "deepseek-edited"
     dialog.reject()
 
 
@@ -882,7 +919,7 @@ def test_ai_provider_profiles_saved_on_apply(monkeypatch, settings):
     )
     dialog.ai_provider_combo.setCurrentText("TokenHub")
     _app().processEvents()
-    dialog.ai_model_input.setText("flash-2")
+    dialog.ai_model_input.setEditText("flash-2")
     dialog.save_button.click()
     _app().processEvents()
 
@@ -899,6 +936,75 @@ def test_ai_provider_delete_disabled_for_last_profile(monkeypatch, settings):
     # Fixture migrates to a single Default profile.
     assert dialog.ai_provider_combo.count() == 1
     assert dialog.ai_provider_delete_btn.isEnabled() is False
+    dialog.reject()
+
+
+
+def test_ai_models_refresh_uses_staged_values_and_disables_while_running(monkeypatch, settings):
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.ai_base_url_input.setText(" https://example.test/v1 ")
+    dialog.ai_model_input.setEditText("keep-me")
+    dialog.ai_api_key_input.setText(" staged-key ")
+    dialog.ai_timeout_input.setValue(12)
+
+    dialog.ai_models_refresh_btn.click()
+    _app().processEvents()
+
+    assert len(FakeAIModelsWorker.instances) == 1
+    worker = FakeAIModelsWorker.instances[0]
+    assert worker.started
+    assert dialog.ai_models_refresh_btn.isEnabled() is False
+    assert dialog.ai_test_status_label.text() == "Loading models…"
+    assert worker.config.base_url == "https://example.test/v1"
+    assert worker.config.api_key == "staged-key"
+    assert worker.config.timeout_seconds == 12
+    assert saved == []
+    dialog.reject()
+
+
+def test_ai_models_refresh_success_populates_combo_and_keeps_current(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_model_input.setEditText("my-custom-model")
+    dialog.ai_models_refresh_btn.click()
+    worker = FakeAIModelsWorker.instances[0]
+
+    worker.result.emit(
+        True,
+        "3 model(s)",
+        ["deepseek-v4-flash-202605", "gpt-4o-mini", "my-custom-model"],
+    )
+    worker.finished.emit()
+    _app().processEvents()
+
+    items = [
+        dialog.ai_model_input.itemText(i)
+        for i in range(dialog.ai_model_input.count())
+    ]
+    assert "deepseek-v4-flash-202605" in items
+    assert "gpt-4o-mini" in items
+    assert dialog.ai_model_input.currentText() == "my-custom-model"
+    assert dialog.ai_test_status_label.text() == "OK — 3 model(s) available"
+    assert dialog.ai_models_refresh_btn.isEnabled() is True
+    assert dialog.ai_models_worker is None
+    assert worker.deleted
+    dialog.reject()
+
+
+def test_ai_models_refresh_failure_updates_status_and_reenables(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_models_refresh_btn.click()
+    worker = FakeAIModelsWorker.instances[0]
+
+    worker.result.emit(False, "invalid API key", [])
+    worker.finished.emit()
+    _app().processEvents()
+
+    assert dialog.ai_test_status_label.text() == "Models — invalid API key"
+    assert dialog.ai_models_refresh_btn.isEnabled() is True
+    assert dialog.ai_models_worker is None
     dialog.reject()
 
 

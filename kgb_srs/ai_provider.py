@@ -391,7 +391,19 @@ def _make_http_call(
     Returns the response body as a string.
     Raises urllib.error.URLError on network/timeout errors.
     """
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    return _http_request(url, headers, body=body, timeout=timeout, method="POST")
+
+
+def _http_request(
+    url: str,
+    headers: dict,
+    *,
+    body: bytes | None = None,
+    timeout: int,
+    method: str = "GET",
+) -> str:
+    """Synchronous HTTP request via stdlib urllib (GET or POST)."""
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
 
@@ -516,6 +528,75 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
         return False, f"Unexpected error: {exc}", latency_ms
 
 
+def list_models(config: AIProviderConfig) -> tuple[bool, str, list[str]]:
+    """Discover models from the OpenAI-compatible ``/models`` endpoint.
+
+    Returns ``(ok, message, model_ids)``. On success *model_ids* is sorted
+    case-insensitively and de-duplicated. On failure *model_ids* is empty.
+    Does not raise for expected network/HTTP failures.
+    """
+    if not config.api_key:
+        return False, "API key is not set", []
+
+    base = config.base_url.rstrip("/")
+    url = f"{base}/models"
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        raw = _http_request(
+            url, headers, body=None, timeout=config.timeout_seconds, method="GET"
+        )
+    except urllib.error.HTTPError as exc:
+        return False, _http_error_message(exc), []
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError) or "timed out" in str(exc).lower():
+            return False, "timed out", []
+        return False, f"Network error: {reason or exc}", []
+    except TimeoutError:
+        return False, "timed out", []
+    except Exception as exc:
+        return False, f"Unexpected error: {exc}", []
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return False, f"Failed to parse models response: {exc}", []
+
+    if isinstance(data, dict) and "error" in data:
+        err = data["error"]
+        if isinstance(err, dict):
+            msg = err.get("message") or err.get("code") or str(err)
+        else:
+            msg = str(err)
+        return False, str(msg), []
+
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return False, "Models response has no 'data' list", []
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        mid = str(row.get("id") or "").strip()
+        if not mid:
+            continue
+        key = mid.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        ids.append(mid)
+    ids.sort(key=str.casefold)
+    if not ids:
+        return False, "No models returned", []
+    return True, f"{len(ids)} model(s)", ids
+
+
 def _http_error_message(exc: urllib.error.HTTPError) -> str:
     """Best-effort human-readable message from an HTTP error response."""
     body_text = ""
@@ -617,3 +698,31 @@ def create_ai_test_worker(config: AIProviderConfig):
     Safe to call from any context where PyQt6 is available.
     """
     return _get_ai_test_worker_class()(config)
+
+
+def _get_ai_models_worker_class():
+    """Lazy import of AIModelsWorker to avoid requiring PyQt6 at module level."""
+    from PyQt6.QtCore import QThread, pyqtSignal
+
+    class AIModelsWorker(QThread):
+        """Background thread that lists models from the active provider."""
+
+        result = pyqtSignal(bool, str, list)  # ok, message, model_ids
+
+        def __init__(self, config: AIProviderConfig):
+            super().__init__()
+            self._config = config
+
+        def run(self):
+            ok, message, models = list_models(self._config)
+            self.result.emit(ok, message, list(models))
+
+    return AIModelsWorker
+
+
+def create_ai_models_worker(config: AIProviderConfig):
+    """Create an AIModelsWorker thread for the given config.
+
+    Safe to call from any context where PyQt6 is available.
+    """
+    return _get_ai_models_worker_class()(config)

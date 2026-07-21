@@ -385,3 +385,85 @@ class TestTestConnection:
         assert ok is False
         assert "connection refused" in message.lower() or "Network error" in message
         assert latency >= 0
+
+
+# ---------------------------------------------------------------------------
+# list_models
+# ---------------------------------------------------------------------------
+
+class TestListModels:
+    def _cfg(self, **overrides):
+        data = dict(
+            base_url="https://api.example.com/v1",
+            model="test-model",
+            api_key="sk-test",
+            timeout_seconds=5,
+        )
+        data.update(overrides)
+        return AIProviderConfig(**data)
+
+    def test_missing_api_key(self):
+        from kgb_srs.ai_provider import list_models
+        ok, message, models = list_models(self._cfg(api_key=""))
+        assert ok is False
+        assert "API key" in message
+        assert models == []
+
+    def test_success_parses_and_sorts(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+        from kgb_srs.ai_provider import list_models
+
+        def fake_http(url, headers, body=None, timeout=5, method="GET"):
+            assert method == "GET"
+            assert url == "https://api.example.com/v1/models"
+            assert headers["Authorization"] == "Bearer sk-test"
+            assert body is None
+            return json.dumps({
+                "data": [
+                    {"id": "zeta-model"},
+                    {"id": "alpha-model"},
+                    {"id": "alpha-model"},
+                    {"object": "model"},
+                ]
+            })
+
+        monkeypatch.setattr(module, "_http_request", fake_http)
+        ok, message, models = list_models(self._cfg())
+        assert ok is True
+        assert models == ["alpha-model", "zeta-model"]
+        assert "2 model" in message
+
+    def test_http_401(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+        from kgb_srs.ai_provider import list_models
+
+        def fake_http(url, headers, body=None, timeout=5, method="GET"):
+            raise urllib.error.HTTPError(
+                url,
+                401,
+                "Unauthorized",
+                hdrs=None,
+                fp=io.BytesIO(json.dumps({
+                    "error": {"message": "Invalid API key"}
+                }).encode("utf-8")),
+            )
+
+        monkeypatch.setattr(module, "_http_request", fake_http)
+        ok, message, models = list_models(self._cfg())
+        assert ok is False
+        assert "Invalid API key" in message
+        assert models == []
+
+    def test_empty_data(self, monkeypatch):
+        import kgb_srs.ai_provider as module
+        from kgb_srs.ai_provider import list_models
+
+        monkeypatch.setattr(
+            module,
+            "_http_request",
+            lambda *a, **k: json.dumps({"data": []}),
+        )
+        ok, message, models = list_models(self._cfg())
+        assert ok is False
+        assert "No models" in message
+        assert models == []
