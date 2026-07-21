@@ -487,7 +487,11 @@ class AIClient:
         message = choice.get("message", {})
         if not isinstance(message, dict):
             raise ValueError("API response first choice message must be an object")
-        content = message.get("content", "")
+        if "content" not in message:
+            raise ValueError("API response first choice message has no 'content'")
+        content = message["content"]
+        if not isinstance(content, str):
+            raise ValueError("API response first choice message 'content' must be a string")
         return content
 
 

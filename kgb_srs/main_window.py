@@ -117,7 +117,7 @@ def _fetch_expressions_for_card(conn, card_id):
     """
     from .schema import ensure_sentence_schema
 
-    ensure_sentence_schema(conn)
+    ensure_sentence_schema(conn, commit=False)
     cur = conn.cursor()
     cur.execute(
         "SELECT expression, meaning, sense_id, surface_form "

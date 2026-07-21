@@ -302,6 +302,15 @@ class TestAIClientParseResponse:
         with pytest.raises(ValueError, match=message):
             client.parse_response(json.dumps(response))
 
+    @pytest.mark.parametrize(
+        "message",
+        [{}, {"content": None}, {"content": []}, {"content": {}}, {"content": 1}],
+    )
+    def test_missing_or_non_string_content_raises_value_error(self, client, message):
+        response = {"choices": [{"message": message}]}
+        with pytest.raises(ValueError, match="content"):
+            client.parse_response(json.dumps(response))
+
 
 # ---------------------------------------------------------------------------
 # Prompt builders

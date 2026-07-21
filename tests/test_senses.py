@@ -79,6 +79,38 @@ class TestSenseInventory:
                 "SELECT value FROM settings WHERE key='outer_write'"
             ).fetchone() is None
 
+    def test_fetch_expressions_for_card_does_not_commit_outer_transaction(
+        self, tmp_path
+    ):
+        path = tmp_path / "fetch_expressions_transaction.db"
+        transaction_conn = init_db(str(path))
+        ensure_sentence_schema(transaction_conn)
+        card_id = insert_sentence_card(
+            transaction_conn, "Known sentence", [("known", "known meaning")]
+        )
+
+        transaction_conn.execute("BEGIN")
+        transaction_conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
+        )
+
+        from kgb_srs.main_window import _fetch_expressions_for_card
+
+        items = _fetch_expressions_for_card(transaction_conn, card_id)
+        assert len(items) == 1
+        assert items[0][0] == "known"
+        assert items[0][1] == "known meaning"
+        assert items[0][2] is not None
+        assert items[0][3] == ""
+
+        transaction_conn.rollback()
+        transaction_conn.close()
+
+        with sqlite3.connect(path) as verify_conn:
+            assert verify_conn.execute(
+                "SELECT value FROM settings WHERE key='outer_write'"
+            ).fetchone() is None
+
     def test_create_and_reuse_exact_meaning(self, conn):
         s1 = create_or_get_sense(conn, "insist on", "to demand firmly")
         s2 = create_or_get_sense(conn, "Insist On", "to demand firmly")
@@ -460,8 +492,8 @@ class TestSenseAssignmentParser:
         with pytest.raises(AIValidationError):
             parse_sense_assignment(raw, "bank", [1, 3])
 
-    @pytest.mark.parametrize("sense_id", [True, False])
-    def test_reuse_boolean_id_rejected(self, sense_id):
+    @pytest.mark.parametrize("sense_id", [True, False, 1.0, 1.5])
+    def test_reuse_boolean_or_float_id_rejected(self, sense_id):
         raw = json.dumps({
             "expression": "bank",
             "action": "reuse",
@@ -470,6 +502,67 @@ class TestSenseAssignmentParser:
         })
         with pytest.raises(AIValidationError, match="sense_id"):
             parse_sense_assignment(raw, "bank", [1, 3])
+
+    @pytest.mark.parametrize("sense_id", [True, False, 1.0, 1.5])
+    def test_create_ignores_boolean_or_float_preferred_id(self, sense_id):
+        raw = json.dumps({
+            "expression": "bank",
+            "action": "create",
+            "sense_id": sense_id,
+            "meaning": "side of a river",
+        })
+        assignment = parse_sense_assignment(raw, "bank", [1, 3])
+        assert assignment.sense_id is None
+
+    @pytest.mark.parametrize("value", [[], {}, 1])
+    @pytest.mark.parametrize("field", ["expression", "action", "meaning"])
+    def test_protocol_text_fields_must_be_strings(self, field, value):
+        payload = {
+            "expression": "bank",
+            "action": "create",
+            "sense_id": None,
+            "meaning": "side of a river",
+        }
+        payload[field] = value
+        with pytest.raises(AIValidationError, match=field):
+            parse_sense_assignment(json.dumps(payload), "bank", [1, 3])
+
+    @pytest.mark.parametrize("preferred_sense_id", [True, False, 1.0, 1.5])
+    def test_insert_ignores_boolean_or_float_preferred_sense_id(
+        self, conn, preferred_sense_id
+    ):
+        existing = create_or_get_sense(conn, "world", "old meaning")
+
+        card_id = insert_sentence_card(
+            conn,
+            "World",
+            [("world", "new meaning", preferred_sense_id)],
+        )
+
+        _, _, _, items = get_sentence_card(conn, card_id)
+        assert items[0][1] == "new meaning"
+        assert items[0][2] != existing.id
+
+    @pytest.mark.parametrize("preferred_sense_id", [True, False, 1.0, 1.5])
+    def test_update_ignores_boolean_or_float_preferred_sense_id(
+        self, conn, preferred_sense_id
+    ):
+        existing = create_or_get_sense(conn, "world", "old meaning")
+        card_id = insert_sentence_card(
+            conn, "World", [("world", "initial meaning")]
+        )
+
+        update_sentence_card(
+            conn,
+            card_id,
+            front="World",
+            back="",
+            items=[("world", "new meaning", preferred_sense_id)],
+        )
+
+        _, _, _, items = get_sentence_card(conn, card_id)
+        assert items[0][1] == "new meaning"
+        assert items[0][2] != existing.id
 
     def test_create_empty_meaning_rejected(self):
         raw = (

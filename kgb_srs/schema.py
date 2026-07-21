@@ -306,6 +306,16 @@ def _require_nonempty_meanings(items: list, operation: str):
             )
 
 
+def _preferred_sense_id(value) -> int | None:
+    """Return a usable preferred sense id without lossy coercion."""
+    if isinstance(value, (bool, float)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Duplicate detection
 # ---------------------------------------------------------------------------
@@ -407,10 +417,7 @@ def insert_sentence_card(
             meaning = str(item[1]) if len(item) > 1 and item[1] else ""
             sense_id = None
             if len(item) > 2 and item[2] is not None:
-                try:
-                    sense_id = int(item[2])
-                except (TypeError, ValueError):
-                    sense_id = None
+                sense_id = _preferred_sense_id(item[2])
             surface = ""
             if len(item) > 3 and item[3]:
                 surface = str(item[3]).strip()
@@ -553,10 +560,7 @@ def update_sentence_card(
             meaning = str(item[1]) if len(item) > 1 and item[1] else ""
             sense_id = None
             if len(item) > 2 and item[2] is not None:
-                try:
-                    sense_id = int(item[2])
-                except (TypeError, ValueError):
-                    sense_id = None
+                sense_id = _preferred_sense_id(item[2])
             surface = ""
             if len(item) > 3 and item[3]:
                 surface = str(item[3]).strip()
