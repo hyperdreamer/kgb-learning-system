@@ -107,7 +107,7 @@ class SettingsDialog(QDialog):
         "General",
         "Appearance",
         "Audio & Speech",
-        "AI Provider",
+        "AI Providers",
     )
 
     def __init__(self, settings, parent=None, current_size=None):

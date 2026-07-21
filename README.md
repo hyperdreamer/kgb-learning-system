@@ -84,13 +84,13 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 ---
 
-## AI Provider
+## AI Providers
 
 The app supports any **OpenAI-compatible** HTTP endpoint (GPT, DeepSeek, etc.).
 
 ### Configuration
 
-In **Settings → AI Provider**, configure:
+In **Settings → AI Providers**, configure:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -225,7 +225,7 @@ Configure:
 | **General** | Database Directory (root folder), Default Database (file) |
 | **Appearance** | Window size, UI font (app chrome + card edit dialogs), content font (study card HTML) |
 | **Audio & Speech** | TTS voice (language/gender/search filters, row preview) |
-| **AI Provider** | Base URL, model, API key, timeout, explanation language, Test |
+| **AI Providers** | Named profiles, base URL, model, API key, timeout, explanation language, Test |
 
 When you set **Database Directory**, the app creates:
 

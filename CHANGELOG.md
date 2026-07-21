@@ -17,7 +17,7 @@ with a shared sense catalog and automatic word/phrase projections.
 - **No manual W/P authoring** — Add/Edit/Delete/Generate disabled; Browse Review only.
 - **Configurable database root** with canonical category folders and relative
   default-database paths.
-- **Categorized Settings** (General, Appearance, Audio & Speech, AI Provider)
+- **Categorized Settings** (General, Appearance, Audio & Speech, AI Providers)
   with separate UI vs content fonts, Azure-style TTS voice picker, and AI Test.
 - **Review UX** — pausable daily review, Restart/Previous, canvas close control,
   Browse **Review Selected**, full **Next Review** column.

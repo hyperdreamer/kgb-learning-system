@@ -162,7 +162,7 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
     sidebar = dialog.findChild(QListWidget, "settingsCategoryList")
     pages = dialog.findChild(QStackedWidget, "settingsPages")
     assert [sidebar.item(i).text() for i in range(sidebar.count())] == [
-        "General", "Appearance", "Audio & Speech", "AI Provider"
+        "General", "Appearance", "Audio & Speech", "AI Providers"
     ]
     assert pages.count() == 4
     expected_pages = {
