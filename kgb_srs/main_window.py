@@ -829,24 +829,26 @@ class BarskyApp(QMainWindow):
             return
 
         conn = init_db(path)
-        write_database_type(conn, db_type)
-        if db_type == DatabaseType.LANGUAGE_SENTENCE:
-            from .schema import ensure_sentence_schema
-            from .senses import ensure_linked_word_phrase_database
+        try:
+            write_database_type(conn, db_type)
+            if db_type == DatabaseType.LANGUAGE_SENTENCE:
+                from .schema import ensure_sentence_schema
+                from .senses import ensure_linked_word_phrase_database
 
-            ensure_sentence_schema(conn)
-            try:
-                ensure_linked_word_phrase_database(
-                    conn, path, db_root, sync=True
-                )
-            except Exception as exc:
-                # The word/phrase database is a derived projection.  Its
-                # failure must not prevent opening the newly created source DB.
-                print(
-                    f"Word/phrase projection creation failed: {exc}",
-                    file=sys.stderr,
-                )
-        conn.close()
+                ensure_sentence_schema(conn)
+                try:
+                    ensure_linked_word_phrase_database(
+                        conn, path, db_root, sync=True
+                    )
+                except Exception as exc:
+                    # The word/phrase database is a derived projection.  Its
+                    # failure must not prevent opening the newly created source DB.
+                    print(
+                        f"Word/phrase projection creation failed: {exc}",
+                        file=sys.stderr,
+                    )
+        finally:
+            conn.close()
 
         display = os.path.join(subdir, name)
 

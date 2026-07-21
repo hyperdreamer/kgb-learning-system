@@ -713,14 +713,29 @@ def _nfc_casefold_with_original_spans(text: str) -> tuple[str, list[tuple[int, i
     characters), so indices into that normalized string cannot be used to
     slice the original sentence.  Normalize each base character and its
     following combining marks as a unit instead, retaining the original span
-    for every resulting character.
+    for every resulting character.  Canonical Hangul Jamo L+V(+T) sequences
+    are also one unit: unlike Latin accents, their components have combining
+    class zero, but NFC composes the sequence into one syllable.
     """
     normalized_parts: list[str] = []
     spans: list[tuple[int, int]] = []
     i = 0
     while i < len(text):
         start = i
+        codepoint = ord(text[i])
         i += 1
+
+        # NFC composes a canonical Hangul leading Jamo followed by a vowel
+        # Jamo and, optionally, a trailing Jamo.  Group it before normalizing
+        # so the resulting syllable maps back to the full original sequence.
+        if (
+            0x1100 <= codepoint <= 0x115F
+            and i < len(text)
+            and 0x1160 <= ord(text[i]) <= 0x11A7
+        ):
+            i += 1
+            if i < len(text) and 0x11A8 <= ord(text[i]) <= 0x11FF:
+                i += 1
         while i < len(text) and unicodedata.combining(text[i]):
             i += 1
         part = unicodedata.normalize("NFC", text[start:i]).casefold()

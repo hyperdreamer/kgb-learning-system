@@ -511,6 +511,32 @@ class TestHighlightUnfamiliarInSentence:
             "**Cafe\u0301**!"
         )
 
+    def test_nfc_hangul_item_highlights_nfd_lv_surface_before_possessive(self):
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+        )
+
+        sentence = "x가's owner arrived."
+        span = locate_item_surface_span(sentence, "가")
+        assert span == (1, 3)
+        assert sentence[span[0]:span[1]] == "가"
+        assert highlight_unfamiliar_in_sentence(sentence, ["가"]) == (
+            "x**가**'s owner arrived."
+        )
+
+    def test_nfc_hangul_item_highlights_nfd_lvt_surface_before_punctuation(self):
+        from kgb_srs.validation import (
+            _normalized_literal_span,
+            highlight_unfamiliar_in_sentence,
+        )
+
+        sentence = "각!"
+        span = _normalized_literal_span(sentence, "각")
+        assert span == (0, 3)
+        assert sentence[span[0]:span[1]] == "각"
+        assert highlight_unfamiliar_in_sentence(sentence, ["각"]) == "**각**!"
+
     def test_trailing_punctuation_not_inside_bold(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
 
