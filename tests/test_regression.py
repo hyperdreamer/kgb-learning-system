@@ -623,6 +623,135 @@ class TestFinalFormRegressions:
         assert dialog._meaning_widgets[0][1].toPlainText() == "a greeting"
         dialog.close()
 
+    @staticmethod
+    def _emit_sentence_ai_assignment(dialog, monkeypatch, response):
+        """Run a controlled AI assignment response through the dialog."""
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.forms import _AIGenerateWorker
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.forms._AIGenerateWorker", FakeWorker)
+        dialog._generate_ai_meanings()
+        assert dialog._ai_worker is not None
+        dialog._ai_worker.result.emit(response)
+        QApplication.processEvents()
+
+    @staticmethod
+    def _expression_sense_count(conn):
+        from kgb_srs.senses import ensure_expression_senses_table
+
+        ensure_expression_senses_table(conn)
+        return conn.execute("SELECT COUNT(*) FROM expression_senses").fetchone()[0]
+
+    def test_ai_create_defers_sense_creation_until_dialog_save(self, monkeypatch):
+        """Cancelling an AI-created meaning must not leave an orphan sense."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+            conn=conn,
+        )
+        try:
+            self._emit_sentence_ai_assignment(
+                dialog,
+                monkeypatch,
+                ('{"expression": "Hello", "action": "create", '
+                 '"sense_id": null, "meaning": "a greeting"}'),
+            )
+
+            assert dialog._meanings["Hello"] == "a greeting"
+            assert dialog._sense_ids["Hello"] is None
+            assert self._expression_sense_count(conn) == 0
+
+            dialog.reject()
+            assert self._expression_sense_count(conn) == 0
+        finally:
+            dialog.close()
+            conn.close()
+
+    def test_ai_create_materializes_one_sense_when_saved(self, monkeypatch):
+        """The normal sentence-card insert creates and links the deferred sense."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+            conn=conn,
+        )
+        try:
+            self._emit_sentence_ai_assignment(
+                dialog,
+                monkeypatch,
+                ('{"expression": "Hello", "action": "create", '
+                 '"sense_id": null, "meaning": "a greeting"}'),
+            )
+            assert self._expression_sense_count(conn) == 0
+
+            dialog._accept()
+            card_id = insert_sentence_card(
+                conn,
+                dialog.result_sentence,
+                dialog.result_items,
+                dialog.result_back,
+            )
+
+            assert self._expression_sense_count(conn) == 1
+            sense_id, meaning = conn.execute(
+                "SELECT sense_id, meaning FROM unfamiliar_items WHERE card_id=?",
+                (card_id,),
+            ).fetchone()
+            assert sense_id is not None
+            assert meaning == "a greeting"
+        finally:
+            dialog.close()
+            conn.close()
+
+    def test_ai_reuse_keeps_existing_sense_id_without_duplicate(self, monkeypatch):
+        """A verified AI reuse remains linked to its canonical existing sense."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+        from kgb_srs.senses import create_or_get_sense
+
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        existing = create_or_get_sense(conn, "Hello", "canonical greeting")
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+            conn=conn,
+        )
+        try:
+            self._emit_sentence_ai_assignment(
+                dialog,
+                monkeypatch,
+                ('{"expression": "Hello", "action": "reuse", '
+                 f'"sense_id": {existing.id}, "meaning": ""}}'),
+            )
+
+            assert self._expression_sense_count(conn) == 1
+            assert dialog._sense_ids["Hello"] == existing.id
+            assert dialog._meanings["Hello"] == "canonical greeting"
+        finally:
+            dialog.close()
+            conn.close()
+
     def test_sentence_dialog_result_back_derived_from_meanings(self, monkeypatch):
         """On accept, result_back is the markdown join of expression+meaning pairs."""
         _qt_app()

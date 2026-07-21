@@ -53,7 +53,7 @@ from .ai_parser import (
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
 )
-from .senses import list_senses_for_expression, get_sense, create_or_get_sense
+from .senses import list_senses_for_expression, get_sense
 import json
 import urllib.error
 
@@ -744,25 +744,12 @@ class SentenceCardDialog(QDialog):
                     meaning_text = assignment.meaning.strip()
                     if not meaning_text:
                         raise AIValidationError("Create action returned empty meaning")
-                    # Materialize sense in inventory when DB is available.
-                    sense_id = None
-                    if self._conn is not None:
-                        sense = create_or_get_sense(
-                            self._conn, target_expr, meaning_text
-                        )
-                        sense_id = sense.id
-                        meaning_text = sense.meaning
                     self._meanings[target_expr] = meaning_text
-                    self._sense_ids[target_expr] = sense_id
-                    if sense_id is not None:
-                        status = (
-                            f"Created sense #{sense_id} for '{target_expr}'."
-                        )
-                    else:
-                        status = (
-                            f"Created new meaning for '{target_expr}' "
-                            f"(will link on Save)."
-                        )
+                    self._sense_ids[target_expr] = None
+                    status = (
+                        f"Created new meaning for '{target_expr}' "
+                        f"(will link on Save)."
+                    )
 
                 if (
                     self._active_meaning_expr == target_expr

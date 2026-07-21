@@ -9,20 +9,6 @@ Re-open only with an explicit product decision and regression tests.
 
 ---
 
-## 1. AI Generate Meaning materializes senses before Save
-
-| Field | Value |
-|-------|--------|
-| **Severity** | Medium |
-| **Files** | `kgb_srs/forms.py` (~739–741) — AI “create” path calls `create_or_get_sense(..., commit=True)` |
-| **Behavior** | Generate Meaning with `action=create` inserts into `expression_senses` immediately. Cancel / reject leaves an unreferenced sense until a later insert/update runs `purge_orphan_senses`. |
-| **Why deferred** | Changing commit timing can break sense_id wiring and the “Reused sense #N” / create UX. Needs coordinated dialog + Save tests. |
-| **Risk if fixed** | Medium — preferred-sense identity and Save resolution must stay correct. |
-| **Mitigation already in place** | W/P projection filters to senses with `unfamiliar_items` references (`group_senses_by_expression` / `sense_has_item_references`), so orphan catalog rows do **not** appear in the dictionary. Insert/update/delete paths purge orphans. |
-| **Suggested fix (when ready)** | Create with `commit=False` and only persist on Save via existing `insert_sentence_card` / `update_sentence_card`, **or** call `purge_orphan_senses` on dialog reject/close when no save occurred. |
-
----
-
 ## 2. `WordPhraseCardDialog` dead code still present
 
 | Field | Value |
@@ -125,7 +111,8 @@ Round 5 final re-audit: **CLEAN** — 472 tests, ruff 0 violations, ACTIONABLE F
 See commit:
 
 - `334c200` — audit round 6 (M1: unsafe e.reason→getattr in worker threads; M2: narrow bare except→(sqlite3.Error, OSError) in _open_and_infer_type; L4: rename _http_request→http_request public; L5: remove dead create_ai_worker)
-- `66f79ea` — IGNORED reconsideration (atomic sentence-card rollback across nested sense helpers; canonical W/P link enforcement that preserves malformed legacy targets)
+- `0f6a370` — IGNORED reconsideration (atomic sentence-card rollback across nested sense helpers; canonical W/P link enforcement that preserves malformed legacy targets)
+- `98a6190` — deferred AI-created sense materialization until Save
 
 ---
 
