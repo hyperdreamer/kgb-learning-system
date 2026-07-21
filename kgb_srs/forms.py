@@ -20,12 +20,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QAbstractItemView,
     QMessageBox,
-    QFormLayout,
-    QComboBox,
     QRadioButton,
-    QButtonGroup,
     QGroupBox,
-    QFileDialog,
     QProgressBar,
     QSizePolicy,
     QTabWidget,
@@ -43,15 +39,13 @@ from .validation import (
 from .ai_provider import (
     AIProviderConfig,
     AIClient,
-    _make_http_call,
-    build_sentence_prompt,
+    http_request,
     build_sense_assignment_prompt,
     build_word_phrase_prompt,
     build_membership_prompt,
     AIMissingConfigError,
 )
 from .ai_parser import (
-    parse_sentence_meanings,
     parse_sense_assignment,
     parse_word_phrase_meanings,
     parse_membership_claims,
@@ -59,7 +53,7 @@ from .ai_parser import (
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
 )
-from .senses import list_senses_for_expression, get_sense, create_or_get_sense
+from .senses import list_senses_for_expression, get_sense
 import json
 import urllib.error
 
@@ -103,17 +97,18 @@ class _AIGenerateWorker(QThread):
         try:
             client = AIClient(self._config)
             url, headers, body = client.build_request(self._prompt)
-            raw = _make_http_call(
+            raw = http_request(
                 url, headers,
-                json.dumps(body).encode("utf-8"),
+                body=json.dumps(body).encode("utf-8"),
                 timeout=self._config.timeout_seconds,
+                method="POST",
             )
             content = client.parse_response(raw)
             self.result.emit(content)
         except AIMissingConfigError as e:
             self.error.emit(str(e))
         except urllib.error.URLError as e:
-            self.error.emit(f"Network error: {e.reason}")
+            self.error.emit(f"Network error: {getattr(e, 'reason', str(e))}")
         except ValueError as e:
             self.error.emit(str(e))
         except Exception as e:
@@ -131,11 +126,10 @@ class SentenceCardDialog(QDialog):
       1. Enter the sentence.
       2. Select or manually type unfamiliar words/phrases from the sentence.
          - Use "Add selected text" to add highlighted text from the sentence.
-      3. Select one item, then optionally generate its contextual meaning via AI.
-         The dialog stays open; generation is nonblocking (QThread).
-         On completion, the selected item's meaning field is filled — Save is next.
-      4. Validate that all unfamiliar items are in the sentence.
-      5. Save is a separate user action; back text is derived from meanings.
+      3. Select one item, then generate/type its contextual meaning.
+         The dialog stays open; AI generation is nonblocking (QThread).
+      4. Save runs membership + meaning checks. On failure the dialog stays
+         open so the user can fix or Cancel. Save is dimmed while empty.
     """
 
     def __init__(self, parent=None, title="Add Sentence Card",
@@ -148,7 +142,10 @@ class SentenceCardDialog(QDialog):
         self._result_sentence = ""
         self._result_items: list = []
         self._result_back = ""
+        # Lemma → surface accepted by residual AI membership (re-verified at insert).
+        self._result_verified_surfaces: dict[str, str] = {}
         self._settings = settings or {}
+        self._geometry_persisted = False
         self._conn = conn  # optional: sentence DB for sense inventory
         _apply_ui_font(self, self._settings, parent)
         self._ai_worker: _AIGenerateWorker | None = None
@@ -288,11 +285,6 @@ class SentenceCardDialog(QDialog):
 
         # --- Buttons ---
         btn_layout = QHBoxLayout()
-        validate_btn = QPushButton("Validate")
-        validate_btn.clicked.connect(self._validate)
-        btn_layout.addWidget(validate_btn)
-        self._validate_btn = validate_btn
-
         btn_layout.addStretch()
 
         self._cancel_btn = QPushButton("Cancel")
@@ -300,6 +292,7 @@ class SentenceCardDialog(QDialog):
         btn_layout.addWidget(self._cancel_btn)
 
         self._save_btn = QPushButton("Save")
+        self._save_btn.setObjectName("sentenceSaveButton")
         self._save_btn.setStyleSheet(
             "background-color: #43A047; color: white; "
             "font-weight: bold; padding: 8px 20px;"
@@ -308,16 +301,17 @@ class SentenceCardDialog(QDialog):
         btn_layout.addWidget(self._save_btn)
         layout.addLayout(btn_layout)
 
-        if parent:
-            w = min(max(580, int(parent.width() * 0.6)), 850)
-            h = min(max(520, int(parent.height() * 0.75)), 750)
-            self.resize(w, h)
+        # Restore last-used size (or defaults). Do this after widgets exist
+        # so it is not overridden by layout defaults / parent-relative sizing.
+        self._restore_dialog_geometry()
 
         # Connect double-click on list to removal
         self._items_list.itemDoubleClicked.connect(self._remove_selected)
         self._items_list.itemSelectionChanged.connect(
             self._on_item_selection_changed
         )
+        # Dim Save while empty; re-evaluate as the user types / edits items.
+        self._sentence_edit.textChanged.connect(self._update_save_enabled)
 
         # Select first item when editing an existing card so Meaning shows.
         if self._items_list.count() > 0:
@@ -327,6 +321,7 @@ class SentenceCardDialog(QDialog):
 
         # Check AI config availability (also gates Generate on selection)
         self._check_ai_available()
+        self._update_save_enabled()
 
     # ------------------------------------------------------------------
     # Item management
@@ -374,11 +369,28 @@ class SentenceCardDialog(QDialog):
         has_selection = self._selected_expression() is not None
         self._generate_btn.setEnabled(bool(ai_config.configured and has_selection))
 
+    def _is_busy(self) -> bool:
+        """True while a background AI worker is active."""
+        if self._ai_worker is not None and self._ai_worker.isRunning():
+            return True
+        membership = getattr(self, "_membership_worker", None)
+        return membership is not None and membership.isRunning()
+
+    def _update_save_enabled(self) -> None:
+        """Dim Save when empty or while AI is busy; stay open on failed Save."""
+        if self._is_busy():
+            self._save_btn.setEnabled(False)
+            return
+        has_sentence = bool(self._sentence_edit.toPlainText().strip())
+        has_items = self._items_list.count() > 0
+        self._save_btn.setEnabled(has_sentence and has_items)
+
     def _on_item_selection_changed(self) -> None:
         """Selection drives Remove, Generate, and the single Meaning card."""
         self._update_remove_selected_enabled()
         self._rebuild_meaning_editors()
         self._update_generate_enabled()
+        self._update_save_enabled()
 
     def _add_item(self):
         text = self._item_entry.text().strip()
@@ -450,7 +462,7 @@ class SentenceCardDialog(QDialog):
                 f"AI configured ({ai_config.model})")
         else:
             self._ai_status.setText(
-                "AI not configured — add 'ai_api_key' in Settings.")
+                "AI not configured — set API key under Settings → AI Providers.")
         self._update_generate_enabled()
 
     # ------------------------------------------------------------------
@@ -623,6 +635,8 @@ class SentenceCardDialog(QDialog):
 
     def _on_active_meaning_changed(self) -> None:
         """Keep the store in sync when the user repairs meaning manually."""
+        if getattr(self, "_programmatic_meaning_update", False):
+            return
         if self._active_meaning_expr is None or not self._meaning_widgets:
             return
         expr, edit = self._meaning_widgets[0]
@@ -731,25 +745,12 @@ class SentenceCardDialog(QDialog):
                     meaning_text = assignment.meaning.strip()
                     if not meaning_text:
                         raise AIValidationError("Create action returned empty meaning")
-                    # Materialize sense in inventory when DB is available.
-                    sense_id = None
-                    if self._conn is not None:
-                        sense = create_or_get_sense(
-                            self._conn, target_expr, meaning_text
-                        )
-                        sense_id = sense.id
-                        meaning_text = sense.meaning
                     self._meanings[target_expr] = meaning_text
-                    self._sense_ids[target_expr] = sense_id
-                    if sense_id is not None:
-                        status = (
-                            f"Created sense #{sense_id} for '{target_expr}'."
-                        )
-                    else:
-                        status = (
-                            f"Created new meaning for '{target_expr}' "
-                            f"(will link on Save)."
-                        )
+                    self._sense_ids[target_expr] = None
+                    status = (
+                        f"Created new meaning for '{target_expr}' "
+                        f"(will link on Save)."
+                    )
 
                 if (
                     self._active_meaning_expr == target_expr
@@ -757,7 +758,13 @@ class SentenceCardDialog(QDialog):
                 ):
                     edit = self._meaning_widgets[0][1]
                     edit.setReadOnly(True)
-                    edit.setPlainText(self._meanings[target_expr])
+                    self._programmatic_meaning_update = True
+                    edit.blockSignals(True)
+                    try:
+                        edit.setPlainText(self._meanings[target_expr])
+                    finally:
+                        edit.blockSignals(False)
+                        self._programmatic_meaning_update = False
                 self._update_sense_source_label(target_expr)
                 self._ai_status.setText(status + " Ready to save.")
                 self._ai_status.setStyleSheet("color: #393;")
@@ -787,49 +794,17 @@ class SentenceCardDialog(QDialog):
         self._item_entry.setEnabled(True)
         self._add_sel_btn.setEnabled(True)
         self._items_list.setEnabled(True)
-        self._save_btn.setEnabled(True)
         self._cancel_btn.setEnabled(True)
         self._ai_progress.setVisible(False)
         self._update_generate_enabled()
+        self._update_save_enabled()
 
     # ------------------------------------------------------------------
-    # Validation & Accept
+    # Validation & Accept (Save is the only gate; dialog stays open on fail)
     # ------------------------------------------------------------------
-
-    def _validate(self):
-        sentence = self._sentence_edit.toPlainText().strip()
-        items = self._get_items()
-
-        if not items:
-            self._status_label.setText(
-                "Add at least one unfamiliar item.")
-            self._status_label.setStyleSheet("color: #c00;")
-            return
-
-        if not sentence:
-            self._status_label.setText("Enter a sentence.")
-            self._status_label.setStyleSheet("color: #c00;")
-            return
-
-        result = validate_unfamiliar_items(sentence, items)
-        if result.valid:
-            self._status_label.setText(
-                f"✅ All {len(items)} items found in the sentence.")
-            self._status_label.setStyleSheet("color: #393;")
-            return
-
-        missing_str = ", ".join(result.missing)
-        ai_config = AIProviderConfig.from_settings(self._settings)
-        if ai_config.configured:
-            self._status_label.setText(
-                f"❌ Local check missed: {missing_str}  "
-                f"(Save can ask AI for residual forms)")
-        else:
-            self._status_label.setText(
-                f"❌ Not found in sentence: {missing_str}")
-        self._status_label.setStyleSheet("color: #c00;")
 
     def _accept(self):
+        """Save: validate membership + meanings; stay open on any failure."""
         sentence = self._sentence_edit.toPlainText().strip()
         items = self._get_items()
 
@@ -847,9 +822,28 @@ class SentenceCardDialog(QDialog):
             )
             return
 
+        # Meanings first: cheaper than membership / optional AI residual.
+        self._persist_active_meaning()
+        for expr in items:
+            meaning = (self._meanings.get(expr) or "").strip()
+            if not meaning:
+                QMessageBox.warning(
+                    self, "Missing meaning",
+                    f"Add a meaning for '{expr}' before saving.\n\n"
+                    "Select the item, then type a meaning or click "
+                    "Generate Meaning.",
+                )
+                for i in range(self._items_list.count()):
+                    list_item = self._items_list.item(i)
+                    if list_item is not None and list_item.text() == expr:
+                        self._items_list.setCurrentRow(i)
+                        break
+                self._on_item_selection_changed()
+                return
+
         result = validate_unfamiliar_items(sentence, items)
         if result.valid:
-            self._finish_accept(sentence, items)
+            self._finish_accept(sentence, items, verified_surfaces={})
             return
 
         # Local-first residual: optional AI only for items local rules missed.
@@ -900,7 +894,6 @@ class SentenceCardDialog(QDialog):
         self._ai_progress.setVisible(True)
         self._ai_progress.setRange(0, 0)
         self._save_btn.setEnabled(False)
-        self._validate_btn.setEnabled(False)
         self._generate_btn.setEnabled(False)
 
         worker = _AIGenerateWorker(ai_config, prompt)
@@ -948,7 +941,11 @@ class SentenceCardDialog(QDialog):
         self._status_label.setText(
             f"✅ AI residual check accepted {recovered} item(s).")
         self._status_label.setStyleSheet("color: #393;")
-        self._finish_accept(sentence, items)
+        self._finish_accept(
+            sentence,
+            items,
+            verified_surfaces=dict(residual.accepted_surfaces or {}),
+        )
 
     def _on_membership_ai_error(self, message: str) -> None:
         missing = getattr(self, "_membership_missing", [])
@@ -968,24 +965,30 @@ class SentenceCardDialog(QDialog):
         if worker is not None:
             worker.deleteLater()
         self._ai_progress.setVisible(False)
-        self._save_btn.setEnabled(True)
-        self._validate_btn.setEnabled(True)
         self._update_generate_enabled()
+        self._update_save_enabled()
 
-    def _finish_accept(self, sentence: str, items: list[str]) -> None:
+    def _finish_accept(
+        self,
+        sentence: str,
+        items: list[str],
+        verified_surfaces: dict[str, str] | None = None,
+    ) -> None:
         """Finalize Save after membership validation has passed."""
         self._persist_active_meaning()
 
-        result_items: list[tuple[str, str, int | None]] = []
+        surfaces = dict(verified_surfaces or {})
+        result_items: list[tuple[str, str, int | None, str]] = []
         for expr in items:
             meaning = (self._meanings.get(expr) or "").strip()
             if not meaning:
+                # Defense in depth — _accept already checks meanings first.
                 QMessageBox.warning(
-                    self, "Validation",
-                    f"Generate a meaning for '{expr}' before saving.\n\n"
-                    f"Select the item and click Generate Meaning."
+                    self, "Missing meaning",
+                    f"Add a meaning for '{expr}' before saving.\n\n"
+                    "Select the item, then type a meaning or click "
+                    "Generate Meaning.",
                 )
-                # Focus the incomplete item so the user can fill it.
                 for i in range(self._items_list.count()):
                     list_item = self._items_list.item(i)
                     if list_item is not None and list_item.text() == expr:
@@ -994,14 +997,22 @@ class SentenceCardDialog(QDialog):
                 self._on_item_selection_changed()
                 return
             sense_id = self._sense_ids.get(expr)
-            result_items.append((expr, meaning, sense_id))
+            # AI residual surface (e.g. lie → lay) for highlight / order.
+            surface = str(surfaces.get(expr) or "").strip()
+            result_items.append((expr, meaning, sense_id, surface))
 
         self._result_sentence = sentence
         self._result_items = result_items
+        self._result_verified_surfaces = surfaces
         # Back is derived from structured meanings (no separate editor).
-        self._result_back = "\n\n".join(
-            f"**{expr}**: {meaning}" for expr, meaning, _sid in result_items
+        # Order by first surface appearance in the sentence; number when >1.
+        from .validation import (
+            format_sentence_meaning_lines,
+            sort_items_by_sentence_order,
         )
+
+        ordered = sort_items_by_sentence_order(sentence, result_items)
+        self._result_back = "\n\n".join(format_sentence_meaning_lines(ordered))
         self.accept()
 
     @property
@@ -1016,17 +1027,80 @@ class SentenceCardDialog(QDialog):
     def result_back(self) -> str:
         return self._result_back
 
+    @property
+    def result_verified_surfaces(self) -> dict[str, str]:
+        """Lemma→surface pairs accepted by residual membership checks."""
+        return dict(self._result_verified_surfaces)
+
+    def _restore_dialog_geometry(self) -> None:
+        """Open at last-used size (or defaults), never below the minimum."""
+        from .config import DEFAULT_SETTINGS
+
+        try:
+            w = int(
+                self._settings.get(
+                    "sentence_dialog_width",
+                    DEFAULT_SETTINGS["sentence_dialog_width"],
+                )
+            )
+            h = int(
+                self._settings.get(
+                    "sentence_dialog_height",
+                    DEFAULT_SETTINGS["sentence_dialog_height"],
+                )
+            )
+        except (TypeError, ValueError):
+            w = int(DEFAULT_SETTINGS["sentence_dialog_width"])
+            h = int(DEFAULT_SETTINGS["sentence_dialog_height"])
+        self.resize(max(self.minimumWidth(), w), max(self.minimumHeight(), h))
+
+    def _persist_dialog_geometry(self) -> None:
+        """Remember current size for the next open (main-window settings bag)."""
+        if not self._settings:
+            return
+        # Only write when this is a real app settings dict (has main geometry).
+        if "width" not in self._settings or "height" not in self._settings:
+            return
+        self._settings["sentence_dialog_width"] = self.width()
+        self._settings["sentence_dialog_height"] = self.height()
+        try:
+            from .config import save_settings
+
+            save_settings(self._settings)
+        except OSError:
+            pass
+
+    def _persist_dialog_geometry_once(self) -> None:
+        """Persist geometry once for each completed dialog lifecycle."""
+        if self._geometry_persisted:
+            return
+        self._geometry_persisted = True
+        self._persist_dialog_geometry()
+
+    def accept(self):
+        self._persist_dialog_geometry_once()
+        super().accept()
+
     def closeEvent(self, event):
         """Do not destroy the dialog while its blocking HTTP worker is active."""
         if self._ai_worker is not None and self._ai_worker.isRunning():
             event.ignore()
             return
+        membership = getattr(self, "_membership_worker", None)
+        if membership is not None and membership.isRunning():
+            event.ignore()
+            return
+        self._persist_dialog_geometry_once()
         super().closeEvent(event)
 
     def reject(self):
         """Ignore Cancel while AI generation is active."""
         if self._ai_worker is not None and self._ai_worker.isRunning():
             return
+        membership = getattr(self, "_membership_worker", None)
+        if membership is not None and membership.isRunning():
+            return
+        self._persist_dialog_geometry_once()
         super().reject()
 
 
@@ -1128,16 +1202,13 @@ class WordPhraseCardDialog(QDialog):
 
         # --- Buttons ---
         btn_layout = QHBoxLayout()
-        self._validate_btn = QPushButton("Validate")
-        self._validate_btn.clicked.connect(self._validate)
-        btn_layout.addWidget(self._validate_btn)
-
         btn_layout.addStretch()
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.clicked.connect(self._cancel_or_reject)
         btn_layout.addWidget(self._cancel_btn)
 
         self._save_btn = QPushButton("Save")
+        self._save_btn.setObjectName("wordPhraseSaveButton")
         self._save_btn.setStyleSheet(
             "background-color: #43A047; color: white; "
             "font-weight: bold; padding: 8px 20px;"
@@ -1154,6 +1225,8 @@ class WordPhraseCardDialog(QDialog):
             self._add_meaning_row()
 
         self._update_meaning_controls()
+        self._front_edit.textChanged.connect(self._update_save_enabled)
+        self._update_save_enabled()
 
     # ------------------------------------------------------------------
     # Meaning tab management
@@ -1319,6 +1392,7 @@ class WordPhraseCardDialog(QDialog):
 
         bar = self._meanings_tabs.tabBar()
         if bar is None:
+            self._update_save_enabled()
             return
 
         show_close = count > 1
@@ -1333,6 +1407,18 @@ class WordPhraseCardDialog(QDialog):
                 # Sole tab: no close control at all.
                 bar.setTabButton(idx, bar.ButtonPosition.RightSide, None)
                 bar.setTabButton(idx, bar.ButtonPosition.LeftSide, None)
+        self._update_save_enabled()
+
+    def _is_busy(self) -> bool:
+        return self._ai_worker is not None and self._ai_worker.isRunning()
+
+    def _update_save_enabled(self) -> None:
+        """Dim Save when front is empty or AI is busy."""
+        if self._is_busy():
+            self._save_btn.setEnabled(False)
+            return
+        has_front = bool(self._front_edit.text().strip())
+        self._save_btn.setEnabled(has_front)
 
     # ------------------------------------------------------------------
     # AI availability
@@ -1346,7 +1432,7 @@ class WordPhraseCardDialog(QDialog):
         else:
             self._generate_btn.setEnabled(False)
             self._ai_status.setText(
-                "AI not configured — add 'ai_api_key' in Settings.")
+                "AI not configured — set API key under Settings → AI Providers.")
 
     # ------------------------------------------------------------------
     # AI generation (nonblocking)
@@ -1385,9 +1471,8 @@ class WordPhraseCardDialog(QDialog):
                 self._clear_all_rows()
                 # Populate from AI results
                 for m in meanings:
-                    # Extract meaning and example from contextual_meaning
-                    meaning_text, example_text = self._split_meaning_example(
-                        m.contextual_meaning)
+                    meaning_text = m.meaning
+                    example_text = m.example
                     self._add_meaning_row(meaning=meaning_text, example=example_text)
                 if not self._meaning_rows:
                     self._add_meaning_row()
@@ -1410,34 +1495,6 @@ class WordPhraseCardDialog(QDialog):
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _on_ai_thread_stopped(self, worker):
-        if self._ai_worker is worker:
-            self._ai_worker = None
-            self._restore_ui_after_ai()
-
-    @staticmethod
-    def _split_meaning_example(contextual_meaning: str) -> tuple[str, str]:
-        """Split a contextual_meaning string into (meaning, example).
-
-        The AI formats output like:
-            "1. A domestic feline\\n*The cat sat on the mat.*"
-        We extract the meaning text and example text.
-        """
-        import re
-        text = contextual_meaning.strip()
-        # Try to find pattern: "1. meaning\\n*example.*" or similar
-        # First, strip the number prefix like "1. "
-        text = re.sub(r'^\d+\.\s*', '', text)
-        # Split on italic example: *...*
-        example_match = re.search(r'\*(.+?)\*', text)
-        if example_match:
-            example = example_match.group(1).strip()
-            meaning_text = text[:example_match.start()].strip()
-            # Remove trailing newlines/punctuation from meaning
-            meaning_text = meaning_text.rstrip('\n').rstrip()
-            return meaning_text, example
-        return text, ""
-
     def _clear_all_rows(self):
         """Remove all meaning tabs."""
         while self._meanings_tabs.count():
@@ -1448,6 +1505,11 @@ class WordPhraseCardDialog(QDialog):
         self._meaning_rows.clear()
         self._update_meaning_controls()
 
+    def _on_ai_thread_stopped(self, worker):
+        if self._ai_worker is worker:
+            self._ai_worker = None
+            self._restore_ui_after_ai()
+
     def _set_controls_enabled(self, enabled: bool):
         """Enable/disable all controls during AI generation or close."""
         self._front_edit.setEnabled(enabled)
@@ -1455,8 +1517,6 @@ class WordPhraseCardDialog(QDialog):
             enabled and len(self._meaning_rows) < MAX_WORD_PHRASE_MEANINGS
         )
         self._meanings_tabs.setEnabled(enabled)
-        self._validate_btn.setEnabled(enabled)
-        self._save_btn.setEnabled(enabled)
         self._cancel_btn.setEnabled(enabled)
         for row in self._meaning_rows:
             row["meaning_edit"].setEnabled(enabled)
@@ -1464,6 +1524,8 @@ class WordPhraseCardDialog(QDialog):
         # Close buttons follow tab enabled state via parent; re-sync ownership.
         if enabled:
             self._update_meaning_controls()
+        else:
+            self._save_btn.setEnabled(False)
 
     def _restore_ui_after_ai(self):
         """Restore controls; worker reference clears on thread termination."""
@@ -1471,6 +1533,7 @@ class WordPhraseCardDialog(QDialog):
         self._generate_btn.setEnabled(True)
         self._ai_progress.setVisible(False)
         self._update_meaning_controls()
+        self._update_save_enabled()
 
     # ------------------------------------------------------------------
     # Close / Cancel safety
@@ -1490,7 +1553,7 @@ class WordPhraseCardDialog(QDialog):
         super().closeEvent(event)
 
     # ------------------------------------------------------------------
-    # Validation & Accept
+    # Validation & Accept (Save is the only gate; dialog stays open on fail)
     # ------------------------------------------------------------------
 
     def _get_rows_data(self) -> list[tuple[str, str]]:
@@ -1502,32 +1565,6 @@ class WordPhraseCardDialog(QDialog):
             if meaning or example:
                 result.append((meaning, example))
         return result
-
-    def _validate(self):
-        rows = self._get_rows_data()
-        if not rows:
-            self._status_label.setText(
-                "Add at least one meaning with an example sentence."
-            )
-            self._status_label.setStyleSheet("color: #c00;")
-            return
-
-        valid_count = 0
-        for meaning, example in rows:
-            if meaning and example:
-                valid_count += 1
-
-        if valid_count < 1:
-            self._status_label.setText(
-                "Each meaning must have both a meaning text and an example sentence."
-            )
-            self._status_label.setStyleSheet("color: #c00;")
-            return
-
-        self._status_label.setText(
-            f"✅ {valid_count} valid meaning(s) ready to save."
-        )
-        self._status_label.setStyleSheet("color: #393;")
 
     def _accept(self):
         front = self._front_edit.text().strip()
@@ -1606,19 +1643,12 @@ class DBCreationDialog(QDialog):
         self._sentence_radio.setToolTip(
             "Cards have a sentence with unfamiliar words/phrases. "
             "AI assigns senses in a shared catalog; a word/phrase "
-            "dictionary can be derived from those senses."
+            "dictionary is auto-created/linked as a projection."
         )
         group_layout.addWidget(self._sentence_radio)
 
-        self._word_phrase_radio = QRadioButton(
-            "Word/Phrase-based (derived only)"
-        )
-        self._word_phrase_radio.setToolTip(
-            "Read-only dictionary projection of the shared sense catalog. "
-            "Created automatically with each sentence database — "
-            "manual add/edit is disabled."
-        )
-        group_layout.addWidget(self._word_phrase_radio)
+        # Word/phrase DBs are projection-only and auto-linked from sentence
+        # DBs — users cannot create orphan W/P databases from this dialog.
 
         group_layout.addSpacing(10)
 
@@ -1654,7 +1684,6 @@ class DBCreationDialog(QDialog):
 
         # Update the dir label when radio changes
         self._sentence_radio.toggled.connect(self._update_dir_label)
-        self._word_phrase_radio.toggled.connect(self._update_dir_label)
         self._knowledge_radio.toggled.connect(self._update_dir_label)
         self._update_dir_label()
 
@@ -1677,8 +1706,6 @@ class DBCreationDialog(QDialog):
     def _update_dir_label(self):
         if self._sentence_radio.isChecked():
             subdir = "Language-based/Sentence-based"
-        elif self._word_phrase_radio.isChecked():
-            subdir = "Language-based/Word-Phrase-based"
         else:
             subdir = "Knowledge-based"
         root = self._base_dir or "db"
@@ -1711,8 +1738,6 @@ class DBCreationDialog(QDialog):
 
         if self._sentence_radio.isChecked():
             self._selected_type = DatabaseType.LANGUAGE_SENTENCE
-        elif self._word_phrase_radio.isChecked():
-            self._selected_type = DatabaseType.LANGUAGE_WORD_PHRASE
         else:
             self._selected_type = DatabaseType.KNOWLEDGE
 

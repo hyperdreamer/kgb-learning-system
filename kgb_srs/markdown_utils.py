@@ -23,9 +23,12 @@ def _protect_math_segments(text):
     """
     text = text or ""
     token_map = {}
+    token_prefix = MATH_TOKEN_PREFIX
+    while token_prefix in text:
+        token_prefix += "X"
 
     def make_token():
-        return f"{MATH_TOKEN_PREFIX}{len(token_map)}TOKEN"
+        return f"{token_prefix}{len(token_map)}TOKEN"
 
     def replace_pattern(pattern, source):
         def repl(match):

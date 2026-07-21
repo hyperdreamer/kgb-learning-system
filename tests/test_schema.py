@@ -12,14 +12,7 @@ from kgb_srs.schema import (
     get_sentence_card,
     update_sentence_card,
     find_databases,
-    DB_SUFFIX,
-    validate_db_name,
     resolve_db_path,
-)
-from kgb_srs.catalog import (
-    DatabaseType,
-    write_database_type,
-    read_database_type,
 )
 
 
@@ -86,6 +79,46 @@ class TestInitDb:
             conn2.close()
         finally:
             os.unlink(db_path)
+
+    def test_failure_closes_path_owned_connection(self, tmp_path, monkeypatch):
+        original_connect = sqlite3.connect
+        opened = []
+
+        def connect_then_reject_schema(*args, **kwargs):
+            conn = original_connect(*args, **kwargs)
+            conn.set_authorizer(
+                lambda action, *_args: (
+                    sqlite3.SQLITE_DENY
+                    if action == sqlite3.SQLITE_CREATE_TABLE
+                    else sqlite3.SQLITE_OK
+                )
+            )
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr("kgb_srs.schema.sqlite3.connect", connect_then_reject_schema)
+        with pytest.raises(sqlite3.DatabaseError):
+            init_db(str(tmp_path / "failed-init.db"))
+
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            opened[0].execute("SELECT 1")
+
+    def test_failure_does_not_close_caller_connection(self):
+        conn = sqlite3.connect(":memory:")
+        conn.set_authorizer(
+            lambda action, *_args: (
+                sqlite3.SQLITE_DENY
+                if action == sqlite3.SQLITE_CREATE_TABLE
+                else sqlite3.SQLITE_OK
+            )
+        )
+        try:
+            with pytest.raises(sqlite3.DatabaseError):
+                init_db(conn)
+            conn.set_authorizer(None)
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        finally:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +372,8 @@ class TestResolveDbPath:
 
     def test_symlink_escape_rejected(self, tmp_path):
         """Symlink escapes are caught by realpath resolution."""
-        import os as _os, shutil
+        import os as _os
+        import shutil
         base = str(tmp_path)
         subdir = os.path.join(base, "sub")
         os.makedirs(subdir, exist_ok=True)

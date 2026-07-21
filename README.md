@@ -84,22 +84,25 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 ---
 
-## AI Provider
+## AI Providers
 
 The app supports any **OpenAI-compatible** HTTP endpoint (GPT, DeepSeek, etc.).
 
 ### Configuration
 
-In **Settings → AI Provider**, configure:
+In **Settings → AI Providers**, manage named profiles and configure the active one:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| Provider | `Default` | Named profile (Add / Rename / Delete) |
 | Base URL | `https://api.openai.com/v1` | Provider endpoint |
-| Model | `gpt-4o-mini` | Model name |
+| Model | `gpt-4o-mini` | Model id (Refresh lists `/models`) |
 | API Key | *(blank)* | Your API key — **never committed** |
 | Timeout | 30 s | Network timeout |
 | Explanation Language | Chinese | Language for AI-generated explanations |
 | **Test** | — | Checks that the staged model/API key are reachable and reports latency |
+
+Settings store only `ai_active_provider` + `ai_providers`. Legacy flat `ai_base_url` / `ai_model` / `ai_api_key` / `ai_timeout` are migrated into a profile on load, then removed.
 
 Use **Test** to validate the currently entered Base URL / Model / API Key / Timeout without saving. The check POSTs a minimal `chat/completions` request and shows success latency (ms) or a failure reason.
 
@@ -116,8 +119,8 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 3. Select one item in the list. The **Meaning** panel shows only that item.
 4. Click **Generate Meaning** — AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense. The meaning field is AI-primary (read-only display); double-click unlocks rare manual repair.
 5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
-6. **Validate** (optional) to verify all items appear in the sentence.
-7. **Save** commits the card with expression+meaning pairs linked to global senses.
+6. **Save** runs membership + meaning checks. On failure the dialog stays open so you can fix or Cancel. Save is dimmed while the sentence or item list is empty.
+7. On success, Save commits the card with expression+meaning pairs linked to global senses.
 8. The linked word/phrase dictionary is created automatically with the sentence DB (and backfilled for older DBs on app startup). Sentence Saves keep it in sync — no manual Derive step.
 
 ---
@@ -127,8 +130,12 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 ### Add Selected Text
 The sentence dialog includes an **Add selected text** button. Highlight any text in the sentence editor and click it to add the selection as an unfamiliar item.
 
-### Validation
-Click **Validate** to confirm every unfamiliar item appears literally in the sentence. Items not found are reported with a clear error.
+### Save-time validation
+There is no separate **Validate** button. **Save** is the only gate:
+
+- Dimmed until the sentence is non-empty **and** at least one unfamiliar item exists.
+- Blocks with a warning (dialog stays open) if any item is missing a meaning — type one or use **Generate Meaning**.
+- Checks that every item appears in the sentence (local rules; optional AI residual for irregular forms).
 
 ### Duplicate Detection
 When creating a new sentence card, if a card with the same normalized sentence and same normalized ordered list of expressions already exists, you're offered to edit the existing card instead.
@@ -157,9 +164,11 @@ When creating a new sentence card, if a card with the same normalized sentence a
 
 Click **＋ New**. A dialog appears:
 
-1. Select the category and subtype (Sentence-based, Word/Phrase-based, or Knowledge-based).
+1. Select Sentence-based or Knowledge-based.
 2. Enter a name (validated for path safety).
-3. The database is created in the canonical directory with metadata.
+3. The database is created in the canonical directory with metadata. Each
+   sentence database automatically gets a linked, read-only Word/Phrase-based
+   projection.
 
 ### 2. Selecting a Database
 
@@ -175,7 +184,7 @@ The currently loaded database is marked with **●**. Legacy databases appear un
 Click **Add Entry**. The dialog adapts to the database type:
 
 - **Sentence-based**: Full dialog with sentence input, unfamiliar item management, selected-text addition, in-dialog AI generation, validation, and compact per-item meaning fields (back is auto-derived on Save).
-- **Word/Phrase-based**: Front/back entry with optional AI generation for meanings.
+- **Word/Phrase-based**: Projection-only dictionary auto-created from sentence databases (shared sense catalog). No manual Add Entry; edit senses via sentence cards.
 - **Knowledge-based**: Simple front/back entry with no AI prompts — preserves original generic behavior.
 
 ### 4. Review Controls
@@ -187,7 +196,7 @@ All shortcuts use **Alt** so they never steal plain typing.
 - **Incorrect / Correct** — grade after flip: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card onto the drop zones).
 - **Listen** — speak the card (shortcut: **Alt+L**).
 - **Previous** — returns to the last graded card in this session (shortcut: **Alt+P**).
-- **Restart** — restarts the current daily session from its original due-card queue and clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
+- **Restart** — rebuilds the current daily queue from current eligibility and the current **All cards** / Shuffle settings, then clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
 - **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database. Shortcut: **Alt+X**.
 - **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only). Shortcut: **Alt+D**.
 
@@ -221,7 +230,7 @@ Configure:
 | **General** | Database Directory (root folder), Default Database (file) |
 | **Appearance** | Window size, UI font (app chrome + card edit dialogs), content font (study card HTML) |
 | **Audio & Speech** | TTS voice (language/gender/search filters, row preview) |
-| **AI Provider** | Base URL, model, API key, timeout, explanation language, Test |
+| **AI Providers** | Named profiles, base URL, model, API key, timeout, explanation language, Test |
 
 When you set **Database Directory**, the app creates:
 
@@ -293,7 +302,7 @@ python -m pytest tests/test_regression.py -v
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.10+
 - PyQt6
 - edge-tts
 - PyQt6-WebEngine *(optional, for MathJax rendering)*

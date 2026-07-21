@@ -11,7 +11,9 @@ expression, using source sentences as examples.
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from .validation import normalize_sentence
@@ -38,7 +40,7 @@ class Sense:
 # ---------------------------------------------------------------------------
 
 
-def ensure_expression_senses_table(conn) -> None:
+def ensure_expression_senses_table(conn, *, commit: bool = True) -> None:
     """Create expression_senses and link column on unfamiliar_items.
 
     Idempotent. Safe on legacy DBs.
@@ -71,7 +73,8 @@ def ensure_expression_senses_table(conn) -> None:
             "ALTER TABLE unfamiliar_items ADD COLUMN sense_id INTEGER "
             "REFERENCES expression_senses(id)"
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +94,7 @@ def _row_to_sense(row) -> Sense:
 
 def list_senses_for_expression(conn, expression: str) -> list[Sense]:
     """Return all known senses for *expression* (normalized match)."""
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=False)
     expr_norm = normalize_sentence(expression)
     if not expr_norm:
         return []
@@ -104,8 +107,8 @@ def list_senses_for_expression(conn, expression: str) -> list[Sense]:
     return [_row_to_sense(r) for r in cur.fetchall()]
 
 
-def get_sense(conn, sense_id: int) -> Sense | None:
-    ensure_expression_senses_table(conn)
+def get_sense(conn, sense_id: int, *, commit: bool = False) -> Sense | None:
+    ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, expression, meaning, expression_norm, meaning_norm "
@@ -117,10 +120,10 @@ def get_sense(conn, sense_id: int) -> Sense | None:
 
 
 def find_sense_by_meaning(
-    conn, expression: str, meaning: str
+    conn, expression: str, meaning: str, *, commit: bool = False
 ) -> Sense | None:
     """Exact normalized (expression, meaning) lookup."""
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
     expr_norm = normalize_sentence(expression)
     meaning_norm = normalize_sentence(meaning)
     if not expr_norm or not meaning_norm:
@@ -147,8 +150,11 @@ def create_or_get_sense(
 
     Identity is (expression_norm, meaning_norm). Display text keeps the
     first-seen wording.
+
+    Nested callers pass commit=False so outer transactions stay intact.
+    Unique conflicts use a SAVEPOINT instead of a full rollback.
     """
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
     expr = (expression or "").strip()
     meaning_text = (meaning or "").strip()
     if not expr:
@@ -156,13 +162,16 @@ def create_or_get_sense(
     if not meaning_text:
         raise ValueError("meaning must be non-empty")
 
-    existing = find_sense_by_meaning(conn, expr, meaning_text)
+    existing = find_sense_by_meaning(
+        conn, expr, meaning_text, commit=commit
+    )
     if existing is not None:
         return existing
 
     expr_norm = normalize_sentence(expr)
     meaning_norm = normalize_sentence(meaning_text)
     cur = conn.cursor()
+    cur.execute("SAVEPOINT sense_ins")
     try:
         cur.execute(
             "INSERT INTO expression_senses "
@@ -171,6 +180,7 @@ def create_or_get_sense(
             (expr, meaning_text, expr_norm, meaning_norm),
         )
         sense_id = int(cur.lastrowid)
+        cur.execute("RELEASE SAVEPOINT sense_ins")
         if commit:
             conn.commit()
         return Sense(
@@ -181,9 +191,12 @@ def create_or_get_sense(
             meaning_norm=meaning_norm,
         )
     except Exception:
-        # Race / unique conflict: re-read.
-        conn.rollback()
-        existing = find_sense_by_meaning(conn, expr, meaning_text)
+        # Race / unique conflict: undo only the nested insert attempt.
+        cur.execute("ROLLBACK TO SAVEPOINT sense_ins")
+        cur.execute("RELEASE SAVEPOINT sense_ins")
+        existing = find_sense_by_meaning(
+            conn, expr, meaning_text, commit=commit
+        )
         if existing is not None:
             return existing
         raise
@@ -203,7 +216,7 @@ def resolve_sense_for_item(
     create/get by (expression, meaning).
     """
     if preferred_sense_id is not None:
-        sense = get_sense(conn, preferred_sense_id)
+        sense = get_sense(conn, preferred_sense_id, commit=commit)
         if sense is not None:
             if normalize_sentence(sense.expression) == normalize_sentence(
                 expression
@@ -214,7 +227,7 @@ def resolve_sense_for_item(
 
 
 def list_all_senses(conn) -> list[Sense]:
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=False)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, expression, meaning, expression_norm, meaning_norm "
@@ -224,10 +237,12 @@ def list_all_senses(conn) -> list[Sense]:
 
 
 def group_senses_by_expression(conn) -> dict[str, list[Sense]]:
-    """Map expression_norm → senses (stable order)."""
+    """Map expression_norm → senses that still have item references."""
     grouped: dict[str, list[Sense]] = {}
     display_expr: dict[str, str] = {}
     for sense in list_all_senses(conn):
+        if not sense_has_item_references(conn, sense.id):
+            continue
         key = sense.expression_norm
         grouped.setdefault(key, []).append(sense)
         display_expr.setdefault(key, sense.expression)
@@ -236,12 +251,47 @@ def group_senses_by_expression(conn) -> dict[str, list[Sense]]:
     return grouped
 
 
+def sense_has_item_references(conn, sense_id: int) -> bool:
+    """True when at least one unfamiliar_items row points at sense_id."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM unfamiliar_items WHERE sense_id = ? LIMIT 1",
+        (sense_id,),
+    )
+    return cur.fetchone() is not None
+
+
+def purge_orphan_senses(conn, *, commit: bool = False) -> int:
+    """Delete expression_senses rows with no unfamiliar_items references.
+
+    Returns the number of deleted rows.
+    """
+    from .schema import ensure_unfamiliar_items_table
+
+    ensure_unfamiliar_items_table(conn, commit=commit)
+    ensure_expression_senses_table(conn, commit=commit)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        DELETE FROM expression_senses
+        WHERE id NOT IN (
+            SELECT sense_id FROM unfamiliar_items
+            WHERE sense_id IS NOT NULL
+        )
+        """
+    )
+    deleted = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+    if commit:
+        conn.commit()
+    return deleted
+
+
 def example_sentences_for_sense(
     conn, sense_id: int, *, limit: int = 5
 ) -> list[str]:
     """Sentences that use this sense (via unfamiliar_items.sense_id or meaning)."""
-    ensure_expression_senses_table(conn)
-    sense = get_sense(conn, sense_id)
+    ensure_expression_senses_table(conn, commit=False)
+    sense = get_sense(conn, sense_id, commit=False)
     if sense is None:
         return []
 
@@ -371,6 +421,9 @@ def upsert_word_phrase_card(
 ) -> tuple[int, str]:
     """Insert or update a word/phrase card by front (case-insensitive).
 
+    On UPDATE only front/back change; SRS box and next_review are preserved.
+    On INSERT new cards start at box=1 due today.
+
     Returns (card_id, action) where action is 'inserted' or 'updated'.
     """
     import datetime
@@ -384,17 +437,25 @@ def upsert_word_phrase_card(
 
     today = datetime.date.today().isoformat()
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id FROM cards WHERE front = ? COLLATE NOCASE",
-        (front,),
+    normalized_front = normalize_sentence(front)
+    cur.execute("SELECT id, front, back FROM cards")
+    row = next(
+        (
+            candidate
+            for candidate in cur.fetchall()
+            if normalize_sentence(candidate[1] or "") == normalized_front
+        ),
+        None,
     )
-    row = cur.fetchone()
     if row:
         card_id = int(row[0])
-        cur.execute(
-            "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-            (front, back, today, card_id),
-        )
+        existing_front = row[1] or ""
+        existing_back = row[2] or ""
+        if existing_front != front or existing_back != back:
+            cur.execute(
+                "UPDATE cards SET front=?, back=? WHERE id=?",
+                (front, back, card_id),
+            )
         action = "updated"
     else:
         cur.execute(
@@ -463,11 +524,6 @@ def derive_word_phrase_database(
     ensure_expression_senses_table(source_conn)
     backfill_senses_from_items(source_conn)
 
-    if write_type:
-        from .catalog import DatabaseType, write_database_type
-
-        write_database_type(target_conn, DatabaseType.LANGUAGE_WORD_PHRASE)
-
     entries = derive_word_phrase_entries(source_conn)
     inserted = 0
     updated = 0
@@ -492,6 +548,11 @@ def derive_word_phrase_database(
             if normalize_sentence(front or "") not in keep_fronts:
                 cur.execute("DELETE FROM cards WHERE id=?", (card_id,))
                 pruned += 1
+
+    if write_type:
+        from .catalog import DatabaseType, write_database_type
+
+        write_database_type(target_conn, DatabaseType.LANGUAGE_WORD_PHRASE)
 
     target_conn.commit()
     return {
@@ -542,40 +603,91 @@ def ensure_linked_word_phrase_database(
     ensure_expression_senses_table(source_conn)
     backfill_senses_from_items(source_conn)
 
+    canonical_path = default_word_phrase_path_for_sentence(
+        sentence_db_path, db_root
+    )
     path = get_linked_word_phrase_db(source_conn)
-    if not path or not os.path.isfile(path):
-        path = default_word_phrase_path_for_sentence(sentence_db_path, db_root)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+    if (
+        not path
+        or not os.path.isfile(path)
+        or os.path.realpath(path) != os.path.realpath(canonical_path)
+    ):
+        # A saved link is not authority to derive into that file.  Only the
+        # matching canonical projection path may be opened and mutated.
+        path = canonical_path
+        os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
         # Create empty DB shell if needed, then link.
-        target = init_db(path)
+        target = init_db(canonical_path)
         try:
             from .catalog import DatabaseType, write_database_type
 
             write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
         finally:
             target.close()
-        set_linked_word_phrase_db(source_conn, path)
+        set_linked_word_phrase_db(source_conn, canonical_path)
 
     stats = None
     if sync:
-        stats = sync_linked_word_phrase_database(source_conn)
+        stats = sync_linked_word_phrase_database(
+            source_conn,
+            sentence_db_path=sentence_db_path,
+            db_root=db_root,
+        )
     return path, stats
 
 
-def sync_linked_word_phrase_database(source_conn) -> dict | None:
+def sync_linked_word_phrase_database(
+    source_conn,
+    *,
+    sentence_db_path: str | None = None,
+    db_root: str | None = None,
+) -> dict | None:
     """If the sentence DB has a linked W/P path, fully re-derive it.
 
-    Creates the target file when the link exists but the file is missing.
-    Returns stats dict, or None if no link.
+    When the sentence DB path and root are supplied, the saved target must
+    resolve to this sentence DB's canonical projection path. Legacy direct
+    callers may omit them, but then only an existing target explicitly marked
+    as a word/phrase DB is eligible for synchronization.
+
+    Returns stats dict, or None when no safe linked target is available.
     """
     path = get_linked_word_phrase_db(source_conn)
     if not path:
         return None
 
+    canonical_path = None
+    if sentence_db_path is not None and db_root is not None:
+        canonical_path = default_word_phrase_path_for_sentence(
+            sentence_db_path, db_root
+        )
+        # Do not open a saved target unless it is the owned canonical file.
+        if os.path.realpath(path) != os.path.realpath(canonical_path):
+            return None
+    else:
+        # Legacy callers did not provide enough context to establish path
+        # ownership. Inspect existing metadata read-only before opening the
+        # target for a destructive projection refresh.
+        if not os.path.isfile(path):
+            return None
+        try:
+            target = sqlite3.connect(
+                f"{Path(os.path.realpath(path)).as_uri()}?mode=ro", uri=True
+            )
+            try:
+                from .catalog import DatabaseType, read_database_type
+
+                if read_database_type(target) != DatabaseType.LANGUAGE_WORD_PHRASE:
+                    return None
+            finally:
+                target.close()
+        except (OSError, ValueError, sqlite3.Error):
+            return None
+
     from .schema import init_db
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    target = init_db(path)
+    target_path = canonical_path or path
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    target = init_db(target_path)
     try:
         stats = derive_word_phrase_database(source_conn, target)
     finally:
@@ -633,7 +745,7 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
 
     Returns number of item rows linked/updated.
     """
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, expression, meaning, sense_id FROM unfamiliar_items"
@@ -647,7 +759,7 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
             continue
         if sense_id:
             # Keep existing link if still valid.
-            if get_sense(conn, int(sense_id)) is not None:
+            if get_sense(conn, int(sense_id), commit=commit) is not None:
                 continue
         sense = create_or_get_sense(
             conn, expr, meaning_text, commit=False

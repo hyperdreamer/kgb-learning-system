@@ -10,10 +10,21 @@ import edge_tts
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+def unlink_tts_temp(path):
+    """Best-effort delete of a TTS temp MP3. Returns None."""
+    if not path:
+        return None
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return None
+
+
 class TTSWorker(QThread):
     """Worker thread that generates TTS audio without blocking the GUI."""
 
-    finished = pyqtSignal(str)
+    audio_ready = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, text, voice):
@@ -27,6 +38,10 @@ class TTSWorker(QThread):
 
         communicate = edge_tts.Communicate(self.text, self.voice)
         await communicate.save(temp_file)
+        try:
+            os.chmod(temp_file, 0o600)
+        except OSError:
+            pass
         return temp_file
 
     def run(self):
@@ -34,7 +49,7 @@ class TTSWorker(QThread):
         asyncio.set_event_loop(loop)
         try:
             file_path = loop.run_until_complete(self.generate_audio())
-            self.finished.emit(file_path)
+            self.audio_ready.emit(file_path)
         except Exception as e:
             self.error.emit(str(e))
         finally:

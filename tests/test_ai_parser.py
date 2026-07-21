@@ -6,7 +6,6 @@ import pytest
 from kgb_srs.ai_parser import (
     parse_sentence_meanings,
     parse_word_phrase_meanings,
-    MeaningResult,
     AIParseError,
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
@@ -109,6 +108,14 @@ class TestParseSentenceMeanings:
         result = parse_sentence_meanings(response, expected_expressions=["x"])
         assert len(result) == 1
 
+    @pytest.mark.parametrize("value", [[], {}, 1])
+    @pytest.mark.parametrize("field", ["expression", "contextual_meaning"])
+    def test_required_text_fields_must_be_strings(self, field, value):
+        item = {"expression": "test", "contextual_meaning": "meaning"}
+        item[field] = value
+        with pytest.raises(AIValidationError, match=field):
+            parse_sentence_meanings(json.dumps({"items": [item]}), ["test"])
+
 
 # ---------------------------------------------------------------------------
 # parse_word_phrase_meanings
@@ -194,6 +201,14 @@ class TestParseWordPhraseMeanings:
         }) + '\n```'
         result = parse_word_phrase_meanings(response)
         assert len(result) == 1
+
+    @pytest.mark.parametrize("value", [[], {}, 1])
+    @pytest.mark.parametrize("field", ["meaning", "example"])
+    def test_required_text_fields_must_be_strings(self, field, value):
+        item = {"meaning": "meaning", "example": "example"}
+        item[field] = value
+        with pytest.raises(AIValidationError, match=field):
+            parse_word_phrase_meanings(json.dumps({"meanings": [item]}))
 
 
 # ---------------------------------------------------------------------------

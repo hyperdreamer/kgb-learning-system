@@ -17,6 +17,175 @@ from dataclasses import dataclass
 # Configuration
 # ---------------------------------------------------------------------------
 
+DEFAULT_AI_PROVIDER_NAME = "Default"
+
+
+def _safe_timeout(value, default: int = 30) -> int:
+    try:
+        return max(5, min(120, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_provider_entry(raw: dict | None) -> dict:
+    """Normalize one provider profile dict (no secrets leaked in errors)."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "base_url": str(raw.get("base_url") or "https://api.openai.com/v1").strip(),
+        "model": str(raw.get("model") or "gpt-4o-mini").strip(),
+        "api_key": str(raw.get("api_key") or ""),
+        "timeout": _safe_timeout(raw.get("timeout", 30)),
+    }
+
+
+# Legacy flat keys (pre multi-provider). Migrated into profiles on load/save,
+# then stripped so profiles are the only persisted surface.
+LEGACY_AI_FLAT_KEYS = ("ai_base_url", "ai_model", "ai_api_key", "ai_timeout")
+
+
+def _legacy_flat_entry_from_settings(settings: dict) -> dict:
+    """Build one profile from obsolete flat ai_* keys (migration only)."""
+    return {
+        "base_url": str(
+            settings.get("ai_base_url") or "https://api.openai.com/v1"
+        ).strip(),
+        "model": str(settings.get("ai_model") or "gpt-4o-mini").strip(),
+        "api_key": str(settings.get("ai_api_key") or ""),
+        "timeout": _safe_timeout(settings.get("ai_timeout", 30)),
+    }
+
+
+def strip_legacy_ai_flat_keys(settings: dict) -> dict:
+    """Remove obsolete flat ai_* mirrors. Mutates and returns *settings*."""
+    for key in LEGACY_AI_FLAT_KEYS:
+        settings.pop(key, None)
+    return settings
+
+
+def ensure_ai_provider_profiles(settings: dict) -> dict:
+    """Ensure *settings* has ``ai_providers`` + ``ai_active_provider``.
+
+    Migrates legacy flat keys into a single profile when profiles are
+    missing. Does **not** keep flat mirrors — profiles are the only
+    source of truth. Mutates and returns *settings*.
+    """
+    providers_raw = settings.get("ai_providers")
+    providers: dict[str, dict] = {}
+    if isinstance(providers_raw, dict):
+        for name, entry in providers_raw.items():
+            label = str(name or "").strip()
+            if not label:
+                continue
+            providers[label] = _normalize_provider_entry(entry)
+
+    if not providers:
+        providers[DEFAULT_AI_PROVIDER_NAME] = _legacy_flat_entry_from_settings(
+            settings
+        )
+
+    active = str(settings.get("ai_active_provider") or "").strip()
+    if active not in providers:
+        active = next(iter(providers))
+
+    settings["ai_providers"] = providers
+    settings["ai_active_provider"] = active
+    # Drop redundant flat keys so config/UI only point at the active profile.
+    strip_legacy_ai_flat_keys(settings)
+    return settings
+
+
+def list_ai_provider_names(settings: dict) -> list[str]:
+    """Sorted provider profile names (active first, then alpha)."""
+    ensure_ai_provider_profiles(settings)
+    active = settings["ai_active_provider"]
+    names = sorted(settings["ai_providers"].keys(), key=str.casefold)
+    if active in names:
+        names.remove(active)
+        names.insert(0, active)
+    return names
+
+
+def get_ai_provider_entry(settings: dict, name: str | None = None) -> dict:
+    """Return a copy of the named (or active) provider profile."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or settings["ai_active_provider"]).strip()
+    entry = settings["ai_providers"].get(label)
+    if entry is None:
+        entry = settings["ai_providers"][settings["ai_active_provider"]]
+    return dict(entry)
+
+
+def set_active_ai_provider(settings: dict, name: str) -> bool:
+    """Switch active provider; return False if *name* is unknown."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or "").strip()
+    if label not in settings["ai_providers"]:
+        return False
+    settings["ai_active_provider"] = label
+    ensure_ai_provider_profiles(settings)
+    return True
+
+
+def upsert_ai_provider(
+    settings: dict,
+    name: str,
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    timeout: int,
+    make_active: bool = False,
+) -> str:
+    """Create or update a named provider profile. Returns the stored name."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or "").strip() or DEFAULT_AI_PROVIDER_NAME
+    settings["ai_providers"][label] = _normalize_provider_entry(
+        {
+            "base_url": base_url,
+            "model": model,
+            "api_key": api_key,
+            "timeout": timeout,
+        }
+    )
+    if make_active or settings.get("ai_active_provider") not in settings["ai_providers"]:
+        settings["ai_active_provider"] = label
+    ensure_ai_provider_profiles(settings)
+    return label
+
+
+def rename_ai_provider(settings: dict, old_name: str, new_name: str) -> str | None:
+    """Rename a profile. Returns new name, or None if rename failed."""
+    ensure_ai_provider_profiles(settings)
+    old = (old_name or "").strip()
+    new = (new_name or "").strip()
+    if not old or not new or old not in settings["ai_providers"]:
+        return None
+    if new != old and new in settings["ai_providers"]:
+        return None
+    if new == old:
+        return old
+    settings["ai_providers"][new] = settings["ai_providers"].pop(old)
+    if settings.get("ai_active_provider") == old:
+        settings["ai_active_provider"] = new
+    ensure_ai_provider_profiles(settings)
+    return new
+
+
+def delete_ai_provider(settings: dict, name: str) -> bool:
+    """Delete a profile. Refuses to delete the last remaining one."""
+    ensure_ai_provider_profiles(settings)
+    label = (name or "").strip()
+    if label not in settings["ai_providers"]:
+        return False
+    if len(settings["ai_providers"]) <= 1:
+        return False
+    del settings["ai_providers"][label]
+    if settings.get("ai_active_provider") == label:
+        settings["ai_active_provider"] = next(iter(settings["ai_providers"]))
+    ensure_ai_provider_profiles(settings)
+    return True
+
+
 @dataclass
 class AIProviderConfig:
     """AI provider configuration.
@@ -32,11 +201,14 @@ class AIProviderConfig:
 
     @classmethod
     def from_settings(cls, settings: dict) -> "AIProviderConfig":
+        """Build config from the *active* provider profile."""
+        ensure_ai_provider_profiles(settings)
+        entry = get_ai_provider_entry(settings)
         return cls(
-            base_url=settings.get("ai_base_url", cls.base_url),
-            model=settings.get("ai_model", cls.model),
-            api_key=settings.get("ai_api_key", ""),
-            timeout_seconds=int(settings.get("ai_timeout", cls.timeout_seconds)),
+            base_url=entry.get("base_url", cls.base_url),
+            model=entry.get("model", cls.model),
+            api_key=entry.get("api_key", ""),
+            timeout_seconds=int(entry.get("timeout", cls.timeout_seconds)),
         )
 
     @property
@@ -219,18 +391,16 @@ def build_membership_prompt(sentence: str, missing_items: list[str]) -> str:
 # HTTP helper (stdlib only — no extra dependency)
 # ---------------------------------------------------------------------------
 
-def _make_http_call(
+def http_request(
     url: str,
     headers: dict,
-    body: bytes,
+    *,
+    body: bytes | None = None,
     timeout: int,
+    method: str = "GET",
 ) -> str:
-    """Make a synchronous HTTP POST call using stdlib urllib.
-
-    Returns the response body as a string.
-    Raises urllib.error.URLError on network/timeout errors.
-    """
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    """Synchronous HTTP request via stdlib urllib (GET or POST)."""
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
 
@@ -245,7 +415,7 @@ class AIClient:
     Usage:
         client = AIClient(config)
         url, headers, body = client.build_request(user_prompt)
-        raw = _make_http_call(url, headers, body, config.timeout_seconds)
+        raw = http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
         text = client.parse_response(raw)
     """
 
@@ -259,7 +429,7 @@ class AIClient:
         """
         if not self.config.api_key:
             raise AIMissingConfigError(
-                "AI API key is not configured. Add 'ai_api_key' to barsky_settings.json."
+                "AI API key is not configured. Set it under Settings → AI Providers."
             )
 
         base = self.config.base_url.rstrip("/")
@@ -291,19 +461,37 @@ class AIClient:
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse API response as JSON: {e}")
 
+        if not isinstance(data, dict):
+            raise ValueError("API response must be a JSON object")
+
         if "error" in data:
-            msg = data["error"].get("message", str(data["error"]))
+            error = data["error"]
+            if not isinstance(error, dict):
+                raise ValueError("API response 'error' must be an object")
+            msg = error.get("message", str(error))
             raise ValueError(f"API error: {msg}")
 
         choices = data.get("choices")
         if choices is None:
             raise ValueError("API response has no 'choices'")
 
+        if not isinstance(choices, list):
+            raise ValueError("API response 'choices' must be a list")
+
         if len(choices) == 0:
             raise ValueError("API response 'choices' is empty")
 
-        message = choices[0].get("message", {})
-        content = message.get("content", "")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise ValueError("API response first choice must be an object")
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            raise ValueError("API response first choice message must be an object")
+        if "content" not in message:
+            raise ValueError("API response first choice message has no 'content'")
+        content = message["content"]
+        if not isinstance(content, str):
+            raise ValueError("API response first choice message 'content' must be a string")
         return content
 
 
@@ -334,9 +522,15 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
 
     started = time.monotonic()
     try:
-        _make_http_call(url, headers, body, timeout=config.timeout_seconds)
+        raw = http_request(
+            url, headers, body=body, timeout=config.timeout_seconds, method="POST"
+        )
+        AIClient(config).parse_response(raw)
         latency_ms = (time.monotonic() - started) * 1000.0
         return True, f"OK — {config.model} reachable", latency_ms
+    except ValueError as exc:
+        latency_ms = (time.monotonic() - started) * 1000.0
+        return False, str(exc), latency_ms
     except urllib.error.HTTPError as exc:
         latency_ms = (time.monotonic() - started) * 1000.0
         detail = _http_error_message(exc)
@@ -353,6 +547,75 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
     except Exception as exc:
         latency_ms = (time.monotonic() - started) * 1000.0
         return False, f"Unexpected error: {exc}", latency_ms
+
+
+def list_models(config: AIProviderConfig) -> tuple[bool, str, list[str]]:
+    """Discover models from the OpenAI-compatible ``/models`` endpoint.
+
+    Returns ``(ok, message, model_ids)``. On success *model_ids* is sorted
+    case-insensitively and de-duplicated. On failure *model_ids* is empty.
+    Does not raise for expected network/HTTP failures.
+    """
+    if not config.api_key:
+        return False, "API key is not set", []
+
+    base = config.base_url.rstrip("/")
+    url = f"{base}/models"
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        raw = http_request(
+            url, headers, body=None, timeout=config.timeout_seconds, method="GET"
+        )
+    except urllib.error.HTTPError as exc:
+        return False, _http_error_message(exc), []
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError) or "timed out" in str(exc).lower():
+            return False, "timed out", []
+        return False, f"Network error: {reason or exc}", []
+    except TimeoutError:
+        return False, "timed out", []
+    except Exception as exc:
+        return False, f"Unexpected error: {exc}", []
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return False, f"Failed to parse models response: {exc}", []
+
+    if isinstance(data, dict) and "error" in data:
+        err = data["error"]
+        if isinstance(err, dict):
+            msg = err.get("message") or err.get("code") or str(err)
+        else:
+            msg = str(err)
+        return False, str(msg), []
+
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return False, "Models response has no 'data' list", []
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        mid = str(row.get("id") or "").strip()
+        if not mid:
+            continue
+        key = mid.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        ids.append(mid)
+    ids.sort(key=str.casefold)
+    if not ids:
+        return False, "No models returned", []
+    return True, f"{len(ids)} model(s)", ids
 
 
 def _http_error_message(exc: urllib.error.HTTPError) -> str:
@@ -403,17 +666,18 @@ def _get_ai_worker_class():
             try:
                 client = AIClient(self._config)
                 url, headers, body = client.build_request(self._prompt)
-                raw = _make_http_call(
+                raw = http_request(
                     url, headers,
-                    json.dumps(body).encode("utf-8"),
+                    body=json.dumps(body).encode("utf-8"),
                     timeout=self._config.timeout_seconds,
+                    method="POST",
                 )
                 content = client.parse_response(raw)
                 self.result.emit(content)
             except AIMissingConfigError as e:
                 self.error.emit(str(e))
             except urllib.error.URLError as e:
-                self.error.emit(f"Network error: {e.reason}")
+                self.error.emit(f"Network error: {getattr(e, 'reason', str(e))}")
             except ValueError as e:
                 self.error.emit(str(e))
             except Exception as e:
@@ -422,12 +686,6 @@ def _get_ai_worker_class():
     return AIWorker
 
 
-def create_ai_worker(config: AIProviderConfig, prompt: str):
-    """Create an AIWorker thread for the given config and prompt.
-
-    Safe to call from any context where PyQt6 is available.
-    """
-    return _get_ai_worker_class()(config, prompt)
 
 
 def _get_ai_test_worker_class():
@@ -456,3 +714,31 @@ def create_ai_test_worker(config: AIProviderConfig):
     Safe to call from any context where PyQt6 is available.
     """
     return _get_ai_test_worker_class()(config)
+
+
+def _get_ai_models_worker_class():
+    """Lazy import of AIModelsWorker to avoid requiring PyQt6 at module level."""
+    from PyQt6.QtCore import QThread, pyqtSignal
+
+    class AIModelsWorker(QThread):
+        """Background thread that lists models from the active provider."""
+
+        result = pyqtSignal(bool, str, list)  # ok, message, model_ids
+
+        def __init__(self, config: AIProviderConfig):
+            super().__init__()
+            self._config = config
+
+        def run(self):
+            ok, message, models = list_models(self._config)
+            self.result.emit(ok, message, list(models))
+
+    return AIModelsWorker
+
+
+def create_ai_models_worker(config: AIProviderConfig):
+    """Create an AIModelsWorker thread for the given config.
+
+    Safe to call from any context where PyQt6 is available.
+    """
+    return _get_ai_models_worker_class()(config)

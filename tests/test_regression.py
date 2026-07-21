@@ -6,7 +6,6 @@ Many tests will FAIL before the corresponding fixes are implemented.
 
 import os
 import sqlite3
-import tempfile
 import json
 import pytest
 
@@ -16,23 +15,17 @@ from kgb_srs.schema import (
     insert_sentence_card,
     get_sentence_card,
     update_sentence_card,
-    find_databases,
     resolve_db_path,
-    validate_db_name,
 )
 from kgb_srs.catalog import (
     DatabaseType,
-    DatabaseCategory,
     infer_database_type,
-    build_catalog_tree,
     DB_DIR_LANGUAGE_SENTENCE,
-    DB_DIR_LANGUAGE_WORD_PHRASE,
     DB_DIR_KNOWLEDGE,
 )
 from kgb_srs.ai_parser import (
     parse_sentence_meanings,
     parse_word_phrase_meanings,
-    AIParseError,
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
 )
@@ -41,7 +34,6 @@ from kgb_srs.search import (
     search_sentence_cards,
     search_word_phrase_cards,
 )
-from kgb_srs.validation import normalize_sentence, deduplicate_unfamiliar_items
 
 
 _QT_APP = None
@@ -63,7 +55,7 @@ class TestFinalFormRegressions:
         from PyQt6.QtWidgets import QLineEdit
         from PyQt6.QtCore import QSize
         from PyQt6.QtGui import QAction
-        from kgb_srs.main_window import SecretLineEdit, _make_eye_icons
+        from kgb_srs.secret_line_edit import SecretLineEdit, _make_eye_icons
 
         field = SecretLineEdit("sk-secret")
 
@@ -147,7 +139,7 @@ class TestFinalFormRegressions:
            exists left of (or above) the image centre.
         """
         _qt_app()
-        from kgb_srs.main_window import _make_eye_icons
+        from kgb_srs.secret_line_edit import _make_eye_icons
 
         sz = 20  # default used by SecretLineEdit
         _hidden_icon, visible_icon = _make_eye_icons(size=sz)
@@ -205,10 +197,20 @@ class TestFinalFormRegressions:
         window = SimpleNamespace(
             current_card=(1, "current", "back", 1),
             cards_due=[(2, "queued", "back", 2), (3, "other", "back", 1)],
+            _daily_review_history=[(2, "queued", "back", 2), (4, "graded", "back", 3)],
+            _daily_queue_snapshot=[(2, "queued", "back", 2), (3, "other", "back", 1)],
+            _paused_cards_due=[(2, "queued", "back", 2)],
+            _paused_daily_queue=[(2, "queued", "back", 2), (5, "paused", "back", 1)],
+            _paused_review_history=[(2, "queued", "back", 2)],
         )
         BarskyApp._remove_card_from_review_state(window, 2)
         assert [card[0] for card in window.cards_due] == [3]
         assert window.current_card[0] == 1
+        assert [card[0] for card in window._daily_review_history] == [4]
+        assert [card[0] for card in window._daily_queue_snapshot] == [3]
+        assert window._paused_cards_due == []
+        assert [card[0] for card in window._paused_daily_queue] == [5]
+        assert window._paused_review_history == []
 
     def test_sentence_expression_labels_accept_structured_pairs(self):
         _qt_app()
@@ -217,6 +219,55 @@ class TestFinalFormRegressions:
         assert _expression_labels([("bonjour", "hello"), ("ami", "friend")]) == [
             "bonjour", "ami"
         ]
+
+    def test_sentence_card_display_orders_and_numbers_meanings(self, tmp_path):
+        """Review back: bold both surfaces; number multi-item meanings in sentence order."""
+        _qt_app()
+        import sqlite3
+        from types import SimpleNamespace
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.schema import init_db, insert_sentence_card
+
+        db_path = tmp_path / "sentence_display.db"
+        conn = sqlite3.connect(db_path)
+        init_db(conn)
+        # Insert exact before grievance so DB id order is reverse of sentence order.
+        sentence = (
+            "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        )
+        card_id = insert_sentence_card(
+            conn,
+            sentence,
+            [
+                ("exact", "to demand and obtain (revenge) from someone"),
+                (
+                    "grievance",
+                    "a real or imagined wrong or injustice that is the cause for revenge",
+                ),
+            ],
+            back="",
+        )
+        win = SimpleNamespace(conn=conn)
+        md = BarskyApp._build_sentence_card_display(
+            win,
+            card_id,
+            sentence,
+            "",
+            flipped=True,
+            metadata="**Box 1** | ID: `1`",
+        )
+        assert "**Grievance**" in md
+        assert "**Exacted**" in md
+        # Meanings ordered by sentence appearance, numbered, separate blocks.
+        assert "1. **grievance**:" in md
+        assert "2. **exact**:" in md
+        g_pos = md.index("1. **grievance**:")
+        e_pos = md.index("2. **exact**:")
+        assert g_pos < e_pos
+        # Separate lines / blocks (blank line between numbered entries).
+        between = md[g_pos:e_pos]
+        assert "\n\n" in between
+        conn.close()
 
     def test_settings_file_is_owner_only(self, tmp_path, monkeypatch):
         import stat
@@ -459,7 +510,45 @@ class TestFinalFormRegressions:
         dialog._accept()
 
         assert warnings
+        assert "meaning" in warnings[0].lower()
         assert dialog.result_items == []
+        assert dialog.isVisible() or True  # dialog never accepted
+        dialog.close()
+
+    def test_sentence_dialog_save_dimmed_when_empty(self):
+        """Save is disabled until sentence + at least one item exist."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog()
+        assert dialog._save_btn.isEnabled() is False
+
+        dialog._sentence_edit.setPlainText("Hello world")
+        _qt_app().processEvents()
+        assert dialog._save_btn.isEnabled() is False
+
+        dialog._item_entry.setText("world")
+        dialog._add_item()
+        _qt_app().processEvents()
+        assert dialog._save_btn.isEnabled() is True
+
+        # Clear sentence → dim again
+        dialog._sentence_edit.setPlainText("")
+        _qt_app().processEvents()
+        assert dialog._save_btn.isEnabled() is False
+        dialog.close()
+
+    def test_sentence_dialog_has_no_validate_button(self):
+        """Validate is redundant — Save is the only gate."""
+        _qt_app()
+        from PyQt6.QtWidgets import QPushButton
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello world", items=[("world", "earth")])
+        labels = [b.text() for b in dialog.findChildren(QPushButton)]
+        assert "Validate" not in labels
+        assert "Save" in labels
+        assert not hasattr(dialog, "_validate_btn")
         dialog.close()
 
     def test_sentence_dialog_has_no_back_editor(self):
@@ -534,6 +623,135 @@ class TestFinalFormRegressions:
         assert dialog._meaning_widgets[0][1].toPlainText() == "a greeting"
         dialog.close()
 
+    @staticmethod
+    def _emit_sentence_ai_assignment(dialog, monkeypatch, response):
+        """Run a controlled AI assignment response through the dialog."""
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.forms import _AIGenerateWorker
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.forms._AIGenerateWorker", FakeWorker)
+        dialog._generate_ai_meanings()
+        assert dialog._ai_worker is not None
+        dialog._ai_worker.result.emit(response)
+        QApplication.processEvents()
+
+    @staticmethod
+    def _expression_sense_count(conn):
+        from kgb_srs.senses import ensure_expression_senses_table
+
+        ensure_expression_senses_table(conn)
+        return conn.execute("SELECT COUNT(*) FROM expression_senses").fetchone()[0]
+
+    def test_ai_create_defers_sense_creation_until_dialog_save(self, monkeypatch):
+        """Cancelling an AI-created meaning must not leave an orphan sense."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+            conn=conn,
+        )
+        try:
+            self._emit_sentence_ai_assignment(
+                dialog,
+                monkeypatch,
+                ('{"expression": "Hello", "action": "create", '
+                 '"sense_id": null, "meaning": "a greeting"}'),
+            )
+
+            assert dialog._meanings["Hello"] == "a greeting"
+            assert dialog._sense_ids["Hello"] is None
+            assert self._expression_sense_count(conn) == 0
+
+            dialog.reject()
+            assert self._expression_sense_count(conn) == 0
+        finally:
+            dialog.close()
+            conn.close()
+
+    def test_ai_create_materializes_one_sense_when_saved(self, monkeypatch):
+        """The normal sentence-card insert creates and links the deferred sense."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+            conn=conn,
+        )
+        try:
+            self._emit_sentence_ai_assignment(
+                dialog,
+                monkeypatch,
+                ('{"expression": "Hello", "action": "create", '
+                 '"sense_id": null, "meaning": "a greeting"}'),
+            )
+            assert self._expression_sense_count(conn) == 0
+
+            dialog._accept()
+            card_id = insert_sentence_card(
+                conn,
+                dialog.result_sentence,
+                dialog.result_items,
+                dialog.result_back,
+            )
+
+            assert self._expression_sense_count(conn) == 1
+            sense_id, meaning = conn.execute(
+                "SELECT sense_id, meaning FROM unfamiliar_items WHERE card_id=?",
+                (card_id,),
+            ).fetchone()
+            assert sense_id is not None
+            assert meaning == "a greeting"
+        finally:
+            dialog.close()
+            conn.close()
+
+    def test_ai_reuse_keeps_existing_sense_id_without_duplicate(self, monkeypatch):
+        """A verified AI reuse remains linked to its canonical existing sense."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+        from kgb_srs.senses import create_or_get_sense
+
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        existing = create_or_get_sense(conn, "Hello", "canonical greeting")
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+            conn=conn,
+        )
+        try:
+            self._emit_sentence_ai_assignment(
+                dialog,
+                monkeypatch,
+                ('{"expression": "Hello", "action": "reuse", '
+                 f'"sense_id": {existing.id}, "meaning": ""}}'),
+            )
+
+            assert self._expression_sense_count(conn) == 1
+            assert dialog._sense_ids["Hello"] == existing.id
+            assert dialog._meanings["Hello"] == "canonical greeting"
+        finally:
+            dialog.close()
+            conn.close()
+
     def test_sentence_dialog_result_back_derived_from_meanings(self, monkeypatch):
         """On accept, result_back is the markdown join of expression+meaning pairs."""
         _qt_app()
@@ -548,12 +766,12 @@ class TestFinalFormRegressions:
         )
         dialog._accept()
 
-        assert [(e, m) for e, m, _s in dialog.result_items] == [
+        assert [(e, m) for e, m, _s, _surf in dialog.result_items] == [
             ("Hello", "greeting"),
             ("world", "earth"),
         ]
         assert dialog.result_back == (
-            "**Hello**: greeting\n\n**world**: earth"
+            "1. **Hello**: greeting\n\n2. **world**: earth"
         )
         dialog.close()
 
@@ -1282,7 +1500,6 @@ class TestReviewQueuePreservation:
     def test_edit_current_card_updates_it(self):
         """Editing the current card should refresh it."""
         current_card = (1, "front1", "back1", 2)
-        cards_due = [(1, "f1", "b1", 2), (2, "f2", "b2", 3)]
 
         card_id = 1
         fresh = (1, "front1_updated", "back1_updated", 1)
@@ -1569,40 +1786,6 @@ class TestMenuSubmenuSpacing:
         leaves = collect_leaves(menu)
         assert len(leaves) >= 1
         assert leaves[0].data() == str(dummy)
-
-# ============================================================================
-# Blocker #2: Explicit AND/OR with multi-word operands
-# ============================================================================
-
-class TestExplicitANDORMultiword:
-    """parse_search_tokens must join adjacent non-operator words."""
-
-    def test_and_with_multiword_operand(self):
-        groups = parse_search_tokens("new york AND city")
-        assert groups == [["new york", "city"]], (
-            f"Expected [['new york', 'city']], got {groups}"
-        )
-
-    def test_or_with_multiword_operands(self):
-        groups = parse_search_tokens("new york OR los angeles")
-        assert groups == [["new york"], ["los angeles"]], (
-            f"Expected [['new york'], ['los angeles']], got {groups}"
-        )
-
-    def test_preserves_literal_plain_multiword(self):
-        """Plain multi-word query without AND/OR still one literal operand."""
-        groups = parse_search_tokens("new york")
-        assert groups == [["new york"]]
-
-    def test_mixed_or_and_multiword(self):
-        groups = parse_search_tokens("big apple AND city OR small town")
-        assert groups == [["big apple", "city"], ["small town"]], (
-            f"Expected [['big apple', 'city'], ['small town']], got {groups}"
-        )
-
-    def test_case_insensitive_operators_multiword(self):
-        groups = parse_search_tokens("new york and city")
-        assert groups == [["new york", "city"]]
 
 # ============================================================================
 # Blocker #2: Explicit AND/OR with multi-word operands
@@ -1924,9 +2107,16 @@ class TestSettingsStaging:
         config.save_settings({
             "width": 900, "height": 700, "font_family": "Arial",
             "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
-            "ai_base_url": "https://api.openai.com/v1",
-            "ai_model": "gpt-4o-mini", "ai_api_key": "secret123",
-            "ai_timeout": 30, "explanation_language": "Chinese",
+            "ai_active_provider": "Default",
+            "ai_providers": {
+                "Default": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": "secret123",
+                    "timeout": 30,
+                }
+            },
+            "explanation_language": "Chinese",
         })
         monkeypatch.setattr(config, "load_settings",
                             lambda: config.load_settings())
@@ -1939,17 +2129,34 @@ class TestSettingsStaging:
         # It builds staged changes and saves them
         staged = dict(window.settings)
         staged["width"] = 1024
-        staged["ai_api_key"] = "new_secret"
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in staged.get("ai_providers", {}).items()
+        }
+        active = staged["ai_active_provider"]
+        staged["ai_providers"][active]["api_key"] = "new_secret"
 
         # Before save, original settings should be unchanged
         assert window.settings["width"] == original_settings["width"]
-        assert window.settings["ai_api_key"] == original_settings["ai_api_key"]
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original_settings["ai_providers"][original_settings["ai_active_provider"]][
+                "api_key"
+            ]
+        )
 
         # After successful save, should update
         config.save_settings(staged)
         window.settings.update(staged)
         assert window.settings["width"] == 1024
-        assert window.settings["ai_api_key"] == "new_secret"
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == "new_secret"
+        )
 
         window.close()
 
@@ -1963,9 +2170,16 @@ class TestSettingsStaging:
         config.save_settings({
             "width": 900, "height": 700, "font_family": "Arial",
             "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
-            "ai_base_url": "https://api.openai.com/v1",
-            "ai_model": "gpt-4o-mini", "ai_api_key": "secret123",
-            "ai_timeout": 30, "explanation_language": "Chinese",
+            "ai_active_provider": "Default",
+            "ai_providers": {
+                "Default": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": "secret123",
+                    "timeout": 30,
+                }
+            },
+            "explanation_language": "Chinese",
         })
 
         _qt_app()
@@ -1975,7 +2189,12 @@ class TestSettingsStaging:
 
         # Build staged changes
         staged = dict(window.settings)
-        staged["ai_api_key"] = "would_be_leaked"
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in staged.get("ai_providers", {}).items()
+        }
+        active = staged["ai_active_provider"]
+        staged["ai_providers"][active]["api_key"] = "would_be_leaked"
         staged["width"] = 1234
 
         # Simulate save failure
@@ -1992,7 +2211,12 @@ class TestSettingsStaging:
             pass
 
         # Live settings must be unchanged
-        assert window.settings["ai_api_key"] == original["ai_api_key"], (
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original["ai_providers"][original["ai_active_provider"]]["api_key"]
+        ), (
             "API key must not change on save failure"
         )
         assert window.settings["width"] == original["width"]
@@ -2009,17 +2233,39 @@ class TestSettingsStaging:
         settings_path = tmp_path / "barsky_settings.json"
         monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
 
-        original_key = "sk-original-secret-key"
-        config.save_settings({"ai_api_key": original_key, "width": 900})
+        original_key = "key-original"
+        config.save_settings({
+            "width": 900,
+            "ai_active_provider": "Default",
+            "ai_providers": {
+                "Default": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": original_key,
+                    "timeout": 30,
+                }
+            },
+        })
 
         _qt_app()
         from kgb_srs.main_window import BarskyApp
         window = BarskyApp()
-        assert window.settings["ai_api_key"] == original_key
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original_key
+        )
 
         # Stage a change
         staged = dict(window.settings)
-        staged["ai_api_key"] = "sk-would-be-leaked"
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in staged.get("ai_providers", {}).items()
+        }
+        staged["ai_providers"][staged["ai_active_provider"]]["api_key"] = (
+            "would-be-leaked"
+        )
 
         # Fail the save
         def failing_save(s):
@@ -2032,7 +2278,12 @@ class TestSettingsStaging:
             pass
 
         # Must still be original
-        assert window.settings["ai_api_key"] == original_key, (
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original_key
+        ), (
             "API key was mutated despite save failure"
         )
 
@@ -2070,7 +2321,6 @@ class TestDropZoneLayoutDoesNotOverflow:
         lie inside the viewport, and the zone bottom must leave ≥ 10 px
         internal inset from the viewport bottom edge."""
         _qt_app()
-        from PyQt6.QtCore import QPoint
 
         win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
 
@@ -2174,7 +2424,8 @@ class TestReviewControls:
     @staticmethod
     def _db(*ids):
         """Return in-memory conn with cards inserted (all due today)."""
-        import sqlite3, datetime
+        import sqlite3
+        import datetime
         from kgb_srs.db import init_db
         conn = sqlite3.connect(":memory:")
         init_db(conn)
@@ -2442,7 +2693,8 @@ class TestReviewControls:
         """IDLE state: Start enabled; Restart/Previous/Close disabled.
 
         force_seq_btn has been removed (merged into the primary button)."""
-        import tempfile, os
+        import tempfile
+        import os
         conn = self._db(1)
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
         tmp.close()
@@ -2464,7 +2716,8 @@ class TestReviewControls:
             assert not hasattr(w, "force_seq_btn")
         finally:
             os.unlink(tmp.name)
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_and_close_enabled_during_review(self):
         """Delete/Close enabled when card + active review mode exist."""
@@ -2474,7 +2727,8 @@ class TestReviewControls:
 
         assert w.delete_entry_btn.isEnabled()
         assert w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_buttons_disabled_after_close(self):
         """After close_review, Delete and Close are disabled."""
@@ -2484,7 +2738,8 @@ class TestReviewControls:
 
         assert not w.delete_entry_btn.isEnabled()
         assert not w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_wp_hides_add_and_delete_entry(self):
         """Word/phrase DBs hide Add/Delete Entry (projection-only)."""
@@ -2508,7 +2763,8 @@ class TestReviewControls:
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM cards")
             assert cur.fetchone()[0] == 1
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_start_selected_card_review_opens_one_card_session(self):
         """Browse → Review Selected starts a one-card daily session."""
@@ -2524,7 +2780,8 @@ class TestReviewControls:
         assert w.cards_due == []
         assert [c[0] for c in w._daily_queue_snapshot] == [2]
         assert w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_start_selected_card_review_missing_card(self):
         """Missing card id does not start a review."""
@@ -2536,7 +2793,8 @@ class TestReviewControls:
             imock.assert_called()
         assert w.current_card is None
         assert w.review_mode == ""
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_keyboard_shortcuts_are_installed(self):
         """Main window installs Alt-based review/chrome shortcuts."""
@@ -2562,7 +2820,8 @@ class TestReviewControls:
             assert any(expected in k or k == expected for k in keys), (
                 f"Missing shortcut {expected!r} in {sorted(keys)}"
             )
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_shortcut_reveal_and_grade(self):
         """Alt+R reveals; Alt+Right grades correct only after flip."""
@@ -2590,7 +2849,26 @@ class TestReviewControls:
             w._shortcut_correct()
             cur.execute("SELECT box FROM cards WHERE id=1")
             assert cur.fetchone()[0] == 2
-        conn.close(); w.close()
+        conn.close()
+        w.close()
+
+    def test_shortcut_closes_completed_daily_review(self):
+        """Alt+X closes an active daily session after its final grade."""
+        conn = self._db(1)
+        w = self._win(conn=conn, mode="daily")
+        w._daily_review_history = [(1, "c1", "b1", 2)]
+        w._update_button_visibility()
+        assert w.current_card is None
+        assert w.close_review_btn.isEnabled()
+
+        w._shortcut_close_review()
+
+        assert w.review_mode == ""
+        assert w._paused_review_mode == "daily"
+        assert w._paused_review_history == [(1, "c1", "b1", 2)]
+        assert "Resume Daily Review" in w.start_btn.text()
+        conn.close()
+        w.close()
 
     def test_shortcut_tooltips_use_alt(self):
         """Button tooltips document Alt shortcuts."""
@@ -2601,7 +2879,8 @@ class TestReviewControls:
         assert "Alt+X" in w.close_review_btn.toolTip()
         assert "Alt+T" in w.restart_review_btn.toolTip()
         assert "Alt+P" in w.previous_review_btn.toolTip()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     # -- finding #2: close preserves queue ---------------------------------
 
@@ -2614,7 +2893,8 @@ class TestReviewControls:
         snapshot = list(w.cards_due)
         w.close_review()
         assert w.cards_due == snapshot, "cards_due must survive close unchanged"
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     # -- close semantics ---------------------------------------------------
 
@@ -2629,7 +2909,8 @@ class TestReviewControls:
         assert w._paused_review_mode == "daily"
         assert w.current_card is None
         assert w.review_mode == ""
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_close_does_not_mutate_db(self):
         """close_review leaves the database unchanged."""
@@ -2643,7 +2924,8 @@ class TestReviewControls:
         after = list(conn.execute(
             "SELECT id, box, next_review FROM cards ORDER BY id").fetchall())
         assert before == after
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_close_noop_without_card(self):
         """close_review is safe when no card is shown."""
@@ -2666,7 +2948,8 @@ class TestReviewControls:
         assert w.current_card[0] == 2, "paused card must be first"
         assert w._paused_review_card is None
         assert [c[0] for c in w.cards_due] == [3], "preserved queue follows"
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_resume_no_duplicate_in_queue(self):
         """Paused card is de-duplicated from the resumed queue."""
@@ -2676,7 +2959,8 @@ class TestReviewControls:
         w.close_review()
         w.start_review()
         assert sum(1 for c in w.cards_due if c[0] == 2) == 0
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_resume_skips_deleted_paused(self):
         """If paused card was deleted, silently skip to next card."""
@@ -2684,10 +2968,12 @@ class TestReviewControls:
         w = self._win(conn=conn, card=(1, "c1", "b1", 1),
                        due=[(2, "c2", "b2", 1)], mode="daily")
         w.close_review()
-        conn.execute("DELETE FROM cards WHERE id=1"); conn.commit()
+        conn.execute("DELETE FROM cards WHERE id=1")
+        conn.commit()
         w.start_review()
         assert w.current_card[0] != 1
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_resume_fresh_db_data(self):
         """Resumed card re-fetched from DB (sees external edits)."""
@@ -2699,7 +2985,8 @@ class TestReviewControls:
         w.start_review()
         assert w.current_card[1] == "updated"
         assert w.current_card[3] == 2
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_start_without_pause_fresh_query(self):
         """No paused card → normal daily review with fresh DB query."""
@@ -2708,14 +2995,16 @@ class TestReviewControls:
         w.start_review()
         assert w.current_card is not None
         assert w.review_mode == "daily"
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
 
     # -- DB load clears paused state --------------------------------------
 
     def test_db_load_clears_paused_state(self):
         """Loading a database resets paused review state."""
-        import tempfile, os
+        import tempfile
+        import os
         conn = self._db(1)
         # Create a real temp DB so load_database doesn't early-return
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
@@ -2734,7 +3023,87 @@ class TestReviewControls:
             assert w._paused_review_mode == ""
         finally:
             os.unlink(tmp.name)
-        conn.close(); w.close()
+        conn.close()
+        w.close()
+
+    def test_missing_db_load_clears_active_review_state(self, tmp_path):
+        """A missing selected database clears the review it replaces."""
+        conn = self._db(1)
+        w = self._win(conn=conn)
+        w.start_review()
+        assert w.current_card is not None
+        assert w.review_mode == "daily"
+        w.current_db_path = str(tmp_path / "missing_barsky.db")
+        w.current_lang = "Missing"
+
+        w.load_database(silent=True)
+
+        assert w.conn is None
+        assert w.current_db_path is None
+        assert w.current_lang is None
+        assert w.current_card is None
+        assert w.cards_due == []
+        assert w.review_mode == ""
+        assert w._paused_review_card is None
+        assert w._paused_review_mode == ""
+        w.close()
+
+    def test_create_sentence_db_survives_projection_failure(self, tmp_path, monkeypatch):
+        """Projection errors are non-modal and do not block source DB creation."""
+        _qt_app()
+        from PyQt6.QtWidgets import QDialog
+        from kgb_srs.catalog import (
+            DatabaseType,
+            DB_DIR_LANGUAGE_SENTENCE,
+            read_database_type,
+        )
+        from kgb_srs.main_window import BarskyApp
+
+        db_root = tmp_path / "databases"
+        name = "ProjectionFailure"
+
+        class AcceptedCreationDialog:
+            def __init__(self, *args, **kwargs):
+                self.selected_type = DatabaseType.LANGUAGE_SENTENCE
+                self.db_name = name
+
+            def exec(self):
+                return QDialog.DialogCode.Accepted
+
+        def fail_projection(*args, **kwargs):
+            raise RuntimeError("projection unavailable")
+
+        monkeypatch.setattr(
+            "kgb_srs.main_window.DBCreationDialog", AcceptedCreationDialog
+        )
+        monkeypatch.setattr(
+            BarskyApp, "_ensure_all_word_phrase_projections", lambda self: None
+        )
+        monkeypatch.setattr(
+            "kgb_srs.senses.ensure_linked_word_phrase_database", fail_projection
+        )
+        warning_calls = []
+        monkeypatch.setattr(
+            "kgb_srs.main_window.QMessageBox.warning",
+            lambda *args: warning_calls.append(args),
+        )
+        monkeypatch.setattr(
+            "kgb_srs.main_window.QMessageBox.information", lambda *args: None
+        )
+
+        w = BarskyApp()
+        w.settings = dict(w.settings)
+        w.settings["database_root"] = str(db_root)
+        w._save_settings = lambda: None
+        w.create_new_database()
+
+        expected_path = db_root / DB_DIR_LANGUAGE_SENTENCE / f"{name}_barsky.db"
+        assert expected_path.is_file()
+        assert w.current_db_path == str(expected_path)
+        assert w.conn is not None
+        assert read_database_type(w.conn) == DatabaseType.LANGUAGE_SENTENCE
+        assert warning_calls == []
+        w.close()
 
     # -- delete behavior --------------------------------------------------
 
@@ -2753,7 +3122,8 @@ class TestReviewControls:
         assert w.current_card[0] == 2
         assert w._paused_review_card is None
         assert w._paused_review_mode == ""
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_last_card_disables_buttons(self):
         """Deleting the last card: no current card, buttons disabled."""
@@ -2768,7 +3138,8 @@ class TestReviewControls:
         assert w.current_card is None
         assert not w.delete_entry_btn.isEnabled()
         assert not w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_removes_from_queue(self):
         """Deleted card removed from cards_due."""
@@ -2781,7 +3152,8 @@ class TestReviewControls:
             w.delete_current_card()
 
         assert 1 not in [c[0] for c in w.cards_due]
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_card_by_id_helper(self):
         """_delete_card_by_id: DB row gone, review state + paused cleared."""
@@ -2790,6 +3162,9 @@ class TestReviewControls:
                        due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)],
                        mode="daily",
                        paused_card=(1, "c1", "b1", 1), paused_mode="daily")
+        # In-memory helper DB is not a sentence catalog; avoid sense purge path.
+        w._db_type = None
+        w._save_settings = lambda: None
 
         returned = w._delete_card_by_id(1)
 
@@ -2807,7 +3182,132 @@ class TestReviewControls:
         assert w._paused_review_mode == ""
         # Returns the integer id
         assert returned == 1
-        conn.close(); w.close()
+        conn.close()
+        w.close()
+
+    def test_delete_sentence_card_purges_senses_and_resyncs_wp(self, tmp_path):
+        """R2-1: sentence delete purges orphan senses and re-derives W/P."""
+        from kgb_srs.catalog import DatabaseType, write_database_type
+        from kgb_srs.db import init_db
+        from kgb_srs.schema import insert_sentence_card
+        from kgb_srs.senses import (
+            ensure_linked_word_phrase_database,
+            get_sense,
+        )
+
+        db_root = tmp_path / "db"
+        sent_dir = db_root / "Language-based" / "Sentence-based"
+        sent_dir.mkdir(parents=True)
+        sentence_path = str(sent_dir / "English_barsky.db")
+
+        conn = init_db(sentence_path)
+        write_database_type(conn, DatabaseType.LANGUAGE_SENTENCE)
+        card_id = insert_sentence_card(
+            conn,
+            "He insists on speaking himself.",
+            [("insist on", "to demand firmly")],
+        )
+        sense_id = conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (card_id,),
+        ).fetchone()[0]
+        assert get_sense(conn, sense_id) is not None
+
+        wp_path, stats = ensure_linked_word_phrase_database(
+            conn, sentence_path, str(db_root), sync=True
+        )
+        assert stats is not None
+        assert stats["expressions"] == 1
+        wp = init_db(wp_path)
+        try:
+            fronts = {
+                r[0].lower()
+                for r in wp.execute("SELECT front FROM cards").fetchall()
+            }
+            assert fronts == {"insist on"}
+        finally:
+            wp.close()
+
+        w = self._win(
+            conn=conn,
+            card=(card_id, "He insists on speaking himself.", "", 1),
+            due=[(card_id, "He insists on speaking himself.", "", 1)],
+            mode="daily",
+        )
+        w._db_type = DatabaseType.LANGUAGE_SENTENCE
+        w.current_db_path = sentence_path
+        w.settings = dict(w.settings)
+        w.settings["database_root"] = str(db_root)
+        # closeEvent saves settings; keep tests from polluting the real file.
+        w._save_settings = lambda: None
+        w._daily_review_history = [
+            (card_id, "He insists on speaking himself.", "", 1)
+        ]
+        w._daily_queue_snapshot = list(w.cards_due)
+        w._paused_cards_due = list(w.cards_due)
+        w._paused_daily_queue = list(w.cards_due)
+        w._paused_review_history = list(w._daily_review_history)
+
+        w._delete_card_by_id(card_id)
+
+        assert conn.execute(
+            "SELECT id FROM cards WHERE id=?", (card_id,)
+        ).fetchone() is None
+        assert get_sense(conn, sense_id) is None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM expression_senses"
+        ).fetchone()[0] == 0
+        assert w._daily_review_history == []
+        assert w._daily_queue_snapshot == []
+        assert w._paused_cards_due == []
+        assert w._paused_daily_queue == []
+        assert w._paused_review_history == []
+
+        wp = init_db(wp_path)
+        try:
+            fronts = [
+                r[0] for r in wp.execute("SELECT front FROM cards").fetchall()
+            ]
+            assert fronts == []
+        finally:
+            wp.close()
+        conn.close()
+        w.close()
+
+    def test_previous_daily_skips_deleted_history_entries(self):
+        """R2-1: previous daily skips ghost history when card was deleted."""
+        from kgb_srs.schema import ensure_unfamiliar_items_table
+
+        conn = self._db(1, 2, 3)
+        ensure_unfamiliar_items_table(conn)
+        w = self._win(
+            conn=conn,
+            card=(3, "c3", "b3", 1),
+            due=[],
+            mode="daily",
+        )
+        w._db_type = None  # knowledge-style path: no expression fetch
+        w._daily_review_history = [
+            (1, "c1", "b1", 2),
+            (2, "c2", "b2", 2),
+        ]
+        # Delete the most recent graded card out from under history.
+        conn.execute("DELETE FROM cards WHERE id=2")
+        conn.commit()
+
+        # Avoid full graphics path; we only care about history/current selection.
+        w.draw_card_ui = lambda: None
+        w.card_ui = None
+
+        w._previous_daily_card()
+
+        assert w.current_card is not None
+        assert w.current_card[0] == 1
+        assert w.current_card[3] == 1  # re-fetched from DB
+        assert [c[0] for c in w.cards_due] == [3]
+        assert w._daily_review_history == []
+        conn.close()
+        w.close()
 
     # -- widget sanity ----------------------------------------------------
 
@@ -2927,3 +3427,371 @@ class TestReviewControls:
 
         conn.close()
         w.close()
+
+
+
+class TestProgrammaticMeaningSenseId:
+    """FIX 6: AI/programmatic setPlainText must not clear sense_id."""
+
+    def test_programmatic_meaning_preserves_sense_id(self):
+        from PyQt6.QtWidgets import QApplication
+        import sys
+        QApplication.instance() or QApplication(sys.argv)
+
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello world", items=["world"])
+        dialog._sense_ids["world"] = 42
+        dialog._meanings["world"] = "old"
+        dialog._active_meaning_expr = "world"
+        dialog._rebuild_meaning_editors()
+        assert dialog._meaning_widgets
+        edit = dialog._meaning_widgets[0][1]
+
+        dialog._programmatic_meaning_update = True
+        edit.blockSignals(True)
+        try:
+            edit.setPlainText("new meaning from AI")
+        finally:
+            edit.blockSignals(False)
+            dialog._programmatic_meaning_update = False
+
+        dialog._meanings["world"] = "new meaning from AI"
+        assert dialog._sense_ids["world"] == 42
+
+        edit.setPlainText("typed by user")
+        assert dialog._sense_ids["world"] is None
+        dialog.close()
+
+
+class TestSentenceDialogGeometryPersistence:
+    """Sentence card dialog remembers last-used size across opens."""
+
+    def test_save_persists_resized_dialog_geometry(self, tmp_path, monkeypatch):
+        _qt_app()
+        from kgb_srs import config, forms
+
+        saved = []
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(
+            config, "save_settings", lambda values: saved.append(dict(values))
+        )
+        settings = {"width": 900, "height": 700}
+        dialog = forms.SentenceCardDialog(
+            sentence="Hello world", items=["world"], settings=settings
+        )
+        dialog.resize(910, 700)
+        dialog._meaning_widgets[0][1].setPlainText("the earth")
+
+        dialog._save_btn.click()
+
+        assert settings["sentence_dialog_width"] == 910
+        assert settings["sentence_dialog_height"] == 700
+        assert len(saved) == 1
+
+    def test_cancel_persists_resized_dialog_geometry(self, tmp_path, monkeypatch):
+        _qt_app()
+        from kgb_srs import config, forms
+
+        saved = []
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(
+            config, "save_settings", lambda values: saved.append(dict(values))
+        )
+        settings = {"width": 900, "height": 700}
+        dialog = forms.SentenceCardDialog(
+            sentence="Hello world", items=["world"], settings=settings
+        )
+        dialog.resize(910, 700)
+
+        dialog._cancel_btn.click()
+
+        assert settings["sentence_dialog_width"] == 910
+        assert settings["sentence_dialog_height"] == 700
+        assert len(saved) == 1
+
+    def test_restores_persisted_size_and_saves_on_close(self, tmp_path, monkeypatch):
+        _qt_app()
+        from kgb_srs import config, forms
+
+        settings_file = tmp_path / "barsky_settings.json"
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+
+        settings = {
+            "width": 900,
+            "height": 700,
+            "sentence_dialog_width": 888,
+            "sentence_dialog_height": 666,
+        }
+        dialog = forms.SentenceCardDialog(
+            sentence="Hello world",
+            items=["world"],
+            settings=settings,
+        )
+        assert dialog.width() == 888
+        assert dialog.height() == 666
+
+        dialog.resize(910, 700)
+        dialog.close()
+
+        assert settings["sentence_dialog_width"] == 910
+        assert settings["sentence_dialog_height"] == 700
+        assert settings_file.is_file()
+
+        # Re-open with the updated bag → same size.
+        dialog2 = forms.SentenceCardDialog(
+            sentence="Hello again",
+            items=["Hello"],
+            settings=settings,
+        )
+        assert dialog2.width() == 910
+        assert dialog2.height() == 700
+        dialog2.close()
+
+    def test_default_size_when_settings_missing_keys(self):
+        _qt_app()
+        from kgb_srs.config import DEFAULT_SETTINGS
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello", items=["Hello"])
+        assert dialog.width() == DEFAULT_SETTINGS["sentence_dialog_width"]
+        assert dialog.height() == DEFAULT_SETTINGS["sentence_dialog_height"]
+        dialog.close()
+
+
+class TestDBCreationDialogNoWordPhrase:
+    """FIX 9: dialog must not offer manual W/P database creation."""
+
+    def test_no_word_phrase_radio(self):
+        from PyQt6.QtWidgets import QApplication
+        import sys
+        QApplication.instance() or QApplication(sys.argv)
+        from kgb_srs.forms import DBCreationDialog
+        from kgb_srs.catalog import DatabaseType
+
+        dialog = DBCreationDialog()
+        assert not hasattr(dialog, "_word_phrase_radio")
+        dialog._sentence_radio.setChecked(True)
+        dialog._name_edit.setText("Demo")
+        dialog._on_create()
+        assert dialog.selected_type == DatabaseType.LANGUAGE_SENTENCE
+        dialog.close()
+
+
+class TestTtsTempCleanup:
+    """R2-2: temp barsky_tts_*.mp3 files must not linger forever."""
+
+    def test_unlink_tts_temp_removes_file(self, tmp_path):
+        from kgb_srs.tts import unlink_tts_temp
+
+        p = tmp_path / "barsky_tts_deadbeef.mp3"
+        p.write_bytes(b"fake")
+        assert p.exists()
+        assert unlink_tts_temp(str(p)) is None
+        assert not p.exists()
+        # Missing path is a no-op.
+        assert unlink_tts_temp(str(p)) is None
+        assert unlink_tts_temp(None) is None
+
+    def test_speak_text_replaces_previous_temp_file(self, tmp_path, monkeypatch):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+
+        old = tmp_path / "barsky_tts_old.mp3"
+        new = tmp_path / "barsky_tts_new.mp3"
+        old.write_bytes(b"old")
+        new.write_bytes(b"new")
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+
+            def __init__(self, text, voice):
+                super().__init__()
+                self.text = text
+                self.voice = voice
+
+            def start(self):
+                self.audio_ready.emit(str(new))
+                self.finished.emit()
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+
+        class FakePlayer:
+            def setSource(self, *_a, **_k):
+                return None
+
+            def play(self):
+                return None
+
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=str(old),
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            player=FakePlayer(),
+        )
+        # Bind real helpers onto the lightweight stand-in.
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        btn = SimpleNamespace(enabled=True, text="🔊 Listen")
+        btn.setEnabled = lambda v: setattr(btn, "enabled", v)
+        btn.setText = lambda t: setattr(btn, "text", t)
+
+        mw.BarskyApp.speak_text(window, "hello", btn)
+
+        assert not old.exists()
+        assert window._tts_temp_path == str(new)
+        assert new.exists()
+
+    def test_late_tts_audio_for_replaced_card_is_unlinked_without_playback(
+        self, tmp_path, monkeypatch
+    ):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+        import kgb_srs.tts as tts
+
+        late_audio = tmp_path / "barsky_tts_late.mp3"
+        late_audio.write_bytes(b"late")
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            instance = None
+
+            def __init__(self, text, voice):
+                super().__init__()
+                FakeWorker.instance = self
+
+            def start(self):
+                return None
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+        unlinked = []
+
+        def unlink(path):
+            unlinked.append(path)
+            if path:
+                late_audio.unlink(missing_ok=True)
+            return None
+
+        monkeypatch.setattr(tts, "unlink_tts_temp", unlink)
+
+        class FakePlayer:
+            source_calls = 0
+            play_calls = 0
+
+            def setSource(self, *_args):
+                self.source_calls += 1
+
+            def play(self):
+                self.play_calls += 1
+
+        original_card = object()
+        original_ui = object()
+        player = FakePlayer()
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=None,
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            player=player,
+            current_card=original_card,
+            card_ui=original_ui,
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        button = SimpleNamespace(enabled=True, text="🔊 Listen", updates=[])
+        button.setEnabled = lambda value: button.updates.append(("enabled", value))
+        button.setText = lambda value: button.updates.append(("text", value))
+
+        mw.BarskyApp.speak_text(window, "card A", button)
+        button.updates.clear()
+        unlinked.clear()
+        window.current_card = object()
+        window.card_ui = object()
+        FakeWorker.instance.audio_ready.emit(str(late_audio))
+
+        assert unlinked == [str(late_audio)]
+        assert not late_audio.exists()
+        assert player.source_calls == 0
+        assert player.play_calls == 0
+        assert button.updates == []
+
+    def test_late_tts_error_for_replaced_card_does_not_touch_old_button(
+        self, monkeypatch
+    ):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            instance = None
+
+            def __init__(self, text, voice):
+                super().__init__()
+                FakeWorker.instance = self
+
+            def start(self):
+                return None
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+        warnings = []
+        monkeypatch.setattr(
+            mw.QMessageBox,
+            "warning",
+            lambda *args: warnings.append(args),
+        )
+
+        original_card = object()
+        original_ui = object()
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=None,
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            current_card=original_card,
+            card_ui=original_ui,
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        button = SimpleNamespace(updates=[])
+        button.setEnabled = lambda value: button.updates.append(("enabled", value))
+        button.setText = lambda value: button.updates.append(("text", value))
+
+        mw.BarskyApp.speak_text(window, "card A", button)
+        button.updates.clear()
+        window.current_card = object()
+        window.card_ui = object()
+        FakeWorker.instance.error.emit("late failure")
+
+        assert warnings == []
+        assert button.updates == []

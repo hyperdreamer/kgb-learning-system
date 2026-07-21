@@ -34,15 +34,16 @@ import pytest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 
+from kgb_srs.main_window import BarskyApp
+from kgb_srs.schema import init_db, ensure_unfamiliar_items_table
+from kgb_srs.catalog import DatabaseType, write_database_type
+
 @pytest.fixture(autouse=True)
 def _dismiss_message_boxes(monkeypatch):
     """Prevent modal dialogs from blocking the headless review-control tests."""
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
     monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
 
-from kgb_srs.main_window import BarskyApp
-from kgb_srs.schema import init_db, ensure_unfamiliar_items_table
-from kgb_srs.catalog import DatabaseType, write_database_type
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -157,6 +158,15 @@ class TestIdleStateButtons:
             "paused daily session exists"
         )
 
+    def test_start_label_with_completed_paused_session(self, app_with_db):
+        """Retained completed-session history is resumable."""
+        app, _, _ = app_with_db
+        app._paused_review_card = None
+        app._paused_review_mode = "daily"
+        app._paused_review_history = [(1, "test", "back", 1)]
+        app._update_button_visibility()
+        assert "Resume Daily Review" in app.start_btn.text()
+
     def test_restart_disabled_in_idle(self, app_with_db):
         app, _, _ = app_with_db
         assert app.review_mode == ""
@@ -207,12 +217,25 @@ class TestActiveStateButtons:
         )
 
     def test_previous_enabled_in_active(self, app_with_db):
+        """Previous enables after Next or grade (session path non-empty)."""
         app, _, _ = app_with_db
         app.start_review()
         assert app.review_mode == "daily"
-        assert app.previous_review_btn.isEnabled(), (
-            "Previous must be enabled during active daily review"
+        first_id = app.current_card[0]
+        assert not app.previous_review_btn.isEnabled(), (
+            "Previous must stay disabled on the first card (no prior step)"
         )
+        # Next alone must enable Previous (reverse of Next — no grade needed).
+        app._advance_daily_queue()
+        assert app.previous_review_btn.isEnabled(), (
+            "Previous must enable after Next advances the session path"
+        )
+        assert app.current_card is not None
+        assert app.current_card[0] != first_id or len(app._daily_review_history) >= 1
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == first_id
+
 
     def test_close_enabled_in_active(self, app_with_db):
         app, _, _ = app_with_db
@@ -344,6 +367,7 @@ class TestResumeTransition:
         assert app.current_card[0] == first_id
 
         # Grade one card
+        app.is_current_flipped = True
         app.process_answer(correct=True)
         second_id = app.current_card[0] if app.current_card else None
 
@@ -356,9 +380,9 @@ class TestResumeTransition:
 
 
 class TestQueueCompletion:
-    """When the daily queue is exhausted, return to idle."""
+    """When the daily queue is exhausted, keep session active for Previous."""
 
-    def test_all_cards_reviewed_returns_to_idle(self, app_with_db):
+    def test_all_cards_reviewed_keeps_session_for_previous(self, app_with_db):
         app, db_path, conn = app_with_db
 
         today = datetime.date.today().isoformat()
@@ -375,14 +399,21 @@ class TestQueueCompletion:
         for _ in range(due_count):
             if app.current_card is None:
                 break
+            app.is_current_flipped = True
             app.process_answer(correct=True)
 
-        assert app.review_mode == "", (
-            "Review mode must be cleared after all cards are reviewed"
+        # Queue empty, but daily mode + history stay so Previous can restore.
+        assert app.current_card is None
+        assert app.review_mode == "daily", (
+            "Review mode must stay daily after finishing so Previous works"
         )
-        assert "Start Daily Review" in app.start_btn.text(), (
-            "Primary button must return to 'Start Daily Review' after completion"
-        )
+        assert app._daily_review_history, "History must survive final grade"
+        assert app.previous_review_btn.isEnabled()
+        assert "Next" in app.start_btn.text()
+        # Explicit Close preserves the completed session for resumption.
+        app.close_review()
+        assert app.review_mode == ""
+        assert "Resume Daily Review" in app.start_btn.text()
 
 
 class TestRestartDailyReview:
@@ -393,9 +424,10 @@ class TestRestartDailyReview:
         app.start_review()
 
         # Save the first card ID for later verification.
-        first_id = app.current_card[0]
+        app.current_card[0]
 
         # Grade a card (it moves to history, queue shrinks).
+        app.is_current_flipped = True
         app.process_answer(correct=True)
         assert app.review_mode == "daily"
         assert len(app._daily_review_history) >= 1
@@ -436,6 +468,97 @@ class TestNoDatabaseLoaded:
         app.deleteLater()
 
 
+class TestDatabaseLoadFailure:
+    def test_corrupt_load_clears_active_review_state(self, app_with_db, tmp_path):
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.current_card is not None
+        assert app.card_ui is not None
+
+        corrupt_db = tmp_path / "corrupt.db"
+        corrupt_db.write_bytes(b"not a sqlite database")
+        app.current_db_path = str(corrupt_db)
+        app.current_lang = "Corrupt"
+        app.load_database(silent=True)
+
+        assert app.conn is None
+        assert app.current_db_path is None
+        assert app.current_lang is None
+        assert app._db_type is None
+        assert app.current_card is None
+        assert app.cards_due == []
+        assert app.review_mode == ""
+        assert app._paused_review_card is None
+        assert app._paused_review_mode == ""
+        assert app._daily_review_history == []
+        assert app._daily_queue_snapshot == []
+        assert app._paused_cards_due == []
+        assert app._paused_daily_queue == []
+        assert app._paused_review_history == []
+        assert app.card_ui is None
+        assert app.scene.items() == []
+        assert app.db_btn.text() == "📂 Select Database"
+        assert not app.start_btn.isEnabled()
+        assert not app.restart_review_btn.isEnabled()
+        assert not app.previous_review_btn.isEnabled()
+        assert not app.close_review_btn.isEnabled()
+        assert not app.random_checkbox.isEnabled()
+        assert not app.all_cards_checkbox.isEnabled()
+        assert not app.browse_btn.isEnabled()
+
+        # Previously active actions are now no-ops rather than operating on
+        # the closed database or stale card.
+        app.flip_card()
+        app.process_answer(correct=True)
+        assert app.current_card is None
+
+
+class TestCloseEventSettingsFailure:
+    def test_settings_save_oserror_does_not_interrupt_cleanup(self, qapp, capsys):
+        app = BarskyApp()
+        cleanup_calls = []
+        worker_waits = []
+
+        def fail_save():
+            raise OSError("disk full")
+
+        class Signal:
+            def disconnect(self):
+                pass
+
+        class Worker:
+            audio_ready = Signal()
+            error = Signal()
+
+            def isRunning(self):
+                return True
+
+            def wait(self, timeout):
+                worker_waits.append(timeout)
+
+        class Event:
+            accepted = False
+
+            def accept(self):
+                self.accepted = True
+
+        app._save_settings = fail_save
+        app._cleanup_tts_temp = lambda: cleanup_calls.append(True)
+        app.tts_worker = Worker()
+        event = Event()
+        app.closeEvent(event)
+
+        assert event.accepted
+        assert cleanup_calls == [True]
+        assert worker_waits == [2000]
+        assert app.tts_worker is None
+        assert "Could not save settings: disk full" in capsys.readouterr().err
+
+        app._save_settings = lambda: None
+        app.close()
+        app.deleteLater()
+
+
 class TestDailyReviewHistoryTracking:
     """The daily review session must track viewed cards for Previous navigation."""
 
@@ -451,18 +574,29 @@ class TestDailyReviewHistoryTracking:
         app, _, _ = app_with_db
         app.start_review()
         assert app._daily_review_history == [], (
-            "History must be empty when daily review starts"
+            "Session path must be empty when daily review starts"
         )
+
+    def test_next_adds_to_session_path(self, app_with_db):
+        """Next (skip) must push the current card onto the session path."""
+        app, _, _ = app_with_db
+        app.start_review()
+        first = app.current_card
+        app._advance_daily_queue()
+        assert len(app._daily_review_history) == 1
+        assert app._daily_review_history[0][0] == first[0]
+        assert app.previous_review_btn.isEnabled()
 
     def test_grading_adds_to_history(self, app_with_db):
         app, _, _ = app_with_db
         app.start_review()
         graded_card = app.current_card
 
+        app.is_current_flipped = True
         app.process_answer(correct=True)
 
         assert len(app._daily_review_history) == 1, (
-            "Grading a card must add it to review history"
+            "Grading a card must add it to the session path"
         )
         assert app._daily_review_history[0][0] == graded_card[0], (
             "History must contain the graded card"
@@ -488,3 +622,205 @@ class TestQueueSnapshot:
         assert len(snapshot) >= len(remaining), (
             "Snapshot must capture the full original due queue"
         )
+
+
+
+class TestProcessAnswerFreshBox:
+    """FIX 3/4/11: grade from DB box, require flip, store fresh history."""
+
+    def test_requires_flip_before_grading(self, app_with_db):
+        app, _, conn = app_with_db
+        app.start_review()
+        assert app.current_card is not None
+        card_id = app.current_card[0]
+        cur = conn.cursor()
+        cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
+        box_before = cur.fetchone()[0]
+        app.is_current_flipped = False
+
+        app.process_answer(correct=True)
+
+        cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
+        assert cur.fetchone()[0] == box_before
+        assert app.current_card[0] == card_id
+        assert app._daily_review_history == []
+
+    def test_grades_from_db_box_not_stale_tuple(self, app_with_db):
+        app, _, conn = app_with_db
+        app.start_review()
+        card_id, front, back, _ = app.current_card
+
+        # DB is already at a higher box than the in-memory tuple.
+        conn.execute(
+            "UPDATE cards SET box=3, next_review=? WHERE id=?",
+            (__import__("datetime").date.today().isoformat(), card_id),
+        )
+        conn.commit()
+        app.current_card = (card_id, front, back, 1)  # stale memory
+        app.is_current_flipped = True
+
+        app.process_answer(correct=True)
+
+        cur = conn.cursor()
+        cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
+        assert cur.fetchone()[0] == 4
+        assert app._daily_review_history[-1] == (card_id, front, back, 4)
+
+    def test_previous_refetches_box_from_db(self, app_with_db):
+        app, _, conn = app_with_db
+        app.start_review()
+        app.is_current_flipped = True
+        app.process_answer(correct=True)
+        assert app._daily_review_history
+
+        # Mutate DB box after history was written with fresh tuple.
+        graded_id = app._daily_review_history[-1][0]
+        conn.execute("UPDATE cards SET box=5 WHERE id=?", (graded_id,))
+        conn.commit()
+
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == graded_id
+        assert app.current_card[3] == 5
+
+    def test_previous_works_after_final_grade(self, app_with_db):
+        """Grading the last due card must not wipe history / kill Previous."""
+        app, _, conn = app_with_db
+        app.start_review()
+        graded_ids = []
+        # Grade every due card until the queue is empty.
+        while app.current_card is not None and app.review_mode == "daily":
+            graded_ids.append(app.current_card[0])
+            app.is_current_flipped = True
+            app.process_answer(correct=True)
+            # Guard against infinite loop if something breaks.
+            if len(graded_ids) > 20:
+                break
+
+        assert graded_ids, "Expected at least one graded card"
+        assert app.review_mode == "daily", (
+            "Session must stay active after finishing the queue"
+        )
+        assert app._daily_review_history, (
+            "History must survive the final grade so Previous works"
+        )
+        assert app.previous_review_btn.isEnabled()
+
+        last_graded = graded_ids[-1]
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == last_graded
+
+    def test_previous_is_reverse_of_next(self, app_with_db):
+        """Next then Previous returns to the same card (sequence reverse)."""
+        app, _, _ = app_with_db
+        app.start_review()
+        first = app.current_card
+        assert first is not None
+        app._on_primary_button_clicked()  # Next
+        second = app.current_card
+        assert second is not None
+        assert app.previous_review_btn.isEnabled()
+        app._previous_daily_card()
+        assert app.current_card is not None
+        assert app.current_card[0] == first[0]
+        # One more Next should get back to the card we left.
+        app._on_primary_button_clicked()
+        assert app.current_card is not None
+        assert app.current_card[0] == second[0]
+
+    def test_previous_disabled_before_any_grade(self, app_with_db):
+        """On the first card, Previous is disabled (no prior step yet)."""
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.review_mode == "daily"
+        assert app._daily_review_history == []
+        assert not app.previous_review_btn.isEnabled()
+        # Click path is a no-op when path is empty.
+        before = app.current_card
+        app._previous_daily_card()
+        assert app.current_card == before
+
+
+class TestResumeRestoresPausedQueue:
+    """FIX 10: resume must restore _paused_cards_due explicitly."""
+
+    def test_resume_restores_paused_cards_due(self, app_with_db):
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.current_card is not None
+        remaining = list(app.cards_due)
+        app.close_review()
+        assert app._paused_cards_due == remaining
+
+        # Simulate accidental wipe of in-memory queue after close.
+        app.cards_due = []
+        app.start_review()
+        # Current card is re-inserted at front from paused card; remaining
+        # should come from the restored paused queue (minus current).
+        assert app.review_mode == "daily"
+        assert app.current_card is not None
+        # After show_next_card, current is popped; remaining queue length
+        # should match original remaining (possibly reordered only by resume).
+        assert len(app.cards_due) == len(remaining)
+        assert app._paused_cards_due == []
+
+
+class TestAllCardsReviewMode:
+    """All cards checkbox: review every entry, not only due today."""
+
+    def test_default_due_only_excludes_future(self, app_with_db):
+        app, _, conn = app_with_db
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+        assert total == 4  # 3 due + 1 future from fixture
+
+        app.all_cards_checkbox.setChecked(False)
+        app.start_review()
+
+        seen = set()
+        if app.current_card is not None:
+            seen.add(app.current_card[0])
+        for card in app.cards_due:
+            seen.add(card[0])
+        # Snapshot has the full session queue at start (before first pop).
+        snap_ids = {c[0] for c in app._daily_queue_snapshot}
+        assert len(snap_ids) == 3
+        assert len(seen) == 3
+
+        future_id = conn.execute(
+            "SELECT id FROM cards WHERE front = ?", ("Future card",)
+        ).fetchone()[0]
+        assert future_id not in snap_ids
+
+    def test_all_cards_includes_future(self, app_with_db):
+        app, _, conn = app_with_db
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+        app.all_cards_checkbox.setChecked(True)
+        app.start_review()
+
+        snap_ids = {c[0] for c in app._daily_queue_snapshot}
+        assert len(snap_ids) == total
+
+        future_id = conn.execute(
+            "SELECT id FROM cards WHERE front = ?", ("Future card",)
+        ).fetchone()[0]
+        assert future_id in snap_ids
+
+    def test_all_cards_restart_rebuilds_queue(self, app_with_db):
+        """Toggling All cards then Restart re-reads the queue."""
+        app, _, conn = app_with_db
+        total = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+        app.all_cards_checkbox.setChecked(False)
+        app.start_review()
+        assert len(app._daily_queue_snapshot) == 3
+
+        app.all_cards_checkbox.setChecked(True)
+        app._restart_daily_review()
+        assert len(app._daily_queue_snapshot) == total
+
+    def test_checkbox_enabled_after_db_load(self, app_with_db):
+        app, _, _ = app_with_db
+        assert app.all_cards_checkbox.isEnabled()
+        assert not app.all_cards_checkbox.isChecked()

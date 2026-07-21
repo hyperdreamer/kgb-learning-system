@@ -17,14 +17,15 @@ with a shared sense catalog and automatic word/phrase projections.
 - **No manual W/P authoring** — Add/Edit/Delete/Generate disabled; Browse Review only.
 - **Configurable database root** with canonical category folders and relative
   default-database paths.
-- **Categorized Settings** (General, Appearance, Audio & Speech, AI Provider)
+- **Categorized Settings** (General, Appearance, Audio & Speech, AI Providers)
   with separate UI vs content fonts, Azure-style TTS voice picker, and AI Test.
 - **Review UX** — pausable daily review, Restart/Previous, canvas close control,
   Browse **Review Selected**, full **Next Review** column.
 - **Alt+ keyboard shortcuts** for all frequent actions (never steals typing).
 - **Validation** — literal + inflection-tolerant matching, irregular verbs,
   optional AI residual membership check.
-- **421 tests** covering catalog, schema, senses, validation, search, AI, UI.
+- **Comprehensive automated coverage** across catalog, schema, senses,
+  validation, search, AI, and UI.
 
 ### Breaking / migration notes
 

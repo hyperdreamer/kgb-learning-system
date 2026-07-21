@@ -182,6 +182,22 @@ class TestValidateUnfamiliarItems:
             "I go there every day.", ["went"]
         ).valid
 
+    def test_undergo_inflections_do_not_match_go(self):
+        """A prefixed verb keeps its own irregular family."""
+        assert validate_unfamiliar_items(
+            "He underwent surgery.", ["undergo"]
+        ).valid
+        result = validate_unfamiliar_items("He underwent surgery.", ["go"])
+        assert result.valid is False
+        assert result.missing == ["go"]
+
+    def test_rewrite_inflections_do_not_match_write(self):
+        """Derivational verbs must not validate the unprefixed lemma."""
+        assert validate_unfamiliar_items("She rewrote the report.", ["rewrite"]).valid
+        result = validate_unfamiliar_items("She rewrote the report.", ["write"])
+        assert result.valid is False
+        assert result.missing == ["write"]
+
     def test_go_does_not_substring_match_unrelated(self):
         """Short lemma must not match as a substring inside another word."""
         # "go" must not match merely because it is letters inside "cargo"
@@ -190,6 +206,38 @@ class TestValidateUnfamiliarItems:
         result = validate_unfamiliar_items("The cargo ship left.", ["go"])
         assert result.valid is False
         assert "go" in result.missing
+
+    def test_hyphen_compound_lemma_matches_segment(self):
+        """Lemma staple is found inside non-staple (hyphen segment, not substring)."""
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+            surface_form_in_sentence,
+        )
+
+        sentence = (
+            "Third, the pressure to supply rations, salt, and non-staple "
+            "foods to millions of engineering troops and civilian laborers "
+            "along the line was immense."
+        )
+        result = validate_unfamiliar_items(sentence, ["staple"])
+        assert result.valid is True
+        assert result.missing == []
+
+        span = locate_item_surface_span(sentence, "staple")
+        assert span is not None
+        assert sentence[span[0]:span[1]] == "staple"
+
+        assert surface_form_in_sentence(sentence, "staple") is True
+        bolded = highlight_unfamiliar_in_sentence(sentence, ["staple"])
+        assert "non-**staple**" in bolded
+
+        # Inflected segment inside compound
+        assert validate_unfamiliar_items(
+            "They bought non-staples yesterday.", ["staple"]
+        ).valid
+        # Still reject solid-word letter substrings
+        assert not surface_form_in_sentence("The cargo ship left.", "go")
 
     def test_choose_chose_chosen_irregular(self):
         """Irregular choose/chose/chosen share a lemma family."""
@@ -235,7 +283,7 @@ class TestValidateUnfamiliarItems:
             ("He has written a letter.", "write"),
             ("She rewrote the essay.", "rewrite"),
             ("He underwent surgery.", "undergo"),
-            ("They misunderstood the question.", "understand"),
+            ("They misunderstood the question.", "misunderstand"),
             ("She overcame her fear.", "overcome"),
             ("He has forgotten the password.", "forget"),
             ("They fled the scene.", "flee"),
@@ -248,6 +296,13 @@ class TestValidateUnfamiliarItems:
         for sentence, item in samples:
             result = validate_unfamiliar_items(sentence, [item])
             assert result.valid is True, f"{item!r} should match in {sentence!r}"
+
+    def test_become_come_and_overcome_are_independent_irregular_families(self):
+        assert validate_unfamiliar_items("He became angry.", ["become"]).valid
+        assert validate_unfamiliar_items("He came home.", ["come"]).valid
+        assert validate_unfamiliar_items("She overcame her fear.", ["overcome"]).valid
+        assert not validate_unfamiliar_items("He became angry.", ["come"]).valid
+        assert not validate_unfamiliar_items("He came home.", ["become"]).valid
 
     def test_surface_form_in_sentence(self):
         from kgb_srs.validation import surface_form_in_sentence
@@ -272,10 +327,92 @@ class TestValidateUnfamiliarItems:
         r = apply_ai_membership_claims(sentence, missing, good)
         assert r.valid is True
         assert r.missing == []
+        assert r.accepted_surfaces.get("go") == "gone"
         # found=false keeps missing.
         no = [MembershipClaim(expression="go", found=False, surface="")]
         r = apply_ai_membership_claims(sentence, missing, no)
         assert r.valid is False
+
+    def test_ai_residual_surfaces_allow_insert_for_irregular_lie(self, tmp_path):
+        """AI residual surface (lay) must survive insert re-validation for lie."""
+        from kgb_srs.ai_parser import MembershipClaim
+        from kgb_srs.schema import init_db, insert_sentence_card
+        from kgb_srs.validation import apply_ai_membership_claims, validate_unfamiliar_items
+
+        sentence = "He lay down to rest."
+        # Local rules intentionally do not map recline-lie ↔ lay.
+        local = validate_unfamiliar_items(sentence, ["lie"])
+        assert local.valid is False
+        assert "lie" in local.missing
+
+        residual = apply_ai_membership_claims(
+            sentence,
+            ["lie"],
+            [MembershipClaim(expression="lie", found=True, surface="lay")],
+        )
+        assert residual.valid is True
+        assert residual.accepted_surfaces.get("lie") == "lay"
+
+        db = tmp_path / "lie.db"
+        conn = init_db(str(db))
+
+        with pytest.raises(ValueError, match="lie"):
+            insert_sentence_card(conn, sentence, [("lie", "recline")], "")
+
+        card_id = insert_sentence_card(
+            conn,
+            sentence,
+            [("lie", "recline")],
+            "",
+            verified_surfaces=residual.accepted_surfaces,
+        )
+        assert card_id > 0
+
+        from kgb_srs.schema import get_sentence_card
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        loaded = get_sentence_card(conn, card_id)
+        assert loaded is not None
+        front, _back, _box, items = loaded
+        assert front == sentence
+        assert items[0][0] == "lie"
+        assert items[0][3] == "lay"  # persisted AI surface
+        # Highlight must bold the stored surface, not fail on local flex alone.
+        out = highlight_unfamiliar_in_sentence(sentence, items)
+        assert "**lay**" in out
+        conn.close()
+
+    def test_false_go_membership_cannot_be_persisted(self, tmp_path):
+        """Insert re-validation rejects a false go ↔ underwent membership."""
+        from kgb_srs.schema import init_db, insert_sentence_card
+
+        conn = init_db(str(tmp_path / "undergo.db"))
+        with pytest.raises(ValueError, match="go"):
+            insert_sentence_card(
+                conn, "He underwent surgery.", [("go", "move")], ""
+            )
+        conn.close()
+
+    def test_highlight_uses_preferred_surface_for_lie_lay(self):
+        """Preferred surface bolds lay when lemma is recline-lie."""
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        s = (
+            "Behind every official document, every ban, and every "
+            "seemingly casual dispatch lay a much larger chessboard."
+        )
+        # Without preferred surface: local flex does not map lie ↔ lay.
+        bare = highlight_unfamiliar_in_sentence(s, ["dispatch", "lie"])
+        assert "**dispatch**" in bare
+        assert "**lay**" not in bare
+        # With structured preferred surface (as stored after AI residual).
+        items = [
+            ("dispatch", "message", None, ""),
+            ("lie", "exist", None, "lay"),
+        ]
+        out = highlight_unfamiliar_in_sentence(s, items)
+        assert "**dispatch**" in out
+        assert "**lay**" in out
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +465,117 @@ class TestHighlightUnfamiliarInSentence:
         s = "私は日本語を勉強しています"
         out = highlight_unfamiliar_in_sentence(s, ["日本語"])
         assert out == "私は**日本語**を勉強しています"
+
+    def test_bold_capitalized_inflected_surface(self):
+        """Lemma ``exact`` must bold capitalized ``Exacted`` (case-insensitive flex)."""
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+        )
+
+        s = "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        assert locate_item_surface_span(s, "exact") is not None
+        out = highlight_unfamiliar_in_sentence(s, ["exact", "grievance"])
+        assert out == (
+            "Revenge for a **Grievance** of a Hundred Generations "
+            "May Still Be **Exacted**!"
+        )
+
+    def test_composed_cafe_plural_matches_decomposed_surface_and_preserves_surface(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        sentence = "A cafe\u0301 is open."
+        assert validate_unfamiliar_items(sentence, ["cafés"]).valid
+        assert highlight_unfamiliar_in_sentence(sentence, ["cafés"]) == (
+            "A **cafe\u0301** is open."
+        )
+
+    def test_nfc_item_highlights_nfd_surface_before_possessive(self):
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+        )
+
+        sentence = "The cafe\u0301's owner arrived."
+        span = locate_item_surface_span(sentence, "café")
+        assert span is not None
+        assert sentence[span[0]:span[1]] == "cafe\u0301"
+        assert highlight_unfamiliar_in_sentence(sentence, ["café"]) == (
+            "The **cafe\u0301**'s owner arrived."
+        )
+
+    def test_nfc_item_highlights_nfd_surface_before_punctuation(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        assert highlight_unfamiliar_in_sentence("Cafe\u0301!", ["café"]) == (
+            "**Cafe\u0301**!"
+        )
+
+    def test_nfc_hangul_item_highlights_nfd_lv_surface_before_possessive(self):
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+        )
+
+        sentence = "x가's owner arrived."
+        span = locate_item_surface_span(sentence, "가")
+        assert span == (1, 3)
+        assert sentence[span[0]:span[1]] == "가"
+        assert highlight_unfamiliar_in_sentence(sentence, ["가"]) == (
+            "x**가**'s owner arrived."
+        )
+
+    def test_nfc_hangul_item_highlights_nfd_lvt_surface_before_punctuation(self):
+        from kgb_srs.validation import (
+            _normalized_literal_span,
+            highlight_unfamiliar_in_sentence,
+        )
+
+        sentence = "각!"
+        span = _normalized_literal_span(sentence, "각")
+        assert span == (0, 3)
+        assert sentence[span[0]:span[1]] == "각"
+        assert highlight_unfamiliar_in_sentence(sentence, ["각"]) == "**각**!"
+
+    def test_trailing_punctuation_not_inside_bold(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        assert highlight_unfamiliar_in_sentence(
+            "Exacted!", ["exact"]
+        ) == "**Exacted**!"
+
+
+# ---------------------------------------------------------------------------
+# Sentence-order sort + numbered meaning lines
+# ---------------------------------------------------------------------------
+
+class TestSentenceMeaningDisplayHelpers:
+    def test_sort_items_by_sentence_order(self):
+        from kgb_srs.validation import sort_items_by_sentence_order
+
+        s = "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        # Insert order is reverse of sentence order.
+        items = [("exact", "demand"), ("grievance", "wrong")]
+        ordered = sort_items_by_sentence_order(s, items)
+        assert [e for e, _m in ordered] == ["grievance", "exact"]
+
+    def test_format_sentence_meaning_lines_single_unnumbered(self):
+        from kgb_srs.validation import format_sentence_meaning_lines
+
+        assert format_sentence_meaning_lines([("exact", "demand")]) == [
+            "**exact**: demand"
+        ]
+
+    def test_format_sentence_meaning_lines_multiple_numbered(self):
+        from kgb_srs.validation import format_sentence_meaning_lines
+
+        lines = format_sentence_meaning_lines(
+            [("grievance", "wrong"), ("exact", "demand")]
+        )
+        assert lines == [
+            "1. **grievance**: wrong",
+            "2. **exact**: demand",
+        ]
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,6 @@ kgb_srs/ package.  To run the application:
 
     python kgb_srs.py          # this file (launcher)
     python main.py             # entry point
-    python -m kgb_srs.main     # module entry point
 """
 
 import sys

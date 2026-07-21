@@ -23,6 +23,9 @@ CANONICAL_DB_SUBDIRS = (
 DEFAULT_SETTINGS = {
     "width": 900,
     "height": 700,
+    # Sentence card editor dialog (persisted on dialog close)
+    "sentence_dialog_width": 720,
+    "sentence_dialog_height": 640,
     "font_family": "Arial",
     "font_size": 14,
     # Flashcard study content (separate from UI chrome)
@@ -34,14 +37,40 @@ DEFAULT_SETTINGS = {
     "tts_voice": "en-US-AvaMultilingualNeural",
     # Audio page language filter ("" = All languages)
     "tts_language": "",
-    # AI provider defaults (non-secret)
-    "ai_base_url": "https://api.openai.com/v1",
-    "ai_model": "gpt-4o-mini",
-    "ai_api_key": "",
-    "ai_timeout": 30,
+    # Named OpenAI-compatible provider profiles (switchable in Settings).
+    # Legacy flat ai_base_url/ai_model/ai_api_key/ai_timeout are migrated
+    # into a profile on load, then stripped — not stored as mirrors.
+    "ai_active_provider": "Default",
+    "ai_providers": {
+        "Default": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "",
+            "timeout": 30,
+        }
+    },
     # Language settings for AI prompts
     "explanation_language": "Chinese",
 }
+
+_POSITIVE_INT_SETTINGS = frozenset({
+    "width",
+    "height",
+    "sentence_dialog_width",
+    "sentence_dialog_height",
+    "font_size",
+    "content_font_size",
+})
+_STRING_SETTINGS = frozenset({
+    "database_root",
+    "default_database",
+    "font_family",
+    "content_font_family",
+    "tts_voice",
+    "tts_language",
+    "explanation_language",
+    "ai_active_provider",
+})
 
 
 def get_database_root(settings=None) -> str:
@@ -83,11 +112,11 @@ def ensure_database_root_structure(root: str | None = None) -> str:
 
 
 def is_path_under_root(path: str, root: str) -> bool:
-    """True if *path* is the same as or under *root* (after abspath/expanduser)."""
+    """True if *path* is the same as or under *root* after canonicalization."""
     if not path or not root:
         return False
-    abs_path = os.path.abspath(os.path.expanduser(path))
-    abs_root = os.path.abspath(os.path.expanduser(root))
+    abs_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    abs_root = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
     try:
         common = os.path.commonpath([abs_path, abs_root])
     except ValueError:
@@ -102,8 +131,8 @@ def relative_db_path(path: str, root: str) -> str | None:
         return None
     if not is_path_under_root(path, root):
         return None
-    abs_path = os.path.abspath(os.path.expanduser(path))
-    abs_root = os.path.abspath(os.path.expanduser(root))
+    abs_path = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    abs_root = os.path.realpath(os.path.abspath(os.path.expanduser(root)))
     rel = os.path.relpath(abs_path, abs_root)
     return os.path.normpath(rel)
 
@@ -163,17 +192,62 @@ def normalize_default_database(value: str, root: str) -> str:
 def load_settings():
     """Load settings from JSON file, merging with defaults."""
     settings = dict(DEFAULT_SETTINGS)
-    if os.path.exists(SETTINGS_FILE):
+    # Deep-copy nested defaults so callers cannot mutate the module constant.
+    settings["ai_providers"] = {
+        name: dict(entry)
+        for name, entry in DEFAULT_SETTINGS.get("ai_providers", {}).items()
+    }
+    loaded: dict = {}
+    if os.path.isfile(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                settings.update(json.load(f))
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                loaded = raw
+                for key, value in loaded.items():
+                    if key in _POSITIVE_INT_SETTINGS:
+                        if type(value) is int and value > 0:
+                            settings[key] = value
+                    elif key in _STRING_SETTINGS:
+                        if isinstance(value, str):
+                            settings[key] = value
+                    elif key == "ai_providers":
+                        # Provider mappings are normalized below. Other types
+                        # cannot be safely used as profile collections.
+                        if isinstance(value, dict):
+                            settings[key] = value
+                    elif key not in DEFAULT_SETTINGS:
+                        # Preserve extension keys, but never let an invalid
+                        # value replace a known default setting.
+                        settings[key] = value
         except Exception as e:
             print(f"Error loading settings: {e}")
+    # With no usable profile mapping, drop the default bag so
+    # ensure_ai_provider_profiles migrates legacy flat keys. Otherwise an
+    # empty Default profile would clobber a real ai_api_key.
+    if (
+        "ai_providers" not in loaded
+        or not isinstance(loaded.get("ai_providers"), dict)
+    ):
+        settings.pop("ai_providers", None)
+        if "ai_active_provider" not in loaded:
+            settings.pop("ai_active_provider", None)
+    # Normalize AI provider profiles (migrates legacy flat-only configs).
+    from .ai_provider import ensure_ai_provider_profiles
+
+    ensure_ai_provider_profiles(settings)
     return settings
 
 
 def save_settings(settings):
-    """Atomically save settings with owner-only permissions (API key safety)."""
+    """Atomically save settings with owner-only permissions (API key safety).
+
+    AI config is stored only under ``ai_providers`` / ``ai_active_provider``.
+    Legacy flat ``ai_*`` keys are migrated into profiles, then stripped.
+    """
+    from .ai_provider import ensure_ai_provider_profiles
+
+    ensure_ai_provider_profiles(settings)
     temp_path = None
     try:
         directory = os.path.dirname(SETTINGS_FILE)

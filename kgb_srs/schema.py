@@ -17,7 +17,7 @@ import re
 import sqlite3
 import datetime
 
-from .validation import deduplicate_unfamiliar_items, normalize_sentence
+from .validation import normalize_sentence
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -121,27 +121,39 @@ def init_db(db_path_or_conn):
     Accepts either a path string (returns a new connection) or an existing
     sqlite3.Connection (returns it unchanged after ensuring schema).
     """
-    if isinstance(db_path_or_conn, sqlite3.Connection):
+    owns_connection = not isinstance(db_path_or_conn, sqlite3.Connection)
+    if not owns_connection:
         conn = db_path_or_conn
     else:
+        is_new = os.path.isfile(db_path_or_conn) is False
         conn = sqlite3.connect(db_path_or_conn)
+        if is_new:
+            try:
+                os.chmod(db_path_or_conn, 0o600)
+            except OSError:
+                pass
 
-    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
 
-    c = conn.cursor()
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS cards
-           (id INTEGER PRIMARY KEY, front TEXT, back TEXT,
-            box INTEGER, next_review DATE)"""
-    )
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS settings
-           (key TEXT PRIMARY KEY, value TEXT)"""
-    )
-    c.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('random_review', '1')"
-    )
-    conn.commit()
+        c = conn.cursor()
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS cards
+               (id INTEGER PRIMARY KEY, front TEXT, back TEXT,
+                box INTEGER, next_review DATE)"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS settings
+               (key TEXT PRIMARY KEY, value TEXT)"""
+        )
+        c.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('random_review', '1')"
+        )
+        conn.commit()
+    except Exception:
+        if owns_connection:
+            conn.close()
+        raise
     return conn
 
 
@@ -149,7 +161,7 @@ def init_db(db_path_or_conn):
 # Migration: unfamiliar_items
 # ---------------------------------------------------------------------------
 
-def ensure_unfamiliar_items_table(conn):
+def ensure_unfamiliar_items_table(conn, *, commit: bool = True):
     """Create the unfamiliar_items table if it doesn't exist.
 
     Safe to call multiple times; uses IF NOT EXISTS.
@@ -165,10 +177,11 @@ def ensure_unfamiliar_items_table(conn):
             UNIQUE(card_id, expression)
         )"""
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
-def migrate_unfamiliar_items_meaning(conn):
+def migrate_unfamiliar_items_meaning(conn, *, commit: bool = True):
     """Add the 'meaning' column to unfamiliar_items if it doesn't exist.
 
     Safe to call on both legacy DBs (no meaning column) and new DBs
@@ -184,28 +197,62 @@ def migrate_unfamiliar_items_meaning(conn):
         conn.execute(
             "ALTER TABLE unfamiliar_items ADD COLUMN meaning TEXT NOT NULL DEFAULT ''"
         )
-        conn.commit()
+        if commit:
+            conn.commit()
 
 
-def ensure_sentence_schema(conn) -> None:
+def migrate_unfamiliar_items_surface_form(conn, *, commit: bool = True):
+    """Add surface_form column for AI residual / irregular surface spans.
+
+    Stores the exact sentence span accepted for a lemma (e.g. lie → lay)
+    so review highlighting can bold it without local inflection rules.
+    """
+    conn.execute("PRAGMA foreign_keys = ON")
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(unfamiliar_items)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "surface_form" not in cols:
+        conn.execute(
+            "ALTER TABLE unfamiliar_items "
+            "ADD COLUMN surface_form TEXT NOT NULL DEFAULT ''"
+        )
+        if commit:
+            conn.commit()
+
+
+def ensure_sentence_schema(conn, *, commit: bool = True) -> None:
     """Ensure all sentence-DB tables/columns (items + global senses)."""
-    ensure_unfamiliar_items_table(conn)
-    migrate_unfamiliar_items_meaning(conn)
+    ensure_unfamiliar_items_table(conn, commit=commit)
+    migrate_unfamiliar_items_meaning(conn, commit=commit)
+    migrate_unfamiliar_items_surface_form(conn, commit=commit)
     from .senses import ensure_expression_senses_table
 
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
 
 
 # ---------------------------------------------------------------------------
 # Validation helpers for sentence-card invariants
 # ---------------------------------------------------------------------------
 
-def _validate_expressions_in_sentence(sentence: str, items: list):
-    """Validate that every expression appears literally in the sentence.
+def _validate_expressions_in_sentence(
+    sentence: str,
+    items: list,
+    verified_surfaces: dict[str, str] | None = None,
+):
+    """Validate that every expression appears in the sentence.
+
+    Uses the same local inflection-tolerant rules as the dialog. When the
+    dialog accepted residual items via a verified surface form (e.g. AI
+    residual for irregulars), pass those lemma→surface pairs in
+    *verified_surfaces* so insert/update does not re-reject them.
 
     Raises ValueError with the list of missing expressions.
     """
-    from .validation import validate_unfamiliar_items, normalize_sentence
+    from .validation import (
+        normalize_sentence,
+        surface_form_in_sentence,
+        validate_unfamiliar_items,
+    )
 
     if not sentence or not sentence.strip():
         raise ValueError("Sentence must be non-empty.")
@@ -219,8 +266,19 @@ def _validate_expressions_in_sentence(sentence: str, items: list):
             exprs.append(str(item))
 
     result = validate_unfamiliar_items(sentence, exprs)
-    if not result.valid:
-        missing_str = ", ".join(result.missing)
+    if result.valid:
+        return
+
+    surfaces = verified_surfaces or {}
+    still_missing: list[str] = []
+    for expr in result.missing:
+        surface = surfaces.get(expr) or surfaces.get(normalize_sentence(expr))
+        if surface and surface_form_in_sentence(sentence, surface):
+            continue
+        still_missing.append(expr)
+
+    if still_missing:
+        missing_str = ", ".join(still_missing)
         raise ValueError(
             f"Expressions not found in sentence: {missing_str}"
         )
@@ -252,6 +310,16 @@ def _require_nonempty_meanings(items: list, operation: str):
                 f"expression '{expr}' has no meaning. "
                 "Provide meanings as (expression, meaning) tuples."
             )
+
+
+def _preferred_sense_id(value) -> int | None:
+    """Return a usable preferred sense id without lossy coercion."""
+    if isinstance(value, (bool, float)):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -314,12 +382,16 @@ def insert_sentence_card(
     sentence: str,
     unfamiliar_items: list,
     back: str = "",
+    verified_surfaces: dict[str, str] | None = None,
 ) -> int:
     """Insert a sentence-based card with its unfamiliar items.
 
     *unfamiliar_items* may be:
       - list of str (meaning defaults to '')
       - list of (expression, meaning) tuples
+
+    *verified_surfaces* is an optional lemma→surface map for residual forms
+    already checked against the sentence (e.g. AI membership).
 
     Items are deduplicated before insertion.  Returns the new card's id.
 
@@ -330,40 +402,51 @@ def insert_sentence_card(
     if not unfamiliar_items:
         raise ValueError("At least one unfamiliar item is required.")
 
-    # Validate that every expression appears literally in the sentence
-    _validate_expressions_in_sentence(sentence, unfamiliar_items)
+    # Validate that every expression appears in the sentence (local rules,
+    # plus any dialog-verified residual surfaces).
+    _validate_expressions_in_sentence(
+        sentence, unfamiliar_items, verified_surfaces=verified_surfaces
+    )
 
     # Reject empty meanings for sentence cards (newly created)
     _require_nonempty_meanings(unfamiliar_items, "insert")
 
-    ensure_sentence_schema(conn)
+    ensure_sentence_schema(conn, commit=False)
 
     from .senses import create_or_get_sense
 
-    # Normalize items to (expression, meaning, optional sense_id) tuples
-    normalized: list[tuple[str, str, int | None]] = []
+    # Normalize items to (expression, meaning, sense_id, surface_form)
+    normalized: list[tuple[str, str, int | None, str]] = []
     for item in unfamiliar_items:
         if isinstance(item, tuple):
             expr = str(item[0])
             meaning = str(item[1]) if len(item) > 1 and item[1] else ""
             sense_id = None
             if len(item) > 2 and item[2] is not None:
-                try:
-                    sense_id = int(item[2])
-                except (TypeError, ValueError):
-                    sense_id = None
-            normalized.append((expr, meaning, sense_id))
+                sense_id = _preferred_sense_id(item[2])
+            surface = ""
+            if len(item) > 3 and item[3]:
+                surface = str(item[3]).strip()
+            normalized.append((expr, meaning, sense_id, surface))
         else:
-            normalized.append((str(item), "", None))
+            normalized.append((str(item), "", None, ""))
 
     # Deduplicate by expression
     seen: set[str] = set()
-    deduped: list[tuple[str, str, int | None]] = []
-    for expr, meaning, sense_id in normalized:
+    deduped: list[tuple[str, str, int | None, str]] = []
+    for expr, meaning, sense_id, surface in normalized:
         key = normalize_sentence(expr)
         if key and key not in seen:
             seen.add(key)
-            deduped.append((expr, meaning, sense_id))
+            # Prefer verified_surfaces map when the item did not carry surface.
+            if not surface and verified_surfaces:
+                surface = (
+                    verified_surfaces.get(expr)
+                    or verified_surfaces.get(key)
+                    or ""
+                )
+                surface = str(surface).strip()
+            deduped.append((expr, meaning, sense_id, surface))
 
     if not deduped:
         raise ValueError("At least one non-empty unfamiliar item is required.")
@@ -378,12 +461,12 @@ def insert_sentence_card(
         )
         card_id = cur.lastrowid
 
-        for expr, meaning, preferred_sense_id in deduped:
+        for expr, meaning, preferred_sense_id, surface in deduped:
             sense = None
             if preferred_sense_id is not None:
                 from .senses import get_sense
 
-                pref = get_sense(conn, preferred_sense_id)
+                pref = get_sense(conn, preferred_sense_id, commit=False)
                 if pref is not None and normalize_sentence(
                     pref.expression
                 ) == normalize_sentence(expr):
@@ -395,11 +478,14 @@ def insert_sentence_card(
                 )
             cur.execute(
                 "INSERT INTO unfamiliar_items "
-                "(card_id, expression, meaning, sense_id) "
-                "VALUES (?, ?, ?, ?)",
-                (card_id, expr, meaning, sense.id),
+                "(card_id, expression, meaning, sense_id, surface_form) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (card_id, expr, meaning, sense.id, surface or ""),
             )
 
+        from .senses import purge_orphan_senses
+
+        purge_orphan_senses(conn, commit=False)
         conn.commit()
         return card_id
     except Exception:
@@ -410,8 +496,8 @@ def insert_sentence_card(
 def get_sentence_card(conn, card_id: int):
     """Retrieve a sentence card with its unfamiliar items.
 
-    Returns (front, back, box, [(expression, meaning, sense_id), ...])
-    or None. *sense_id* may be None for legacy rows.
+    Returns (front, back, box, [(expression, meaning, sense_id, surface_form), ...])
+    or None. *sense_id* / *surface_form* may be empty for legacy rows.
     """
     cur = conn.cursor()
     cur.execute(
@@ -421,12 +507,17 @@ def get_sentence_card(conn, card_id: int):
     if card is None:
         return None
 
+    # surface_form may be missing on very old connections before migration.
+    ensure_sentence_schema(conn, commit=False)
     cur.execute(
-        "SELECT expression, meaning, sense_id FROM unfamiliar_items "
-        "WHERE card_id=? ORDER BY id",
+        "SELECT expression, meaning, sense_id, surface_form "
+        "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
         (card_id,),
     )
-    items = [(row[0], row[1], row[2]) for row in cur.fetchall()]
+    items = [
+        (row[0], row[1], row[2], row[3] or "")
+        for row in cur.fetchall()
+    ]
 
     return (card[0], card[1], card[2], items)
 
@@ -438,12 +529,14 @@ def update_sentence_card(
     front: str,
     back: str,
     items: list,
+    verified_surfaces: dict[str, str] | None = None,
 ) -> None:
     """Update a sentence card's front, back, and unfamiliar items.
 
     Resets the card to Box 1 with today's review date.
 
     *items* may be list of str or list of (expression, meaning) tuples.
+    *verified_surfaces* is optional lemma→surface for residual forms.
 
     Raises ValueError if sentence is empty or no items provided.
     """
@@ -452,40 +545,50 @@ def update_sentence_card(
     if not items:
         raise ValueError("At least one unfamiliar item is required.")
 
-    # Validate that every expression appears literally in the sentence
-    _validate_expressions_in_sentence(front, items)
+    # Validate that every expression appears in the sentence (local rules,
+    # plus any dialog-verified residual surfaces).
+    _validate_expressions_in_sentence(
+        front, items, verified_surfaces=verified_surfaces
+    )
 
     # Reject empty meanings for sentence cards (newly edited)
     _require_nonempty_meanings(items, "update")
 
-    ensure_sentence_schema(conn)
+    ensure_sentence_schema(conn, commit=False)
 
     from .senses import create_or_get_sense, get_sense
 
-    # Normalize items to (expression, meaning, optional sense_id) tuples
-    normalized: list[tuple[str, str, int | None]] = []
+    # Normalize items to (expression, meaning, sense_id, surface_form)
+    normalized: list[tuple[str, str, int | None, str]] = []
     for item in items:
         if isinstance(item, tuple):
             expr = str(item[0])
             meaning = str(item[1]) if len(item) > 1 and item[1] else ""
             sense_id = None
             if len(item) > 2 and item[2] is not None:
-                try:
-                    sense_id = int(item[2])
-                except (TypeError, ValueError):
-                    sense_id = None
-            normalized.append((expr, meaning, sense_id))
+                sense_id = _preferred_sense_id(item[2])
+            surface = ""
+            if len(item) > 3 and item[3]:
+                surface = str(item[3]).strip()
+            normalized.append((expr, meaning, sense_id, surface))
         else:
-            normalized.append((str(item), "", None))
+            normalized.append((str(item), "", None, ""))
 
     # Deduplicate by expression
     seen: set[str] = set()
-    deduped: list[tuple[str, str, int | None]] = []
-    for expr, meaning, sense_id in normalized:
+    deduped: list[tuple[str, str, int | None, str]] = []
+    for expr, meaning, sense_id, surface in normalized:
         key = normalize_sentence(expr)
         if key and key not in seen:
             seen.add(key)
-            deduped.append((expr, meaning, sense_id))
+            if not surface and verified_surfaces:
+                surface = (
+                    verified_surfaces.get(expr)
+                    or verified_surfaces.get(key)
+                    or ""
+                )
+                surface = str(surface).strip()
+            deduped.append((expr, meaning, sense_id, surface))
 
     if not deduped:
         raise ValueError("At least one non-empty unfamiliar item is required.")
@@ -501,10 +604,10 @@ def update_sentence_card(
 
         # Replace unfamiliar items: delete old, insert new.
         cur.execute("DELETE FROM unfamiliar_items WHERE card_id=?", (card_id,))
-        for expr, meaning, preferred_sense_id in deduped:
+        for expr, meaning, preferred_sense_id, surface in deduped:
             sense = None
             if preferred_sense_id is not None:
-                pref = get_sense(conn, preferred_sense_id)
+                pref = get_sense(conn, preferred_sense_id, commit=False)
                 if pref is not None and normalize_sentence(
                     pref.expression
                 ) == normalize_sentence(expr):
@@ -516,11 +619,14 @@ def update_sentence_card(
                 )
             cur.execute(
                 "INSERT INTO unfamiliar_items "
-                "(card_id, expression, meaning, sense_id) "
-                "VALUES (?, ?, ?, ?)",
-                (card_id, expr, meaning, sense.id),
+                "(card_id, expression, meaning, sense_id, surface_form) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (card_id, expr, meaning, sense.id, surface or ""),
             )
 
+        from .senses import purge_orphan_senses
+
+        purge_orphan_senses(conn, commit=False)
         conn.commit()
     except Exception:
         conn.rollback()

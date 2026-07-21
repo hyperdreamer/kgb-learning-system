@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -25,7 +26,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .ai_provider import AIProviderConfig, create_ai_test_worker
+from .ai_provider import (
+    AIProviderConfig,
+    DEFAULT_AI_PROVIDER_NAME,
+    create_ai_models_worker,
+    create_ai_test_worker,
+    delete_ai_provider,
+    ensure_ai_provider_profiles,
+    get_ai_provider_entry,
+    list_ai_provider_names,
+    rename_ai_provider,
+    set_active_ai_provider,
+    upsert_ai_provider,
+)
 from .config import (
     DIR_DB,
     ensure_database_root_structure,
@@ -95,7 +108,7 @@ class SettingsDialog(QDialog):
         "General",
         "Appearance",
         "Audio & Speech",
-        "AI Provider",
+        "AI Providers",
     )
 
     def __init__(self, settings, parent=None, current_size=None):
@@ -103,6 +116,21 @@ class SettingsDialog(QDialog):
         if parent is not None:
             self.setFont(parent.font())
         self.settings = settings
+        # Staged AI provider bag (mutated by switch/add/rename/delete before Save).
+        self._ai_stage = {
+            "ai_active_provider": settings.get(
+                "ai_active_provider", DEFAULT_AI_PROVIDER_NAME
+            ),
+            "ai_providers": {
+                name: dict(entry)
+                for name, entry in (
+                    settings.get("ai_providers") or {}
+                ).items()
+                if isinstance(entry, dict)
+            },
+        }
+        ensure_ai_provider_profiles(self._ai_stage)
+        self._ai_loading_profile = False
         self.current_size = current_size
         self.current_voice = settings.get(
             "tts_voice", "en-US-AvaMultilingualNeural"
@@ -110,7 +138,14 @@ class SettingsDialog(QDialog):
         self.current_language = settings.get("tts_language", "") or ""
         self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
+        self.ai_models_worker = None
+        self._ai_test_token = None
+        self._ai_models_refresh_token = None
         self.preview_tts_worker = None
+        self._closing_workers = []
+        self._deferred_close_action = None
+        self._allow_deferred_close = False
+        self._tts_temp_path = None
         self.setWindowTitle("App Settings")
         self.setMinimumSize(620, 480)
 
@@ -349,21 +384,65 @@ class SettingsDialog(QDialog):
 
     def _build_ai_page(self):
         page, layout = self._page()
-        self.ai_base_url_input = QLineEdit(
-            self.settings.get("ai_base_url", "https://api.openai.com/v1")
+
+        # --- Provider profile switcher ---
+        self.ai_provider_combo = QComboBox()
+        self.ai_provider_combo.setObjectName("aiProviderCombo")
+        self.ai_provider_combo.setEditable(False)
+        self.ai_provider_combo.setToolTip(
+            "Switch between saved OpenAI-compatible provider profiles."
         )
+        layout.addRow("Provider:", self.ai_provider_combo)
+
+        profile_btns = QWidget()
+        profile_btns_layout = QHBoxLayout(profile_btns)
+        profile_btns_layout.setContentsMargins(0, 0, 0, 0)
+        profile_btns_layout.setSpacing(6)
+        self.ai_provider_add_btn = QPushButton("Add")
+        self.ai_provider_add_btn.setObjectName("aiProviderAddButton")
+        self.ai_provider_add_btn.setToolTip(
+            "Save a new provider profile (copy of current fields)."
+        )
+        self.ai_provider_rename_btn = QPushButton("Rename")
+        self.ai_provider_rename_btn.setObjectName("aiProviderRenameButton")
+        self.ai_provider_delete_btn = QPushButton("Delete")
+        self.ai_provider_delete_btn.setObjectName("aiProviderDeleteButton")
+        self.ai_provider_delete_btn.setToolTip(
+            "Delete the selected profile (at least one must remain)."
+        )
+        profile_btns_layout.addWidget(self.ai_provider_add_btn)
+        profile_btns_layout.addWidget(self.ai_provider_rename_btn)
+        profile_btns_layout.addWidget(self.ai_provider_delete_btn)
+        profile_btns_layout.addStretch(1)
+        layout.addRow("", profile_btns)
+
+        self.ai_base_url_input = QLineEdit()
         self.ai_base_url_input.setObjectName("aiBaseUrlInput")
         layout.addRow("Base URL:", self.ai_base_url_input)
 
-        self.ai_model_input = QLineEdit(
-            self.settings.get("ai_model", "gpt-4o-mini")
-        )
+        model_row = QWidget()
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        self.ai_model_input = QComboBox()
         self.ai_model_input.setObjectName("aiModelInput")
-        layout.addRow("Model:", self.ai_model_input)
-
-        self.ai_api_key_input = SecretLineEdit(
-            self.settings.get("ai_api_key", "")
+        self.ai_model_input.setEditable(True)
+        self.ai_model_input.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.ai_model_input.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
+        self.ai_model_input.lineEdit().setPlaceholderText(
+            "model id (or Refresh to list)"
+        )
+        self.ai_models_refresh_btn = QPushButton("Refresh")
+        self.ai_models_refresh_btn.setObjectName("aiModelsRefreshButton")
+        self.ai_models_refresh_btn.setToolTip(
+            "Fetch available models from Base URL + API Key (/v1/models)."
+        )
+        model_layout.addWidget(self.ai_model_input, 1)
+        model_layout.addWidget(self.ai_models_refresh_btn)
+        layout.addRow("Model:", model_row)
+
+        self.ai_api_key_input = SecretLineEdit("")
         self.ai_api_key_input.setObjectName("aiApiKeyInput")
         self.ai_api_key_input.setPlaceholderText(
             "sk-... (stored locally, never committed)"
@@ -373,9 +452,6 @@ class SettingsDialog(QDialog):
         self.ai_timeout_input = QSpinBox()
         self.ai_timeout_input.setObjectName("aiTimeoutInput")
         self.ai_timeout_input.setRange(5, 120)
-        self.ai_timeout_input.setValue(
-            int(self.settings.get("ai_timeout", 30))
-        )
         self.ai_timeout_input.setSuffix(" s")
         layout.addRow("Timeout:", self.ai_timeout_input)
 
@@ -400,7 +476,182 @@ class SettingsDialog(QDialog):
         test_layout.addWidget(self.ai_test_status_label, 1)
         layout.addRow("", test_row)
         self.ai_test_button.clicked.connect(self._start_ai_test)
+        self.ai_models_refresh_btn.clicked.connect(self._start_ai_models_refresh)
+
+        self.ai_provider_combo.currentTextChanged.connect(
+            self._on_ai_provider_selected
+        )
+        self.ai_provider_add_btn.clicked.connect(self._add_ai_provider)
+        self.ai_provider_rename_btn.clicked.connect(self._rename_ai_provider)
+        self.ai_provider_delete_btn.clicked.connect(self._delete_ai_provider)
+
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
         self.pages.addWidget(page)
+
+    def _current_ai_provider_name(self) -> str:
+        name = self.ai_provider_combo.currentText().strip()
+        if name:
+            return name
+        return str(
+            self._ai_stage.get("ai_active_provider") or DEFAULT_AI_PROVIDER_NAME
+        )
+
+    def _capture_ai_fields_to_stage(
+        self, name: str | None = None, *, make_active: bool = True
+    ) -> None:
+        """Write current form fields into the staged profile bag."""
+        label = (name or self._current_ai_provider_name()).strip()
+        if not label:
+            label = DEFAULT_AI_PROVIDER_NAME
+        upsert_ai_provider(
+            self._ai_stage,
+            label,
+            base_url=self.ai_base_url_input.text().strip(),
+            model=self._ai_model_text(),
+            api_key=self.ai_api_key_input.text().strip(),
+            timeout=self.ai_timeout_input.value(),
+            make_active=make_active,
+        )
+
+    def _load_active_ai_profile_into_fields(self) -> None:
+        entry = get_ai_provider_entry(self._ai_stage)
+        self._ai_loading_profile = True
+        try:
+            self.ai_base_url_input.setText(entry.get("base_url", ""))
+            model = str(entry.get("model", "") or "").strip()
+            self._populate_ai_models([model] if model else [], keep=model)
+            self.ai_api_key_input.setText(entry.get("api_key", ""))
+            self.ai_timeout_input.setValue(int(entry.get("timeout", 30)))
+        finally:
+            self._ai_loading_profile = False
+        self.ai_test_status_label.setText("")
+        self.ai_test_status_label.setStyleSheet("")
+        self._update_ai_profile_buttons()
+
+    def _reload_ai_provider_combo(self) -> None:
+        names = list_ai_provider_names(self._ai_stage)
+        active = self._ai_stage.get("ai_active_provider", DEFAULT_AI_PROVIDER_NAME)
+        self._ai_loading_profile = True
+        try:
+            self.ai_provider_combo.blockSignals(True)
+            self.ai_provider_combo.clear()
+            self.ai_provider_combo.addItems(names)
+            idx = self.ai_provider_combo.findText(active)
+            if idx < 0:
+                idx = 0
+            self.ai_provider_combo.setCurrentIndex(idx)
+        finally:
+            self.ai_provider_combo.blockSignals(False)
+            self._ai_loading_profile = False
+        self._update_ai_profile_buttons()
+
+    def _update_ai_profile_buttons(self) -> None:
+        count = len(self._ai_stage.get("ai_providers") or {})
+        self.ai_provider_delete_btn.setEnabled(count > 1)
+
+    def _on_ai_provider_selected(self, name: str) -> None:
+        if self._ai_loading_profile:
+            return
+        name = (name or "").strip()
+        if not name:
+            return
+        # Persist edits on the previous active profile before switching.
+        previous = self._ai_stage.get("ai_active_provider")
+        if previous and previous != name:
+            self._capture_ai_fields_to_stage(previous, make_active=False)
+        if not set_active_ai_provider(self._ai_stage, name):
+            return
+        self._load_active_ai_profile_into_fields()
+
+    def _prompt_provider_name(self, title: str, initial: str = "") -> str | None:
+        text, ok = QInputDialog.getText(
+            self,
+            title,
+            "Provider name:",
+            QLineEdit.EchoMode.Normal,
+            initial,
+        )
+        if not ok:
+            return None
+        name = (text or "").strip()
+        if not name:
+            QMessageBox.warning(self, title, "Provider name cannot be empty.")
+            return None
+        return name
+
+    def _add_ai_provider(self) -> None:
+        # Keep current edits on the active profile first.
+        self._capture_ai_fields_to_stage()
+        name = self._prompt_provider_name("Add AI Provider")
+        if not name:
+            return
+        if name in (self._ai_stage.get("ai_providers") or {}):
+            QMessageBox.warning(
+                self,
+                "Add AI Provider",
+                f"A provider named “{name}” already exists.",
+            )
+            return
+        # New profile starts as a copy of the current form fields.
+        upsert_ai_provider(
+            self._ai_stage,
+            name,
+            base_url=self.ai_base_url_input.text().strip(),
+            model=self._ai_model_text(),
+            api_key=self.ai_api_key_input.text().strip(),
+            timeout=self.ai_timeout_input.value(),
+            make_active=True,
+        )
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
+
+    def _rename_ai_provider(self) -> None:
+        old = self._current_ai_provider_name()
+        self._capture_ai_fields_to_stage(old)
+        new = self._prompt_provider_name("Rename AI Provider", initial=old)
+        if not new or new == old:
+            return
+        result = rename_ai_provider(self._ai_stage, old, new)
+        if result is None:
+            QMessageBox.warning(
+                self,
+                "Rename AI Provider",
+                f"Could not rename to “{new}” "
+                f"(name may already exist).",
+            )
+            return
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
+
+    def _delete_ai_provider(self) -> None:
+        name = self._current_ai_provider_name()
+        providers = self._ai_stage.get("ai_providers") or {}
+        if len(providers) <= 1:
+            QMessageBox.information(
+                self,
+                "Delete AI Provider",
+                "At least one provider profile is required.",
+            )
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete AI Provider",
+            f"Delete provider “{name}”?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        if not delete_ai_provider(self._ai_stage, name):
+            QMessageBox.warning(
+                self,
+                "Delete AI Provider",
+                "Could not delete this provider.",
+            )
+            return
+        self._reload_ai_provider_combo()
+        self._load_active_ai_profile_into_fields()
 
     def browse_database_root(self):
         start = self.database_root_input.text().strip() or DIR_DB
@@ -498,11 +749,18 @@ class SettingsDialog(QDialog):
     # Voice list / picker
     # ------------------------------------------------------------------
     def _start_voice_worker(self):
-        self.voice_worker = VoiceListWorker()
-        self.voice_worker.voices_ready.connect(self._on_voices_ready)
-        self.voice_worker.error.connect(self._on_voice_error)
-        self.voice_worker.finished.connect(self.voice_worker.deleteLater)
-        self.voice_worker.start()
+        if self._deferred_close_action is not None:
+            return
+        worker = VoiceListWorker()
+        self.voice_worker = worker
+        worker.voices_ready.connect(self._on_voices_ready)
+        worker.error.connect(self._on_voice_error)
+        worker.finished.connect(
+            lambda: self._clear_worker_if_current("voice_worker", worker)
+        )
+        worker.finished.connect(self._on_close_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
 
     def _on_voices_ready(self, voices):
         self._all_voices = list(voices)
@@ -612,32 +870,131 @@ class SettingsDialog(QDialog):
             return
         self.current_voice = short_name
 
+    def _cleanup_tts_temp(self):
+        """Best-effort unlink of the last preview TTS temp MP3."""
+        from .tts import unlink_tts_temp
+
+        self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
+
     def _preview_voice(self, short_name):
-        if not short_name or self.preview_tts_worker is not None:
+        if (
+            not short_name
+            or self.preview_tts_worker is not None
+            or self._deferred_close_action is not None
+        ):
             return
         # Stop any currently playing sample before starting a new one.
         self.preview_player.stop()
+        self._cleanup_tts_temp()
         self._set_preview_controls_enabled(False)
         worker = TTSWorker(_PREVIEW_SAMPLE, short_name)
         self.preview_tts_worker = worker
-        worker.finished.connect(self._on_preview_finished)
+        worker.audio_ready.connect(self._on_preview_finished)
         worker.error.connect(self._on_preview_error)
-        worker.finished.connect(self._on_preview_worker_done)
-        worker.error.connect(self._on_preview_worker_done)
+        # Real QThread.finished (not the payload signal) clears the ref.
+        worker.finished.connect(lambda: self._on_preview_worker_done(worker))
+        worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
         worker.start()
 
     def _on_preview_finished(self, file_path):
+        self._tts_temp_path = file_path
         self.preview_player.setSource(QUrl.fromLocalFile(file_path))
         self.preview_player.play()
+
+    def closeEvent(self, event):
+        if not self._allow_deferred_close and self._defer_close_for_running_workers(
+            "close"
+        ):
+            event.ignore()
+            return
+        # QDialog.closeEvent() calls reject(), so retain this guard through the
+        # superclass call to avoid re-entering the worker-close deferral.
+        self._allow_deferred_close = True
+        try:
+            self._cleanup_tts_temp()
+            super().closeEvent(event)
+        finally:
+            self._allow_deferred_close = False
+
+    def accept(self):
+        """Accept immediately unless a worker thread must finish first."""
+        if self._defer_close_for_running_workers("accept"):
+            return
+        self._cleanup_tts_temp()
+        super().accept()
+
+    def reject(self):
+        """Reject immediately unless a worker thread must finish first."""
+        if self._allow_deferred_close:
+            super().reject()
+            return
+        if self._defer_close_for_running_workers("reject"):
+            return
+        self._cleanup_tts_temp()
+        super().reject()
+
+    def _running_workers(self):
+        """Return this dialog's QThread workers that are currently running."""
+        workers = []
+        for name in (
+            "voice_worker",
+            "preview_tts_worker",
+            "ai_test_worker",
+            "ai_models_worker",
+        ):
+            worker = getattr(self, name, None)
+            try:
+                is_running = getattr(worker, "isRunning", None)
+                if callable(is_running) and is_running():
+                    workers.append(worker)
+            except RuntimeError:
+                self._clear_worker_if_current(name, worker)
+        return workers
+
+    def _clear_worker_if_current(self, name, worker):
+        """Clear a worker reference without discarding a newer replacement."""
+        if getattr(self, name, None) is worker:
+            setattr(self, name, None)
+            return True
+        return False
+
+    def _defer_close_for_running_workers(self, action):
+        """Remember a close action until every active QThread has finished."""
+        workers = self._running_workers()
+        if not workers:
+            return False
+        if self._deferred_close_action is None:
+            self._deferred_close_action = action
+        for worker in workers:
+            if worker not in self._closing_workers:
+                self._closing_workers.append(worker)
+        return True
+
+    def _on_close_worker_finished(self):
+        """Complete a deferred close only after each QThread.finished signal."""
+        worker = self.sender()
+        if worker in self._closing_workers:
+            self._closing_workers.remove(worker)
+        if self._deferred_close_action is not None and not self._closing_workers:
+            action = self._deferred_close_action
+            self._deferred_close_action = None
+            if action == "close":
+                self._allow_deferred_close = True
+                self.close()
+            else:
+                self._cleanup_tts_temp()
+                if action == "accept":
+                    super().accept()
+                else:
+                    super().reject()
 
     def _on_preview_error(self, message):
         QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")
 
-    def _on_preview_worker_done(self, *_args):
-        self.preview_tts_worker = None
-        self._set_preview_controls_enabled(True)
+    def _on_preview_worker_done(self, worker):
+        if self._clear_worker_if_current("preview_tts_worker", worker):
+            self._set_preview_controls_enabled(True)
 
     def _set_preview_controls_enabled(self, enabled):
         for i in range(self.tts_voice_list.count()):
@@ -649,30 +1006,84 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     # AI test
     # ------------------------------------------------------------------
+
+    def _ai_model_text(self) -> str:
+        """Current model id from the editable combo (typed or selected)."""
+        return self.ai_model_input.currentText().strip()
+
+    def _set_ai_model_text(self, model: str) -> None:
+        """Set the model combo text without wiping discovered items."""
+        value = (model or "").strip()
+        idx = self.ai_model_input.findText(value)
+        if idx >= 0:
+            self.ai_model_input.setCurrentIndex(idx)
+        else:
+            self.ai_model_input.setEditText(value)
+
+    def _populate_ai_models(self, models: list[str], *, keep: str | None = None) -> None:
+        """Fill the model combo with *models*, preserving *keep* selection."""
+        selected = (keep if keep is not None else self._ai_model_text()).strip()
+        self.ai_model_input.blockSignals(True)
+        try:
+            self.ai_model_input.clear()
+            if models:
+                self.ai_model_input.addItems(list(models))
+            if selected:
+                idx = self.ai_model_input.findText(selected)
+                if idx >= 0:
+                    self.ai_model_input.setCurrentIndex(idx)
+                else:
+                    # Keep user's current/custom model even if not in the list.
+                    self.ai_model_input.insertItem(0, selected)
+                    self.ai_model_input.setCurrentIndex(0)
+        finally:
+            self.ai_model_input.blockSignals(False)
+
     def _staged_ai_config(self) -> AIProviderConfig:
         return AIProviderConfig(
             base_url=self.ai_base_url_input.text().strip(),
-            model=self.ai_model_input.text().strip(),
+            model=self._ai_model_text(),
             api_key=self.ai_api_key_input.text().strip(),
             timeout_seconds=self.ai_timeout_input.value(),
         )
 
+    def _ai_models_token(
+        self, provider_name: str, config: AIProviderConfig
+    ) -> tuple[str, str, str, str, int]:
+        """Immutable identity for a pending model-list request."""
+        return (
+            provider_name,
+            config.base_url,
+            config.model,
+            config.api_key,
+            config.timeout_seconds,
+        )
+
     def _start_ai_test(self):
-        if self.ai_test_worker is not None:
+        if self.ai_test_worker is not None or self._deferred_close_action is not None:
             return
         self.ai_test_button.setEnabled(False)
         self.ai_test_status_label.setStyleSheet("")
         self.ai_test_status_label.setText("Testing…")
         config = self._staged_ai_config()
+        self._ai_test_token = self._ai_models_token(
+            self._current_ai_provider_name(), config
+        )
         worker = create_ai_test_worker(config)
         self.ai_test_worker = worker
         worker.result.connect(self._on_ai_test_result)
-        worker.finished.connect(self._on_ai_test_finished)
+        worker.finished.connect(lambda: self._on_ai_test_finished(worker))
+        worker.finished.connect(self._on_close_worker_finished)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
     def _on_ai_test_result(self, ok, message, latency_ms):
-        model = self.ai_model_input.text().strip() or "model"
+        current_token = self._ai_models_token(
+            self._current_ai_provider_name(), self._staged_ai_config()
+        )
+        if self._ai_test_token != current_token:
+            return
+        model = self._ai_model_text() or "model"
         if ok:
             ms = int(round(latency_ms)) if latency_ms >= 0 else "?"
             text = f"OK — {ms} ms ({model})"
@@ -682,9 +1093,50 @@ class SettingsDialog(QDialog):
             self.ai_test_status_label.setStyleSheet("color: #cf222e;")
         self.ai_test_status_label.setText(text)
 
-    def _on_ai_test_finished(self):
-        self.ai_test_worker = None
-        self.ai_test_button.setEnabled(True)
+    def _on_ai_test_finished(self, worker):
+        if self._clear_worker_if_current("ai_test_worker", worker):
+            self._ai_test_token = None
+            self.ai_test_button.setEnabled(True)
+
+    def _start_ai_models_refresh(self):
+        """Fetch /models for the staged Base URL + API Key (nonblocking)."""
+        if self.ai_models_worker is not None or self._deferred_close_action is not None:
+            return
+        self.ai_models_refresh_btn.setEnabled(False)
+        self.ai_test_status_label.setStyleSheet("")
+        self.ai_test_status_label.setText("Loading models…")
+        config = self._staged_ai_config()
+        provider_name = self._current_ai_provider_name()
+        self._ai_models_refresh_token = self._ai_models_token(
+            provider_name, config
+        )
+        worker = create_ai_models_worker(config)
+        self.ai_models_worker = worker
+        worker.result.connect(self._on_ai_models_result)
+        worker.finished.connect(lambda: self._on_ai_models_finished(worker))
+        worker.finished.connect(self._on_close_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_ai_models_result(self, ok, message, models):
+        current_token = self._ai_models_token(
+            self._current_ai_provider_name(), self._staged_ai_config()
+        )
+        if self._ai_models_refresh_token != current_token:
+            return
+        if ok:
+            self._populate_ai_models(list(models or []), keep=self._ai_model_text())
+            count = len(models or [])
+            self.ai_test_status_label.setStyleSheet("color: #1a7f37;")
+            self.ai_test_status_label.setText(f"OK — {count} model(s) available")
+        else:
+            self.ai_test_status_label.setStyleSheet("color: #cf222e;")
+            self.ai_test_status_label.setText(f"Models — {message}")
+
+    def _on_ai_models_finished(self, worker):
+        if self._clear_worker_if_current("ai_models_worker", worker):
+            self._ai_models_refresh_token = None
+            self.ai_models_refresh_btn.setEnabled(True)
 
     def _staged_settings(self):
         staged = dict(self.settings)
@@ -714,10 +1166,18 @@ class SettingsDialog(QDialog):
         )
         staged["tts_voice"] = self.current_voice
         staged["tts_language"] = self.current_language or ""
-        staged["ai_base_url"] = self.ai_base_url_input.text().strip()
-        staged["ai_model"] = self.ai_model_input.text().strip()
-        staged["ai_api_key"] = self.ai_api_key_input.text().strip()
-        staged["ai_timeout"] = self.ai_timeout_input.value()
+        # Capture current form fields into the active staged profile first.
+        self._capture_ai_fields_to_stage()
+        ensure_ai_provider_profiles(self._ai_stage)
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in self._ai_stage["ai_providers"].items()
+        }
+        staged["ai_active_provider"] = self._ai_stage["ai_active_provider"]
+        # Profiles only — drop any legacy flat mirrors from the live dict copy.
+        from .ai_provider import strip_legacy_ai_flat_keys
+
+        strip_legacy_ai_flat_keys(staged)
         staged["explanation_language"] = (
             self.explanation_language_input.text().strip()
         )

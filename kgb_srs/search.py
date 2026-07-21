@@ -16,7 +16,6 @@ SQL tests each AND operand independently across all fields/child rows
 and ORs the groups together.
 """
 
-import re
 import unicodedata
 from typing import Optional
 
@@ -33,6 +32,9 @@ def _normalize_search_text(s: str) -> str:
     ).casefold()
 
 
+_REGISTERED_CONNS: set = set()
+
+
 def _register_search_functions(conn):
     """Register Unicode-aware search helpers for casefolded substring match.
 
@@ -40,7 +42,13 @@ def _register_search_functions(conn):
     substring of haystack, 0 otherwise.  %, _, backslash, and diacritics
     are all treated literally — no LIKE wildcards and no accent
     sensitivity.
+
+    Registration is idempotent; only performed once per connection.
     """
+    if conn in _REGISTERED_CONNS:
+        return
+    _REGISTERED_CONNS.add(conn)
+
     def _contains(haystack, needle):
         if haystack is None or needle is None:
             return 0
@@ -226,7 +234,7 @@ def _build_search_sql(
 def search_sentence_cards(
     conn,
     query: str,
-    logic: str = "AND",
+    logic: str = "AND",  # retained for backward compatibility; parsed from query by parse_search_tokens
     field_filter: Optional[str] = None,
 ) -> list[dict]:
     """Search sentence-based cards.
@@ -265,7 +273,7 @@ def search_sentence_cards(
 def search_word_phrase_cards(
     conn,
     query: str,
-    logic: str = "AND",
+    logic: str = "AND",  # retained for backward compatibility; parsed from query by parse_search_tokens
     field_filter: Optional[str] = None,
 ) -> list[dict]:
     """Search word/phrase-based cards.

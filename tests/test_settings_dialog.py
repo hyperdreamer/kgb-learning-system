@@ -1,13 +1,14 @@
 """Focused tests for the categorized application settings dialog."""
 
 import os
+import threading
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -45,8 +46,20 @@ class FakeVoiceWorker(QObject):
         self.deleted = True
 
 
+class DeletedVoiceWorker(FakeVoiceWorker):
+    """Fake wrapper that raises once deleteLater has invalidated it."""
+
+    def isRunning(self):
+        if self.deleted:
+            raise RuntimeError(
+                "wrapped C/C++ object of type VoiceListWorker has been deleted"
+            )
+        return False
+
+
 class FakeTTSWorker(QObject):
-    finished = pyqtSignal(str)
+    audio_ready = pyqtSignal(str)
+    finished = pyqtSignal()
     error = pyqtSignal(str)
 
     instances = []
@@ -86,6 +99,60 @@ class FakeAITestWorker(QObject):
         self.deleted = True
 
 
+class FakeAIModelsWorker(QObject):
+    result = pyqtSignal(bool, str, list)
+    finished = pyqtSignal()
+
+    instances = []
+
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.started = False
+        self.deleted = False
+        FakeAIModelsWorker.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def deleteLater(self):
+        self.deleted = True
+
+
+class BlockingVoiceWorker(QThread):
+    """Controllable real QThread used to exercise dialog-close lifetime."""
+
+    voices_ready = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def run(self):
+        self.started_event.set()
+        self.release_event.wait()
+
+
+class BlockingTTSWorker(QThread):
+    """Controllable preview worker that remains alive until released."""
+
+    audio_ready = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, text, voice):
+        super().__init__()
+        self.text = text
+        self.voice = voice
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def run(self):
+        self.started_event.set()
+        self.release_event.wait()
+
+
 SAMPLE_VOICES = [
     ("en-US-AvaMultilingualNeural", "en-US", "Female", "Ava"),
     ("en-US-AndrewNeural", "en-US", "Male", "Andrew"),
@@ -108,15 +175,27 @@ def settings():
         "default_database": "",
         "tts_voice": "en-US-AvaMultilingualNeural",
         "tts_language": "",
-        "ai_base_url": "https://api.openai.com/v1",
-        "ai_model": "gpt-4o-mini",
-        "ai_api_key": "secret",
-        "ai_timeout": 30,
+        "ai_active_provider": "Default",
+        "ai_providers": {
+            "Default": {
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4o-mini",
+                "api_key": "secret",
+                "timeout": 30,
+            }
+        },
         "explanation_language": "Chinese",
     }
 
 
-def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory=None):
+def _dialog(
+    monkeypatch,
+    settings,
+    save=None,
+    current_size=None,
+    ai_test_factory=None,
+    ai_models_factory=None,
+):
     _app()
     import kgb_srs.settings_dialog as module
 
@@ -132,6 +211,15 @@ def _dialog(monkeypatch, settings, save=None, current_size=None, ai_test_factory
         FakeAITestWorker.instances = []
         monkeypatch.setattr(
             module, "create_ai_test_worker", lambda config: FakeAITestWorker(config)
+        )
+    if ai_models_factory is not None:
+        monkeypatch.setattr(module, "create_ai_models_worker", ai_models_factory)
+    else:
+        FakeAIModelsWorker.instances = []
+        monkeypatch.setattr(
+            module,
+            "create_ai_models_worker",
+            lambda config: FakeAIModelsWorker(config),
         )
     return module.SettingsDialog(
         settings, current_size=current_size
@@ -154,14 +242,13 @@ def _emit_voices(dialog, worker, voices=None):
 
 
 def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch, settings):
-    from kgb_srs.settings_dialog import SettingsDialog
 
     dialog, worker = _dialog(monkeypatch, settings)
 
     sidebar = dialog.findChild(QListWidget, "settingsCategoryList")
     pages = dialog.findChild(QStackedWidget, "settingsPages")
     assert [sidebar.item(i).text() for i in range(sidebar.count())] == [
-        "General", "Appearance", "Audio & Speech", "AI Provider"
+        "General", "Appearance", "Audio & Speech", "AI Providers"
     ]
     assert pages.count() == 4
     expected_pages = {
@@ -182,6 +269,7 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
         "ttsVoiceList": 2,
         "aiBaseUrlInput": 3,
         "aiModelInput": 3,
+        "aiModelsRefreshButton": 3,
         "aiApiKeyInput": 3,
         "aiTimeoutInput": 3,
         "explanationLanguageInput": 3,
@@ -243,7 +331,8 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     assert len(saved) == 1
     assert saved[0]["width"] == 1024
     assert saved[0]["default_database"] == ""
-    assert saved[0]["ai_api_key"] == "new-key"
+    assert saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["api_key"] == "new-key"
+    assert "ai_api_key" not in saved[0]
     assert saved[0]["explanation_language"] == "German"
     assert settings == saved[0]
     assert dialog.result() == dialog.DialogCode.Accepted
@@ -468,7 +557,6 @@ def test_database_root_browser_stages_selected_directory(monkeypatch, settings):
 
 
 def test_save_creates_canonical_database_root_structure(monkeypatch, settings, tmp_path):
-    import kgb_srs.settings_dialog as module
     from kgb_srs.config import CANONICAL_DB_SUBDIRS
 
     saved = []
@@ -488,7 +576,6 @@ def test_save_creates_canonical_database_root_structure(monkeypatch, settings, t
 
 
 def test_save_stores_empty_database_root_for_project_default(monkeypatch, settings):
-    import kgb_srs.settings_dialog as module
     from kgb_srs.config import DIR_DB
 
     saved = []
@@ -519,12 +606,103 @@ def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeyp
     ) == settings["tts_voice"]
     worker.finished.emit()
     assert worker.deleted
-    assert dialog.voice_worker is worker
+    assert dialog.voice_worker is None
     dialog.reject()
 
 
+def test_save_accepts_after_finished_voice_worker_wrapper_is_deleted(
+    monkeypatch, settings
+):
+    """A deleted QThread wrapper does not break the dialog's save path."""
+    import kgb_srs.settings_dialog as module
+
+    _app()
+    worker = DeletedVoiceWorker()
+    monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
+    monkeypatch.setattr(module, "save_settings", lambda _settings: None)
+    dialog = module.SettingsDialog(settings)
+
+    worker.finished.emit()
+    assert worker.deleted
+    # A queued finished handler can leave this stale reference briefly visible.
+    dialog.voice_worker = worker
+
+    dialog.save_and_apply()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert dialog.voice_worker is None
+
+
+def test_finished_old_voice_worker_does_not_clear_replacement(monkeypatch, settings):
+    """An old worker finishing late preserves the newer worker reference."""
+    dialog, old_worker = _dialog(monkeypatch, settings)
+    replacement_worker = FakeVoiceWorker()
+    dialog.voice_worker = replacement_worker
+
+    old_worker.finished.emit()
+
+    assert dialog.voice_worker is replacement_worker
+    dialog.reject()
+
+
+def test_close_waits_for_running_workers_before_destroying_dialog(
+    monkeypatch, settings
+):
+    """A close request waits for real QThread.finished signals from all workers."""
+    _app()
+    import kgb_srs.settings_dialog as module
+
+    voice_worker = BlockingVoiceWorker()
+    monkeypatch.setattr(module, "VoiceListWorker", lambda: voice_worker)
+    monkeypatch.setattr(module, "TTSWorker", BlockingTTSWorker)
+    dialog = module.SettingsDialog(settings)
+    cleanup_calls = []
+    monkeypatch.setattr(
+        dialog, "_cleanup_tts_temp", lambda: cleanup_calls.append(True)
+    )
+    preview_worker = None
+    voice_finished = False
+    preview_finished = False
+
+    try:
+        assert voice_worker.started_event.wait(1)
+        dialog.show()
+        _app().processEvents()
+        dialog._preview_voice("en-US-AndrewNeural")
+        preview_worker = dialog.preview_tts_worker
+        assert preview_worker is not None
+        assert preview_worker.started_event.wait(1)
+        cleanup_calls.clear()
+
+        assert dialog.close() is False
+        assert dialog.isVisible()
+        assert cleanup_calls == []
+
+        voice_worker.release_event.set()
+        assert voice_worker.wait(1000)
+        voice_finished = True
+        _app().processEvents()
+        assert dialog.isVisible()
+        assert cleanup_calls == []
+
+        preview_worker.release_event.set()
+        assert preview_worker.wait(1000)
+        preview_finished = True
+        _app().processEvents()
+        assert not dialog.isVisible()
+        assert cleanup_calls == [True]
+    finally:
+        if not voice_finished:
+            voice_worker.release_event.set()
+            voice_worker.wait(1000)
+        if preview_worker is not None and not preview_finished:
+            preview_worker.release_event.set()
+            preview_worker.wait(1000)
+        dialog.close()
+
+
 def test_api_key_uses_existing_secret_line_edit(monkeypatch, settings):
-    from kgb_srs.main_window import SecretLineEdit
+    from kgb_srs.secret_line_edit import SecretLineEdit
 
     dialog, _ = _dialog(monkeypatch, settings)
     assert isinstance(dialog.ai_api_key_input, SecretLineEdit)
@@ -747,7 +925,7 @@ def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatc
         monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
     )
     dialog.ai_base_url_input.setText(" https://example.test/v1 ")
-    dialog.ai_model_input.setText(" staged-model ")
+    dialog.ai_model_input.setEditText(" staged-model ")
     dialog.ai_api_key_input.setText(" staged-key ")
     dialog.ai_timeout_input.setValue(12)
 
@@ -764,13 +942,13 @@ def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatc
     assert worker.config.api_key == "staged-key"
     assert worker.config.timeout_seconds == 12
     assert saved == []
-    assert settings["ai_api_key"] == "secret"
+    assert settings["ai_providers"][settings["ai_active_provider"]]["api_key"] == "secret"
     dialog.reject()
 
 
 def test_ai_test_success_updates_status_and_reenables_button(monkeypatch, settings):
     dialog, _ = _dialog(monkeypatch, settings)
-    dialog.ai_model_input.setText("gpt-test")
+    dialog.ai_model_input.setEditText("gpt-test")
     dialog.ai_test_button.click()
     worker = FakeAITestWorker.instances[0]
 
@@ -816,6 +994,232 @@ def test_ai_test_missing_api_key_fails_without_hanging(monkeypatch, settings):
 
     assert dialog.ai_test_status_label.text() == "Failed — API key is not set"
     assert dialog.ai_test_button.isEnabled() is True
+    dialog.reject()
+
+
+def test_ai_provider_combo_loads_profiles_and_switches(monkeypatch, settings):
+    settings["ai_providers"] = {
+        "OpenAI": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-openai",
+            "timeout": 30,
+        },
+        "TokenHub": {
+            "base_url": "https://tokenhub.example/v1",
+            "model": "deepseek-v4",
+            "api_key": "sk-th",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "TokenHub"
+
+    dialog, _ = _dialog(monkeypatch, settings)
+    assert dialog.ai_provider_combo.count() == 2
+    assert dialog.ai_provider_combo.currentText() == "TokenHub"
+    assert dialog.ai_model_input.currentText() == "deepseek-v4"
+    assert dialog.ai_api_key_input.text() == "sk-th"
+
+    # Edit TokenHub, switch to OpenAI, then back — TokenHub edit kept.
+    dialog.ai_model_input.setEditText("deepseek-edited")
+    dialog.ai_provider_combo.setCurrentText("OpenAI")
+    _app().processEvents()
+    assert dialog.ai_model_input.currentText() == "gpt-4o-mini"
+    assert dialog.ai_api_key_input.text() == "sk-openai"
+
+    dialog.ai_provider_combo.setCurrentText("TokenHub")
+    _app().processEvents()
+    assert dialog.ai_model_input.currentText() == "deepseek-edited"
+    dialog.reject()
+
+
+def test_ai_provider_profiles_saved_on_apply(monkeypatch, settings):
+    saved = []
+    settings["ai_providers"] = {
+        "OpenAI": {
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "api_key": "sk-openai",
+            "timeout": 30,
+        },
+        "TokenHub": {
+            "base_url": "https://tokenhub.example/v1",
+            "model": "deepseek-v4",
+            "api_key": "sk-th",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "OpenAI"
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.ai_provider_combo.setCurrentText("TokenHub")
+    _app().processEvents()
+    dialog.ai_model_input.setEditText("flash-2")
+    dialog.save_button.click()
+    _app().processEvents()
+
+    assert len(saved) == 1
+    assert saved[0]["ai_active_provider"] == "TokenHub"
+    assert "ai_model" not in saved[0]
+    assert saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["model"] == "flash-2"
+    assert saved[0]["ai_providers"]["TokenHub"]["model"] == "flash-2"
+    assert saved[0]["ai_providers"]["OpenAI"]["model"] == "gpt-4o-mini"
+    assert settings["ai_active_provider"] == "TokenHub"
+
+
+def test_ai_provider_delete_disabled_for_last_profile(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    # Fixture migrates to a single Default profile.
+    assert dialog.ai_provider_combo.count() == 1
+    assert dialog.ai_provider_delete_btn.isEnabled() is False
+    dialog.reject()
+
+
+
+def test_ai_models_refresh_uses_staged_values_and_disables_while_running(monkeypatch, settings):
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    dialog.ai_base_url_input.setText(" https://example.test/v1 ")
+    dialog.ai_model_input.setEditText("keep-me")
+    dialog.ai_api_key_input.setText(" staged-key ")
+    dialog.ai_timeout_input.setValue(12)
+
+    dialog.ai_models_refresh_btn.click()
+    _app().processEvents()
+
+    assert len(FakeAIModelsWorker.instances) == 1
+    worker = FakeAIModelsWorker.instances[0]
+    assert worker.started
+    assert dialog.ai_models_refresh_btn.isEnabled() is False
+    assert dialog.ai_test_status_label.text() == "Loading models…"
+    assert worker.config.base_url == "https://example.test/v1"
+    assert worker.config.api_key == "staged-key"
+    assert worker.config.timeout_seconds == 12
+    assert saved == []
+    dialog.reject()
+
+
+def test_ai_models_refresh_success_populates_combo_and_keeps_current(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_model_input.setEditText("my-custom-model")
+    dialog.ai_models_refresh_btn.click()
+    worker = FakeAIModelsWorker.instances[0]
+
+    worker.result.emit(
+        True,
+        "3 model(s)",
+        ["deepseek-v4-flash-202605", "gpt-4o-mini", "my-custom-model"],
+    )
+    worker.finished.emit()
+    _app().processEvents()
+
+    items = [
+        dialog.ai_model_input.itemText(i)
+        for i in range(dialog.ai_model_input.count())
+    ]
+    assert "deepseek-v4-flash-202605" in items
+    assert "gpt-4o-mini" in items
+    assert dialog.ai_model_input.currentText() == "my-custom-model"
+    assert dialog.ai_test_status_label.text() == "OK — 3 model(s) available"
+    assert dialog.ai_models_refresh_btn.isEnabled() is True
+    assert dialog.ai_models_worker is None
+    assert worker.deleted
+    dialog.reject()
+
+
+def test_ai_models_refresh_discards_result_after_provider_switch(monkeypatch, settings):
+    settings["ai_providers"] = {
+        "Profile A": {
+            "base_url": "https://a.example/v1",
+            "model": "a-model",
+            "api_key": "a-key",
+            "timeout": 30,
+        },
+        "Profile B": {
+            "base_url": "https://b.example/v1",
+            "model": "b-model",
+            "api_key": "b-key",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "Profile A"
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_models_refresh_btn.click()
+    worker = FakeAIModelsWorker.instances[0]
+
+    dialog.ai_provider_combo.setCurrentText("Profile B")
+    _app().processEvents()
+    before_items = [
+        dialog.ai_model_input.itemText(i)
+        for i in range(dialog.ai_model_input.count())
+    ]
+    assert dialog.ai_model_input.currentText() == "b-model"
+
+    worker.result.emit(True, "2 model(s)", ["a-model-new", "a-model-other"])
+    worker.finished.emit()
+    _app().processEvents()
+
+    after_items = [
+        dialog.ai_model_input.itemText(i)
+        for i in range(dialog.ai_model_input.count())
+    ]
+    assert after_items == before_items == ["b-model"]
+    assert dialog.ai_model_input.currentText() == "b-model"
+    assert dialog.ai_models_refresh_btn.isEnabled() is True
+    assert dialog.ai_models_worker is None
+    dialog.reject()
+
+
+def test_ai_test_discards_result_after_provider_switch(monkeypatch, settings):
+    settings["ai_providers"] = {
+        "Profile A": {
+            "base_url": "https://a.example/v1",
+            "model": "a-model",
+            "api_key": "a-key",
+            "timeout": 30,
+        },
+        "Profile B": {
+            "base_url": "https://b.example/v1",
+            "model": "b-model",
+            "api_key": "b-key",
+            "timeout": 20,
+        },
+    }
+    settings["ai_active_provider"] = "Profile A"
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_test_button.click()
+    worker = FakeAITestWorker.instances[0]
+
+    dialog.ai_provider_combo.setCurrentText("Profile B")
+    _app().processEvents()
+    assert dialog.ai_test_status_label.text() == ""
+    assert dialog.ai_model_input.currentText() == "b-model"
+
+    worker.result.emit(True, "Profile A reachable", 123.0)
+    worker.finished.emit()
+    _app().processEvents()
+
+    assert dialog.ai_test_status_label.text() == ""
+    assert dialog.ai_test_button.isEnabled() is True
+    assert dialog.ai_test_worker is None
+    dialog.reject()
+
+
+def test_ai_models_refresh_failure_updates_status_and_reenables(monkeypatch, settings):
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_models_refresh_btn.click()
+    worker = FakeAIModelsWorker.instances[0]
+
+    worker.result.emit(False, "invalid API key", [])
+    worker.finished.emit()
+    _app().processEvents()
+
+    assert dialog.ai_test_status_label.text() == "Models — invalid API key"
+    assert dialog.ai_models_refresh_btn.isEnabled() is True
+    assert dialog.ai_models_worker is None
     dialog.reject()
 
 
@@ -958,7 +1362,8 @@ def test_preview_row_button_starts_tts_worker_without_saving(monkeypatch, settin
     assert saved == []
     assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"
 
-    tts.finished.emit("/tmp/fake-preview.mp3")
+    tts.audio_ready.emit("/tmp/fake-preview.mp3")
+    tts.finished.emit()
     _app().processEvents()
     assert preview_btn.isEnabled() is True
     assert dialog.preview_tts_worker is None
@@ -1045,3 +1450,37 @@ def test_voice_error_still_allows_save_of_current_voice(monkeypatch, settings):
     assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
     dialog.save_button.click()
     assert saved[0]["tts_voice"] == settings["tts_voice"]
+
+
+def test_preview_cleanup_unlinks_temp_on_next_preview_and_close(tmp_path, monkeypatch, settings):
+    """R2-2: settings preview unlinks previous temp MP3 and cleans on close."""
+    _app()
+    from kgb_srs import settings_dialog as module
+    from kgb_srs.settings_dialog import SettingsDialog
+
+    FakeTTSWorker.instances = []
+    monkeypatch.setattr(module, "TTSWorker", FakeTTSWorker)
+    monkeypatch.setattr(module, "VoiceListWorker", FakeVoiceWorker)
+
+    dialog = SettingsDialog(settings)
+    try:
+        old = tmp_path / "barsky_tts_preview_old.mp3"
+        new = tmp_path / "barsky_tts_preview_new.mp3"
+        old.write_bytes(b"old")
+        new.write_bytes(b"new")
+        dialog._tts_temp_path = str(old)
+
+        # Force a preview start; FakeTTSWorker does not auto-emit.
+        dialog._preview_voice("en-US-AndrewNeural")
+        assert not old.exists()
+        assert len(FakeTTSWorker.instances) == 1
+        tts = FakeTTSWorker.instances[0]
+        tts.audio_ready.emit(str(new))
+        assert dialog._tts_temp_path == str(new)
+        assert new.exists()
+
+        dialog.close()
+        assert not new.exists()
+        assert dialog._tts_temp_path is None
+    finally:
+        dialog.close()
