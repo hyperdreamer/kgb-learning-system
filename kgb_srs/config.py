@@ -37,12 +37,9 @@ DEFAULT_SETTINGS = {
     "tts_voice": "en-US-AvaMultilingualNeural",
     # Audio page language filter ("" = All languages)
     "tts_language": "",
-    # AI provider defaults (non-secret). Flat keys mirror the active profile.
-    "ai_base_url": "https://api.openai.com/v1",
-    "ai_model": "gpt-4o-mini",
-    "ai_api_key": "",
-    "ai_timeout": 30,
     # Named OpenAI-compatible provider profiles (switchable in Settings).
+    # Legacy flat ai_base_url/ai_model/ai_api_key/ai_timeout are migrated
+    # into a profile on load, then stripped — not stored as mirrors.
     "ai_active_provider": "Default",
     "ai_providers": {
         "Default": {
@@ -206,7 +203,14 @@ def load_settings():
 
 
 def save_settings(settings):
-    """Atomically save settings with owner-only permissions (API key safety)."""
+    """Atomically save settings with owner-only permissions (API key safety).
+
+    AI config is stored only under ``ai_providers`` / ``ai_active_provider``.
+    Legacy flat ``ai_*`` keys are migrated into profiles, then stripped.
+    """
+    from .ai_provider import ensure_ai_provider_profiles
+
+    ensure_ai_provider_profiles(settings)
     temp_path = None
     try:
         directory = os.path.dirname(SETTINGS_FILE)

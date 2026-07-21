@@ -118,10 +118,6 @@ class SettingsDialog(QDialog):
         self.settings = settings
         # Staged AI provider bag (mutated by switch/add/rename/delete before Save).
         self._ai_stage = {
-            "ai_base_url": settings.get("ai_base_url", "https://api.openai.com/v1"),
-            "ai_model": settings.get("ai_model", "gpt-4o-mini"),
-            "ai_api_key": settings.get("ai_api_key", ""),
-            "ai_timeout": settings.get("ai_timeout", 30),
             "ai_active_provider": settings.get(
                 "ai_active_provider", DEFAULT_AI_PROVIDER_NAME
             ),
@@ -1047,12 +1043,10 @@ class SettingsDialog(QDialog):
             for name, entry in self._ai_stage["ai_providers"].items()
         }
         staged["ai_active_provider"] = self._ai_stage["ai_active_provider"]
-        # Flat keys always mirror the active profile.
-        active = get_ai_provider_entry(self._ai_stage)
-        staged["ai_base_url"] = active["base_url"]
-        staged["ai_model"] = active["model"]
-        staged["ai_api_key"] = active["api_key"]
-        staged["ai_timeout"] = active["timeout"]
+        # Profiles only — drop any legacy flat mirrors from the live dict copy.
+        from .ai_provider import strip_legacy_ai_flat_keys
+
+        strip_legacy_ai_flat_keys(staged)
         staged["explanation_language"] = (
             self.explanation_language_input.text().strip()
         )

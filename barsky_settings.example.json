@@ -9,10 +9,6 @@
   "default_database": "",
   "tts_voice": "en-US-AvaMultilingualNeural",
   "tts_language": "",
-  "ai_base_url": "https://api.openai.com/v1",
-  "ai_model": "gpt-4o-mini",
-  "ai_api_key": "",
-  "ai_timeout": 30,
   "ai_active_provider": "Default",
   "ai_providers": {
     "Default": {

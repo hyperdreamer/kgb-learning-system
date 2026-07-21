@@ -90,16 +90,19 @@ The app supports any **OpenAI-compatible** HTTP endpoint (GPT, DeepSeek, etc.).
 
 ### Configuration
 
-In **Settings → AI Providers**, configure:
+In **Settings → AI Providers**, manage named profiles and configure the active one:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| Provider | `Default` | Named profile (Add / Rename / Delete) |
 | Base URL | `https://api.openai.com/v1` | Provider endpoint |
-| Model | `gpt-4o-mini` | Model name |
+| Model | `gpt-4o-mini` | Model id (Refresh lists `/models`) |
 | API Key | *(blank)* | Your API key — **never committed** |
 | Timeout | 30 s | Network timeout |
 | Explanation Language | Chinese | Language for AI-generated explanations |
 | **Test** | — | Checks that the staged model/API key are reachable and reports latency |
+
+Settings store only `ai_active_provider` + `ai_providers`. Legacy flat `ai_base_url` / `ai_model` / `ai_api_key` / `ai_timeout` are migrated into a profile on load, then removed.
 
 Use **Test** to validate the currently entered Base URL / Model / API Key / Timeout without saving. The check POSTs a minimal `chat/completions` request and shows success latency (ms) or a failure reason.
 

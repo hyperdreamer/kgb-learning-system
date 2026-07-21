@@ -2021,9 +2021,16 @@ class TestSettingsStaging:
         config.save_settings({
             "width": 900, "height": 700, "font_family": "Arial",
             "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
-            "ai_base_url": "https://api.openai.com/v1",
-            "ai_model": "gpt-4o-mini", "ai_api_key": "secret123",
-            "ai_timeout": 30, "explanation_language": "Chinese",
+            "ai_active_provider": "Default",
+            "ai_providers": {
+                "Default": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": "secret123",
+                    "timeout": 30,
+                }
+            },
+            "explanation_language": "Chinese",
         })
         monkeypatch.setattr(config, "load_settings",
                             lambda: config.load_settings())
@@ -2036,17 +2043,34 @@ class TestSettingsStaging:
         # It builds staged changes and saves them
         staged = dict(window.settings)
         staged["width"] = 1024
-        staged["ai_api_key"] = "new_secret"
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in staged.get("ai_providers", {}).items()
+        }
+        active = staged["ai_active_provider"]
+        staged["ai_providers"][active]["api_key"] = "new_secret"
 
         # Before save, original settings should be unchanged
         assert window.settings["width"] == original_settings["width"]
-        assert window.settings["ai_api_key"] == original_settings["ai_api_key"]
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original_settings["ai_providers"][original_settings["ai_active_provider"]][
+                "api_key"
+            ]
+        )
 
         # After successful save, should update
         config.save_settings(staged)
         window.settings.update(staged)
         assert window.settings["width"] == 1024
-        assert window.settings["ai_api_key"] == "new_secret"
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == "new_secret"
+        )
 
         window.close()
 
@@ -2060,9 +2084,16 @@ class TestSettingsStaging:
         config.save_settings({
             "width": 900, "height": 700, "font_family": "Arial",
             "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
-            "ai_base_url": "https://api.openai.com/v1",
-            "ai_model": "gpt-4o-mini", "ai_api_key": "secret123",
-            "ai_timeout": 30, "explanation_language": "Chinese",
+            "ai_active_provider": "Default",
+            "ai_providers": {
+                "Default": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": "secret123",
+                    "timeout": 30,
+                }
+            },
+            "explanation_language": "Chinese",
         })
 
         _qt_app()
@@ -2072,7 +2103,12 @@ class TestSettingsStaging:
 
         # Build staged changes
         staged = dict(window.settings)
-        staged["ai_api_key"] = "would_be_leaked"
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in staged.get("ai_providers", {}).items()
+        }
+        active = staged["ai_active_provider"]
+        staged["ai_providers"][active]["api_key"] = "would_be_leaked"
         staged["width"] = 1234
 
         # Simulate save failure
@@ -2089,7 +2125,12 @@ class TestSettingsStaging:
             pass
 
         # Live settings must be unchanged
-        assert window.settings["ai_api_key"] == original["ai_api_key"], (
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original["ai_providers"][original["ai_active_provider"]]["api_key"]
+        ), (
             "API key must not change on save failure"
         )
         assert window.settings["width"] == original["width"]
@@ -2106,17 +2147,39 @@ class TestSettingsStaging:
         settings_path = tmp_path / "barsky_settings.json"
         monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
 
-        original_key = "sk-original-secret-key"
-        config.save_settings({"ai_api_key": original_key, "width": 900})
+        original_key = "key-original"
+        config.save_settings({
+            "width": 900,
+            "ai_active_provider": "Default",
+            "ai_providers": {
+                "Default": {
+                    "base_url": "https://api.openai.com/v1",
+                    "model": "gpt-4o-mini",
+                    "api_key": original_key,
+                    "timeout": 30,
+                }
+            },
+        })
 
         _qt_app()
         from kgb_srs.main_window import BarskyApp
         window = BarskyApp()
-        assert window.settings["ai_api_key"] == original_key
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original_key
+        )
 
         # Stage a change
         staged = dict(window.settings)
-        staged["ai_api_key"] = "sk-would-be-leaked"
+        staged["ai_providers"] = {
+            name: dict(entry)
+            for name, entry in staged.get("ai_providers", {}).items()
+        }
+        staged["ai_providers"][staged["ai_active_provider"]]["api_key"] = (
+            "would-be-leaked"
+        )
 
         # Fail the save
         def failing_save(s):
@@ -2129,7 +2192,12 @@ class TestSettingsStaging:
             pass
 
         # Must still be original
-        assert window.settings["ai_api_key"] == original_key, (
+        assert (
+            window.settings["ai_providers"][window.settings["ai_active_provider"]][
+                "api_key"
+            ]
+            == original_key
+        ), (
             "API key was mutated despite save failure"
         )
 

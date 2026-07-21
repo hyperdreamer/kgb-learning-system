@@ -466,7 +466,7 @@ class SentenceCardDialog(QDialog):
                 f"AI configured ({ai_config.model})")
         else:
             self._ai_status.setText(
-                "AI not configured — add 'ai_api_key' in Settings.")
+                "AI not configured — set API key under Settings → AI Providers.")
         self._update_generate_enabled()
 
     # ------------------------------------------------------------------
@@ -1437,7 +1437,7 @@ class WordPhraseCardDialog(QDialog):
         else:
             self._generate_btn.setEnabled(False)
             self._ai_status.setText(
-                "AI not configured — add 'ai_api_key' in Settings.")
+                "AI not configured — set API key under Settings → AI Providers.")
 
     # ------------------------------------------------------------------
     # AI generation (nonblocking)

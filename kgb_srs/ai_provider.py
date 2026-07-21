@@ -38,7 +38,13 @@ def _normalize_provider_entry(raw: dict | None) -> dict:
     }
 
 
-def _flat_entry_from_settings(settings: dict) -> dict:
+# Legacy flat keys (pre multi-provider). Migrated into profiles on load/save,
+# then stripped so profiles are the only persisted surface.
+LEGACY_AI_FLAT_KEYS = ("ai_base_url", "ai_model", "ai_api_key", "ai_timeout")
+
+
+def _legacy_flat_entry_from_settings(settings: dict) -> dict:
+    """Build one profile from obsolete flat ai_* keys (migration only)."""
     return {
         "base_url": str(
             settings.get("ai_base_url") or "https://api.openai.com/v1"
@@ -49,12 +55,19 @@ def _flat_entry_from_settings(settings: dict) -> dict:
     }
 
 
+def strip_legacy_ai_flat_keys(settings: dict) -> dict:
+    """Remove obsolete flat ai_* mirrors. Mutates and returns *settings*."""
+    for key in LEGACY_AI_FLAT_KEYS:
+        settings.pop(key, None)
+    return settings
+
+
 def ensure_ai_provider_profiles(settings: dict) -> dict:
     """Ensure *settings* has ``ai_providers`` + ``ai_active_provider``.
 
     Migrates legacy flat keys into a single profile when profiles are
-    missing. Always mirrors the active profile back onto flat keys so
-    older readers keep working. Mutates and returns *settings*.
+    missing. Does **not** keep flat mirrors — profiles are the only
+    source of truth. Mutates and returns *settings*.
     """
     providers_raw = settings.get("ai_providers")
     providers: dict[str, dict] = {}
@@ -66,7 +79,9 @@ def ensure_ai_provider_profiles(settings: dict) -> dict:
             providers[label] = _normalize_provider_entry(entry)
 
     if not providers:
-        providers[DEFAULT_AI_PROVIDER_NAME] = _flat_entry_from_settings(settings)
+        providers[DEFAULT_AI_PROVIDER_NAME] = _legacy_flat_entry_from_settings(
+            settings
+        )
 
     active = str(settings.get("ai_active_provider") or "").strip()
     if active not in providers:
@@ -74,12 +89,8 @@ def ensure_ai_provider_profiles(settings: dict) -> dict:
 
     settings["ai_providers"] = providers
     settings["ai_active_provider"] = active
-    # Mirror active profile onto flat keys (backward-compatible surface).
-    entry = providers[active]
-    settings["ai_base_url"] = entry["base_url"]
-    settings["ai_model"] = entry["model"]
-    settings["ai_api_key"] = entry["api_key"]
-    settings["ai_timeout"] = entry["timeout"]
+    # Drop redundant flat keys so config/UI only point at the active profile.
+    strip_legacy_ai_flat_keys(settings)
     return settings
 
 
@@ -190,7 +201,7 @@ class AIProviderConfig:
 
     @classmethod
     def from_settings(cls, settings: dict) -> "AIProviderConfig":
-        """Build config from the *active* provider profile (or flat keys)."""
+        """Build config from the *active* provider profile."""
         ensure_ai_provider_profiles(settings)
         entry = get_ai_provider_entry(settings)
         return cls(
@@ -432,7 +443,7 @@ class AIClient:
         """
         if not self.config.api_key:
             raise AIMissingConfigError(
-                "AI API key is not configured. Add 'ai_api_key' to barsky_settings.json."
+                "AI API key is not configured. Set it under Settings → AI Providers."
             )
 
         base = self.config.base_url.rstrip("/")

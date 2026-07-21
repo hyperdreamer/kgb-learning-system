@@ -129,10 +129,15 @@ def settings():
         "default_database": "",
         "tts_voice": "en-US-AvaMultilingualNeural",
         "tts_language": "",
-        "ai_base_url": "https://api.openai.com/v1",
-        "ai_model": "gpt-4o-mini",
-        "ai_api_key": "secret",
-        "ai_timeout": 30,
+        "ai_active_provider": "Default",
+        "ai_providers": {
+            "Default": {
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-4o-mini",
+                "api_key": "secret",
+                "timeout": 30,
+            }
+        },
         "explanation_language": "Chinese",
     }
 
@@ -281,7 +286,8 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     assert len(saved) == 1
     assert saved[0]["width"] == 1024
     assert saved[0]["default_database"] == ""
-    assert saved[0]["ai_api_key"] == "new-key"
+    assert saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["api_key"] == "new-key"
+    assert "ai_api_key" not in saved[0]
     assert saved[0]["explanation_language"] == "German"
     assert settings == saved[0]
     assert dialog.result() == dialog.DialogCode.Accepted
@@ -802,7 +808,7 @@ def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatc
     assert worker.config.api_key == "staged-key"
     assert worker.config.timeout_seconds == 12
     assert saved == []
-    assert settings["ai_api_key"] == "secret"
+    assert settings["ai_providers"][settings["ai_active_provider"]]["api_key"] == "secret"
     dialog.reject()
 
 
@@ -873,10 +879,6 @@ def test_ai_provider_combo_loads_profiles_and_switches(monkeypatch, settings):
         },
     }
     settings["ai_active_provider"] = "TokenHub"
-    settings["ai_base_url"] = "https://tokenhub.example/v1"
-    settings["ai_model"] = "deepseek-v4"
-    settings["ai_api_key"] = "sk-th"
-    settings["ai_timeout"] = 20
 
     dialog, _ = _dialog(monkeypatch, settings)
     assert dialog.ai_provider_combo.count() == 2
@@ -925,7 +927,8 @@ def test_ai_provider_profiles_saved_on_apply(monkeypatch, settings):
 
     assert len(saved) == 1
     assert saved[0]["ai_active_provider"] == "TokenHub"
-    assert saved[0]["ai_model"] == "flash-2"
+    assert "ai_model" not in saved[0]
+    assert saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["model"] == "flash-2"
     assert saved[0]["ai_providers"]["TokenHub"]["model"] == "flash-2"
     assert saved[0]["ai_providers"]["OpenAI"]["model"] == "gpt-4o-mini"
     assert settings["ai_active_provider"] == "TokenHub"
