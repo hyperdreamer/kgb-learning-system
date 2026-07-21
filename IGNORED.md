@@ -107,3 +107,59 @@ See commits:
 - `641d0e2` — re-audit regression (C1 _clear_all_rows method restored, L1 dead getattr removed, L2 unused logic param documented)
 
 Round 5 final re-audit: **CLEAN** — 472 tests, ruff 0 violations, ACTIONABLE FINDINGS: None.
+
+---
+
+## Round 6 fixes (applied on `dev`)
+
+See commit:
+
+- `334c200` — audit round 6 (M1: unsafe e.reason→getattr in worker threads; M2: narrow bare except→(sqlite3.Error, OSError) in _open_and_infer_type; L4: rename _http_request→http_request public; L5: remove dead create_ai_worker)
+
+---
+
+## 7. `except Exception: pass` around `ensure_linked_word_phrase_database` (intentional)
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low |
+| **Files** | `kgb_srs/main_window.py:887-888` |
+| **Behavior** | Auto-linking the W/P projection during DB load silently catches and ignores all exceptions. |
+| **Why deferred** | Intentional defensive design — the outer handler (line 894) properly closes the connection on real errors. W/P linking failure should not abort the entire DB load. |
+| **Suggested fix (when ready)** | Log the exception at warning level without changing control flow. |
+
+---
+
+## 8. `_sync_linked_word_phrase_quiet` swallows sync errors (intentional)
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low |
+| **Files** | `kgb_srs/main_window.py:1266-1268` |
+| **Behavior** | Called after every sentence-card insert/update/delete. Silently passes all exceptions. |
+| **Why deferred** | Intentional — comment says "Never block sentence save on projection failure." This is a deliberate UX choice. |
+| **Suggested fix (when ready)** | Log the exception at warning level without changing control flow. |
+
+---
+
+## 9. `_staged_settings()` mutation side effect (naming concern)
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low |
+| **Files** | `kgb_srs/settings_dialog.py:1037` |
+| **Behavior** | Method name reads like a pure getter but calls `_capture_ai_fields_to_stage()` which mutates `_ai_stage`. |
+| **Why deferred** | Renaming or restructuring could break call sites (`save_and_apply`, tests). Low severity — the side effect is the method's actual purpose, just poorly named. |
+| **Suggested fix (when ready)** | Rename to `_build_staged_settings()` or move the capture call to a single explicit call site. |
+
+---
+
+## 10. `hasattr` guard pattern silently degrades on widget rename
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low |
+| **Files** | `kgb_srs/main_window.py:199-206` |
+| **Behavior** | `_apply_toolbar_font_styles` uses `hasattr(self, "db_btn")` etc. If a widget is renamed, styling is silently skipped with no warning. |
+| **Why deferred** | Design concern, not a bug. Moving to explicit attribute registration would add fragility to initialization ordering. |
+| **Suggested fix (when ready)** | Register toolbar widgets in a class-level list/tuple and iterate over known names.
