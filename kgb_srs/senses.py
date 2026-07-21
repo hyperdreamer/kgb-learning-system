@@ -94,7 +94,7 @@ def _row_to_sense(row) -> Sense:
 
 def list_senses_for_expression(conn, expression: str) -> list[Sense]:
     """Return all known senses for *expression* (normalized match)."""
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=False)
     expr_norm = normalize_sentence(expression)
     if not expr_norm:
         return []
@@ -107,7 +107,7 @@ def list_senses_for_expression(conn, expression: str) -> list[Sense]:
     return [_row_to_sense(r) for r in cur.fetchall()]
 
 
-def get_sense(conn, sense_id: int, *, commit: bool = True) -> Sense | None:
+def get_sense(conn, sense_id: int, *, commit: bool = False) -> Sense | None:
     ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
     cur.execute(
@@ -120,7 +120,7 @@ def get_sense(conn, sense_id: int, *, commit: bool = True) -> Sense | None:
 
 
 def find_sense_by_meaning(
-    conn, expression: str, meaning: str, *, commit: bool = True
+    conn, expression: str, meaning: str, *, commit: bool = False
 ) -> Sense | None:
     """Exact normalized (expression, meaning) lookup."""
     ensure_expression_senses_table(conn, commit=commit)
@@ -227,7 +227,7 @@ def resolve_sense_for_item(
 
 
 def list_all_senses(conn) -> list[Sense]:
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=False)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, expression, meaning, expression_norm, meaning_norm "
@@ -290,8 +290,8 @@ def example_sentences_for_sense(
     conn, sense_id: int, *, limit: int = 5
 ) -> list[str]:
     """Sentences that use this sense (via unfamiliar_items.sense_id or meaning)."""
-    ensure_expression_senses_table(conn)
-    sense = get_sense(conn, sense_id)
+    ensure_expression_senses_table(conn, commit=False)
+    sense = get_sense(conn, sense_id, commit=False)
     if sense is None:
         return []
 

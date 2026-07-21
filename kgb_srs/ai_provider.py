@@ -461,18 +461,32 @@ class AIClient:
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse API response as JSON: {e}")
 
+        if not isinstance(data, dict):
+            raise ValueError("API response must be a JSON object")
+
         if "error" in data:
-            msg = data["error"].get("message", str(data["error"]))
+            error = data["error"]
+            if not isinstance(error, dict):
+                raise ValueError("API response 'error' must be an object")
+            msg = error.get("message", str(error))
             raise ValueError(f"API error: {msg}")
 
         choices = data.get("choices")
         if choices is None:
             raise ValueError("API response has no 'choices'")
 
+        if not isinstance(choices, list):
+            raise ValueError("API response 'choices' must be a list")
+
         if len(choices) == 0:
             raise ValueError("API response 'choices' is empty")
 
-        message = choices[0].get("message", {})
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise ValueError("API response first choice must be an object")
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            raise ValueError("API response first choice message must be an object")
         content = message.get("content", "")
         return content
 

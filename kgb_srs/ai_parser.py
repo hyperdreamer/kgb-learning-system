@@ -213,6 +213,8 @@ def parse_sense_assignment(
     raw_sense_id = data.get("sense_id", None)
     sense_id: int | None = None
     if raw_sense_id is not None and str(raw_sense_id).strip() != "":
+        if isinstance(raw_sense_id, bool):
+            raise AIValidationError("sense_id must be an integer or null")
         try:
             sense_id = int(raw_sense_id)
         except (TypeError, ValueError):

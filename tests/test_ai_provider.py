@@ -286,6 +286,22 @@ class TestAIClientParseResponse:
         with pytest.raises(ValueError, match="Invalid API key"):
             client.parse_response(response_json)
 
+    @pytest.mark.parametrize(
+        ("response", "message"),
+        [
+            ([], "JSON object"),
+            ({"error": "Invalid API key"}, "error.*object"),
+            ({"choices": {}}, "choices.*list"),
+            ({"choices": ["not an object"]}, "first choice.*object"),
+            ({"choices": [{"message": []}]}, "message.*object"),
+        ],
+    )
+    def test_malformed_response_containers_raise_value_error(
+        self, client, response, message
+    ):
+        with pytest.raises(ValueError, match=message):
+            client.parse_response(json.dumps(response))
+
 
 # ---------------------------------------------------------------------------
 # Prompt builders

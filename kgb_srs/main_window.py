@@ -1753,7 +1753,12 @@ class BarskyApp(QMainWindow):
         has_db = self.conn is not None
         has_card = self.current_card is not None
         is_active = self.review_mode == "daily"
-        has_paused = self._paused_review_card is not None
+        has_paused = self._paused_review_mode == "daily" and (
+            self._paused_review_card is not None
+            or bool(self._paused_review_history)
+            or bool(self._paused_cards_due)
+            or bool(self._paused_daily_queue)
+        )
         has_history = bool(self._daily_review_history)
         is_wp = (
             has_db

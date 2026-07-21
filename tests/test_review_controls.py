@@ -158,6 +158,15 @@ class TestIdleStateButtons:
             "paused daily session exists"
         )
 
+    def test_start_label_with_completed_paused_session(self, app_with_db):
+        """Retained completed-session history is resumable."""
+        app, _, _ = app_with_db
+        app._paused_review_card = None
+        app._paused_review_mode = "daily"
+        app._paused_review_history = [(1, "test", "back", 1)]
+        app._update_button_visibility()
+        assert "Resume Daily Review" in app.start_btn.text()
+
     def test_restart_disabled_in_idle(self, app_with_db):
         app, _, _ = app_with_db
         assert app.review_mode == ""
@@ -401,10 +410,10 @@ class TestQueueCompletion:
         assert app._daily_review_history, "History must survive final grade"
         assert app.previous_review_btn.isEnabled()
         assert "Next" in app.start_btn.text()
-        # Explicit Close returns to idle.
+        # Explicit Close preserves the completed session for resumption.
         app.close_review()
         assert app.review_mode == ""
-        assert "Start Daily Review" in app.start_btn.text()
+        assert "Resume Daily Review" in app.start_btn.text()
 
 
 class TestRestartDailyReview:

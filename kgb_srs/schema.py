@@ -495,7 +495,7 @@ def get_sentence_card(conn, card_id: int):
         return None
 
     # surface_form may be missing on very old connections before migration.
-    ensure_sentence_schema(conn)
+    ensure_sentence_schema(conn, commit=False)
     cur.execute(
         "SELECT expression, meaning, sense_id, surface_form "
         "FROM unfamiliar_items WHERE card_id=? ORDER BY id",

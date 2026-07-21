@@ -2866,6 +2866,7 @@ class TestReviewControls:
         assert w.review_mode == ""
         assert w._paused_review_mode == "daily"
         assert w._paused_review_history == [(1, "c1", "b1", 2)]
+        assert "Resume Daily Review" in w.start_btn.text()
         conn.close()
         w.close()
 

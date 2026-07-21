@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 
@@ -17,8 +18,12 @@ from kgb_srs.schema import (
 from kgb_srs.senses import (
     create_or_get_sense,
     ensure_expression_senses_table,
-    list_senses_for_expression,
+    example_sentences_for_sense,
     find_sense_by_meaning,
+    get_sense,
+    group_senses_by_expression,
+    list_all_senses,
+    list_senses_for_expression,
     backfill_senses_from_items,
     derive_word_phrase_database,
     derive_word_phrase_entries,
@@ -38,6 +43,42 @@ def conn(tmp_path):
 
 
 class TestSenseInventory:
+    def test_read_helpers_do_not_commit_outer_transaction(self, tmp_path):
+        path = tmp_path / "read_helpers_transaction.db"
+        transaction_conn = init_db(str(path))
+        ensure_sentence_schema(transaction_conn)
+        card_id = insert_sentence_card(
+            transaction_conn, "Known sentence", [("known", "known meaning")]
+        )
+        sense_id = transaction_conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?", (card_id,)
+        ).fetchone()[0]
+
+        transaction_conn.execute("BEGIN")
+        transaction_conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
+        )
+
+        assert get_sentence_card(transaction_conn, card_id) is not None
+        assert get_sense(transaction_conn, sense_id) is not None
+        assert find_sense_by_meaning(
+            transaction_conn, "known", "known meaning"
+        ) is not None
+        assert list_senses_for_expression(transaction_conn, "known")
+        assert list_all_senses(transaction_conn)
+        assert group_senses_by_expression(transaction_conn)
+        assert example_sentences_for_sense(transaction_conn, sense_id) == [
+            "Known sentence"
+        ]
+
+        transaction_conn.rollback()
+        transaction_conn.close()
+
+        with sqlite3.connect(path) as verify_conn:
+            assert verify_conn.execute(
+                "SELECT value FROM settings WHERE key='outer_write'"
+            ).fetchone() is None
+
     def test_create_and_reuse_exact_meaning(self, conn):
         s1 = create_or_get_sense(conn, "insist on", "to demand firmly")
         s2 = create_or_get_sense(conn, "Insist On", "to demand firmly")
@@ -417,6 +458,17 @@ class TestSenseAssignmentParser:
             '"sense_id": 99, "meaning": ""}'
         )
         with pytest.raises(AIValidationError):
+            parse_sense_assignment(raw, "bank", [1, 3])
+
+    @pytest.mark.parametrize("sense_id", [True, False])
+    def test_reuse_boolean_id_rejected(self, sense_id):
+        raw = json.dumps({
+            "expression": "bank",
+            "action": "reuse",
+            "sense_id": sense_id,
+            "meaning": "",
+        })
+        with pytest.raises(AIValidationError, match="sense_id"):
             parse_sense_assignment(raw, "bank", [1, 3])
 
     def test_create_empty_meaning_rejected(self):
