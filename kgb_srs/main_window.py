@@ -1268,20 +1268,34 @@ class BarskyApp(QMainWindow):
         refresh_list()
 
         btn_layout = QHBoxLayout()
+        review_btn = QPushButton("Review Selected")
         edit_btn = QPushButton("Edit Selected")
         del_btn = QPushButton("Delete Selected")
         del_btn.setStyleSheet("background-color: #ffcccc;")
+        btn_layout.addWidget(review_btn)
         btn_layout.addWidget(edit_btn)
         btn_layout.addWidget(del_btn)
         layout.addLayout(btn_layout)
 
         is_wp_browse = getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
         if is_wp_browse:
-            # Projection-only: no edit/delete in Browse.
+            # Projection-only: no edit/delete in Browse; Review is the action.
             edit_btn.setEnabled(False)
             del_btn.setEnabled(False)
             edit_btn.setToolTip("Word/phrase dictionary is read-only.")
             del_btn.setToolTip("Word/phrase dictionary is read-only.")
+            review_btn.setToolTip("Open the selected dictionary entry for review.")
+
+        def on_review():
+            selected = table.selectedItems()
+            if not selected:
+                QMessageBox.information(
+                    dialog, "Nothing Selected", "Select a card to review."
+                )
+                return
+            card_id = int(selected[0].text())
+            dialog.close()
+            self._start_selected_card_review(card_id)
 
         def on_edit():
             selected = table.selectedItems()
@@ -1368,11 +1382,55 @@ class BarskyApp(QMainWindow):
                 if deleted_current:
                     self.show_next_card()
 
+        def on_row_activate(_item=None):
+            # W/P is read-only: double-click reviews. Others edit as before.
+            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
+                on_review()
+            else:
+                on_edit()
+
+        review_btn.clicked.connect(on_review)
         edit_btn.clicked.connect(on_edit)
         del_btn.clicked.connect(on_delete)
-        table.itemDoubleClicked.connect(lambda item: on_edit())
+        table.itemDoubleClicked.connect(on_row_activate)
 
         dialog.exec()
+
+    def _start_selected_card_review(self, card_id):
+        """Open a one-card daily review session for *card_id* from Browse.
+
+        Replaces any active/paused session with a single-card queue so the
+        normal flip / grade / Close Review controls work.
+        """
+        if not self.conn:
+            return
+        card_id = int(card_id)
+        c = self.conn.cursor()
+        c.execute("SELECT id, front, back, box FROM cards WHERE id = ?", (card_id,))
+        card = c.fetchone()
+        if not card:
+            QMessageBox.information(
+                self, "Not Found", f"Card #{card_id} no longer exists."
+            )
+            return
+
+        # Explicit browse review starts a fresh one-card session.
+        self._paused_review_card = None
+        self._paused_review_mode = ""
+        self._paused_cards_due = []
+        self._paused_daily_queue = []
+        self._paused_review_history = []
+
+        if self.card_ui:
+            self.scene.removeItem(self.card_ui)
+            self.card_ui = None
+
+        self.review_mode = "daily"
+        self.cards_due = [card]
+        self._daily_queue_snapshot = [card]
+        self._daily_review_history = []
+        self.current_card = None
+        self.show_next_card()
 
     # ------------------------------------------------------------------
     # Button visibility

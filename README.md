@@ -63,7 +63,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 - **Derived projection**: One card per expression; back lists each sense with its meaning and an indented example sentence where the surface form is **bold** (e.g. lemma `insist on` → **insists on**).
 - **Linked auto-sync**: The sentence DB stores `linked_word_phrase_db`. App startup, DB open, and every sentence Save ensure the link exists and re-derive the W/P DB.
 - **Review**: Standard front/back flip card with Markdown and MathJax rendering (SRS boxes still work).
-- **Search**: Searches front and back (meanings/examples) fields. Browse is view-only for W/P (Edit/Delete selected disabled).
+- **Search**: Searches front and back (meanings/examples) fields. Browse is view-only for W/P (Edit/Delete selected disabled); use **Review Selected** (or double-click) to open a card for review.
 
 ### Knowledge-based (`knowledge`)
 
@@ -183,7 +183,13 @@ Click **Browse and Edit**. Search with AND/OR logic:
 - **Sentence-based**: Searches sentence text, unfamiliar expressions, back, and child meanings. OR groups may contain AND terms (e.g., `math AND theorem OR topology`). Plain multi-word queries search as a literal substring.
 - **Word/Phrase-based**: Searches front and back.
 
-Double-click a row to edit. Sentence cards open the full sentence dialog with re-validation.
+Buttons:
+
+- **Review Selected** — opens the selected card in a one-card review session (flip / grade / Close Review). Available for all database types; on word/phrase DBs this is the primary action.
+- **Edit Selected** — edit the card (sentence dialog for sentence DBs; simple front/back for knowledge). Disabled on word/phrase DBs.
+- **Delete Selected** — delete after confirmation. Disabled on word/phrase DBs.
+
+Double-click a row to edit (sentence/knowledge) or review (word/phrase).
 
 ### 6. Text-to-Speech 🔊
 

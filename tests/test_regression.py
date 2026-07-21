@@ -2510,6 +2510,34 @@ class TestReviewControls:
             assert cur.fetchone()[0] == 1
         conn.close(); w.close()
 
+    def test_start_selected_card_review_opens_one_card_session(self):
+        """Browse → Review Selected starts a one-card daily session."""
+        conn = self._db(1, 2, 3)
+        w = self._win(conn=conn)
+        w._start_selected_card_review(2)
+
+        assert w.review_mode == "daily"
+        assert w.current_card is not None
+        assert w.current_card[0] == 2
+        assert w.current_card[1] == "c2"
+        # Queue was the selected card only; show_next_card consumed it.
+        assert w.cards_due == []
+        assert [c[0] for c in w._daily_queue_snapshot] == [2]
+        assert w.close_review_btn.isEnabled()
+        conn.close(); w.close()
+
+    def test_start_selected_card_review_missing_card(self):
+        """Missing card id does not start a review."""
+        conn = self._db(1)
+        w = self._win(conn=conn)
+        q, i = self._mock_dialogs()
+        with q, i as imock:
+            w._start_selected_card_review(999)
+            imock.assert_called()
+        assert w.current_card is None
+        assert w.review_mode == ""
+        conn.close(); w.close()
+
     # -- finding #2: close preserves queue ---------------------------------
 
     def test_close_preserves_cards_due(self):
