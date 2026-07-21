@@ -116,8 +116,8 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 3. Select one item in the list. The **Meaning** panel shows only that item.
 4. Click **Generate Meaning** — AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense. The meaning field is AI-primary (read-only display); double-click unlocks rare manual repair.
 5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
-6. **Validate** (optional) to verify all items appear in the sentence.
-7. **Save** commits the card with expression+meaning pairs linked to global senses.
+6. **Save** runs membership + meaning checks. On failure the dialog stays open so you can fix or Cancel. Save is dimmed while the sentence or item list is empty.
+7. On success, Save commits the card with expression+meaning pairs linked to global senses.
 8. The linked word/phrase dictionary is created automatically with the sentence DB (and backfilled for older DBs on app startup). Sentence Saves keep it in sync — no manual Derive step.
 
 ---
@@ -127,8 +127,12 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 ### Add Selected Text
 The sentence dialog includes an **Add selected text** button. Highlight any text in the sentence editor and click it to add the selection as an unfamiliar item.
 
-### Validation
-Click **Validate** to confirm every unfamiliar item appears literally in the sentence. Items not found are reported with a clear error.
+### Save-time validation
+There is no separate **Validate** button. **Save** is the only gate:
+
+- Dimmed until the sentence is non-empty **and** at least one unfamiliar item exists.
+- Blocks with a warning (dialog stays open) if any item is missing a meaning — type one or use **Generate Meaning**.
+- Checks that every item appears in the sentence (local rules; optional AI residual for irregular forms).
 
 ### Duplicate Detection
 When creating a new sentence card, if a card with the same normalized sentence and same normalized ordered list of expressions already exists, you're offered to edit the existing card instead.

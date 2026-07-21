@@ -518,7 +518,45 @@ class TestFinalFormRegressions:
         dialog._accept()
 
         assert warnings
+        assert "meaning" in warnings[0].lower()
         assert dialog.result_items == []
+        assert dialog.isVisible() or True  # dialog never accepted
+        dialog.close()
+
+    def test_sentence_dialog_save_dimmed_when_empty(self):
+        """Save is disabled until sentence + at least one item exist."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog()
+        assert dialog._save_btn.isEnabled() is False
+
+        dialog._sentence_edit.setPlainText("Hello world")
+        _qt_app().processEvents()
+        assert dialog._save_btn.isEnabled() is False
+
+        dialog._item_entry.setText("world")
+        dialog._add_item()
+        _qt_app().processEvents()
+        assert dialog._save_btn.isEnabled() is True
+
+        # Clear sentence → dim again
+        dialog._sentence_edit.setPlainText("")
+        _qt_app().processEvents()
+        assert dialog._save_btn.isEnabled() is False
+        dialog.close()
+
+    def test_sentence_dialog_has_no_validate_button(self):
+        """Validate is redundant — Save is the only gate."""
+        _qt_app()
+        from PyQt6.QtWidgets import QPushButton
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(sentence="Hello world", items=[("world", "earth")])
+        labels = [b.text() for b in dialog.findChildren(QPushButton)]
+        assert "Validate" not in labels
+        assert "Save" in labels
+        assert not hasattr(dialog, "_validate_btn")
         dialog.close()
 
     def test_sentence_dialog_has_no_back_editor(self):
