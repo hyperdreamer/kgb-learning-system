@@ -409,6 +409,10 @@ def _flexible_phrase_match(norm_item: str, norm_sentence: str) -> bool:
 class ValidationResult:
     valid: bool
     missing: list[str] = field(default_factory=list)
+    # Lemma → verified surface form accepted by residual checks (e.g. AI).
+    # Used so insert/update can re-verify the same surface without requiring
+    # the lemma to match via local inflection rules alone.
+    accepted_surfaces: dict[str, str] = field(default_factory=dict)
 
 
 def validate_unfamiliar_items(
@@ -686,6 +690,8 @@ def apply_ai_membership_claims(
     - surface is non-empty and :func:`surface_form_in_sentence` is true.
 
     AI alone never authorizes acceptance without a verifiable surface span.
+    Accepted lemma→surface pairs are returned in ``.accepted_surfaces`` so
+    callers can re-verify them at insert/update time.
     """
     if not missing_items:
         return ValidationResult(valid=True, missing=[])
@@ -699,6 +705,7 @@ def apply_ai_membership_claims(
             claim_by_norm[key] = claim
 
     still_missing: list[str] = []
+    accepted_surfaces: dict[str, str] = {}
     for item in missing_items:
         key = normalize_sentence(item)
         claim = claim_by_norm.get(key)
@@ -708,12 +715,16 @@ def apply_ai_membership_claims(
         found = bool(getattr(claim, "found", False))
         surface = str(getattr(claim, "surface", "") or "").strip()
         if found and surface and surface_form_in_sentence(sentence, surface):
+            # Keep the original lemma spelling as the key (what the UI stores).
+            accepted_surfaces[item] = surface
+            accepted_surfaces[key] = surface
             continue
         still_missing.append(item)
 
     return ValidationResult(
         valid=len(still_missing) == 0,
         missing=still_missing,
+        accepted_surfaces=accepted_surfaces,
     )
 
 

@@ -272,10 +272,48 @@ class TestValidateUnfamiliarItems:
         r = apply_ai_membership_claims(sentence, missing, good)
         assert r.valid is True
         assert r.missing == []
+        assert r.accepted_surfaces.get("go") == "gone"
         # found=false keeps missing.
         no = [MembershipClaim(expression="go", found=False, surface="")]
         r = apply_ai_membership_claims(sentence, missing, no)
         assert r.valid is False
+
+    def test_ai_residual_surfaces_allow_insert_for_irregular_lie(self, tmp_path):
+        """AI residual surface (lay) must survive insert re-validation for lie."""
+        import sqlite3
+        from kgb_srs.ai_parser import MembershipClaim
+        from kgb_srs.schema import init_db, insert_sentence_card
+        from kgb_srs.validation import apply_ai_membership_claims, validate_unfamiliar_items
+
+        sentence = "He lay down to rest."
+        # Local rules intentionally do not map recline-lie ↔ lay.
+        local = validate_unfamiliar_items(sentence, ["lie"])
+        assert local.valid is False
+        assert "lie" in local.missing
+
+        residual = apply_ai_membership_claims(
+            sentence,
+            ["lie"],
+            [MembershipClaim(expression="lie", found=True, surface="lay")],
+        )
+        assert residual.valid is True
+        assert residual.accepted_surfaces.get("lie") == "lay"
+
+        db = tmp_path / "lie.db"
+        conn = init_db(str(db))
+
+        with pytest.raises(ValueError, match="lie"):
+            insert_sentence_card(conn, sentence, [("lie", "recline")], "")
+
+        card_id = insert_sentence_card(
+            conn,
+            sentence,
+            [("lie", "recline")],
+            "",
+            verified_surfaces=residual.accepted_surfaces,
+        )
+        assert card_id > 0
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

@@ -200,12 +200,25 @@ def ensure_sentence_schema(conn) -> None:
 # Validation helpers for sentence-card invariants
 # ---------------------------------------------------------------------------
 
-def _validate_expressions_in_sentence(sentence: str, items: list):
-    """Validate that every expression appears literally in the sentence.
+def _validate_expressions_in_sentence(
+    sentence: str,
+    items: list,
+    verified_surfaces: dict[str, str] | None = None,
+):
+    """Validate that every expression appears in the sentence.
+
+    Uses the same local inflection-tolerant rules as the dialog. When the
+    dialog accepted residual items via a verified surface form (e.g. AI
+    residual for irregulars), pass those lemma→surface pairs in
+    *verified_surfaces* so insert/update does not re-reject them.
 
     Raises ValueError with the list of missing expressions.
     """
-    from .validation import validate_unfamiliar_items, normalize_sentence
+    from .validation import (
+        normalize_sentence,
+        surface_form_in_sentence,
+        validate_unfamiliar_items,
+    )
 
     if not sentence or not sentence.strip():
         raise ValueError("Sentence must be non-empty.")
@@ -219,8 +232,19 @@ def _validate_expressions_in_sentence(sentence: str, items: list):
             exprs.append(str(item))
 
     result = validate_unfamiliar_items(sentence, exprs)
-    if not result.valid:
-        missing_str = ", ".join(result.missing)
+    if result.valid:
+        return
+
+    surfaces = verified_surfaces or {}
+    still_missing: list[str] = []
+    for expr in result.missing:
+        surface = surfaces.get(expr) or surfaces.get(normalize_sentence(expr))
+        if surface and surface_form_in_sentence(sentence, surface):
+            continue
+        still_missing.append(expr)
+
+    if still_missing:
+        missing_str = ", ".join(still_missing)
         raise ValueError(
             f"Expressions not found in sentence: {missing_str}"
         )
@@ -314,12 +338,16 @@ def insert_sentence_card(
     sentence: str,
     unfamiliar_items: list,
     back: str = "",
+    verified_surfaces: dict[str, str] | None = None,
 ) -> int:
     """Insert a sentence-based card with its unfamiliar items.
 
     *unfamiliar_items* may be:
       - list of str (meaning defaults to '')
       - list of (expression, meaning) tuples
+
+    *verified_surfaces* is an optional lemma→surface map for residual forms
+    already checked against the sentence (e.g. AI membership).
 
     Items are deduplicated before insertion.  Returns the new card's id.
 
@@ -330,8 +358,11 @@ def insert_sentence_card(
     if not unfamiliar_items:
         raise ValueError("At least one unfamiliar item is required.")
 
-    # Validate that every expression appears literally in the sentence
-    _validate_expressions_in_sentence(sentence, unfamiliar_items)
+    # Validate that every expression appears in the sentence (local rules,
+    # plus any dialog-verified residual surfaces).
+    _validate_expressions_in_sentence(
+        sentence, unfamiliar_items, verified_surfaces=verified_surfaces
+    )
 
     # Reject empty meanings for sentence cards (newly created)
     _require_nonempty_meanings(unfamiliar_items, "insert")
@@ -441,12 +472,14 @@ def update_sentence_card(
     front: str,
     back: str,
     items: list,
+    verified_surfaces: dict[str, str] | None = None,
 ) -> None:
     """Update a sentence card's front, back, and unfamiliar items.
 
     Resets the card to Box 1 with today's review date.
 
     *items* may be list of str or list of (expression, meaning) tuples.
+    *verified_surfaces* is optional lemma→surface for residual forms.
 
     Raises ValueError if sentence is empty or no items provided.
     """
@@ -455,8 +488,11 @@ def update_sentence_card(
     if not items:
         raise ValueError("At least one unfamiliar item is required.")
 
-    # Validate that every expression appears literally in the sentence
-    _validate_expressions_in_sentence(front, items)
+    # Validate that every expression appears in the sentence (local rules,
+    # plus any dialog-verified residual surfaces).
+    _validate_expressions_in_sentence(
+        front, items, verified_surfaces=verified_surfaces
+    )
 
     # Reject empty meanings for sentence cards (newly edited)
     _require_nonempty_meanings(items, "update")

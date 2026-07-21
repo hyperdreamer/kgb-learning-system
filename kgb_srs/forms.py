@@ -148,6 +148,8 @@ class SentenceCardDialog(QDialog):
         self._result_sentence = ""
         self._result_items: list = []
         self._result_back = ""
+        # Lemma → surface accepted by residual AI membership (re-verified at insert).
+        self._result_verified_surfaces: dict[str, str] = {}
         self._settings = settings or {}
         self._conn = conn  # optional: sentence DB for sense inventory
         _apply_ui_font(self, self._settings, parent)
@@ -857,7 +859,7 @@ class SentenceCardDialog(QDialog):
 
         result = validate_unfamiliar_items(sentence, items)
         if result.valid:
-            self._finish_accept(sentence, items)
+            self._finish_accept(sentence, items, verified_surfaces={})
             return
 
         # Local-first residual: optional AI only for items local rules missed.
@@ -956,7 +958,11 @@ class SentenceCardDialog(QDialog):
         self._status_label.setText(
             f"✅ AI residual check accepted {recovered} item(s).")
         self._status_label.setStyleSheet("color: #393;")
-        self._finish_accept(sentence, items)
+        self._finish_accept(
+            sentence,
+            items,
+            verified_surfaces=dict(residual.accepted_surfaces or {}),
+        )
 
     def _on_membership_ai_error(self, message: str) -> None:
         missing = getattr(self, "_membership_missing", [])
@@ -980,7 +986,12 @@ class SentenceCardDialog(QDialog):
         self._validate_btn.setEnabled(True)
         self._update_generate_enabled()
 
-    def _finish_accept(self, sentence: str, items: list[str]) -> None:
+    def _finish_accept(
+        self,
+        sentence: str,
+        items: list[str],
+        verified_surfaces: dict[str, str] | None = None,
+    ) -> None:
         """Finalize Save after membership validation has passed."""
         self._persist_active_meaning()
 
@@ -1006,6 +1017,7 @@ class SentenceCardDialog(QDialog):
 
         self._result_sentence = sentence
         self._result_items = result_items
+        self._result_verified_surfaces = dict(verified_surfaces or {})
         # Back is derived from structured meanings (no separate editor).
         # Order by first surface appearance in the sentence; number when >1.
         from .validation import (
@@ -1028,6 +1040,11 @@ class SentenceCardDialog(QDialog):
     @property
     def result_back(self) -> str:
         return self._result_back
+
+    @property
+    def result_verified_surfaces(self) -> dict[str, str]:
+        """Lemma→surface pairs accepted by residual membership checks."""
+        return dict(self._result_verified_surfaces)
 
     def closeEvent(self, event):
         """Do not destroy the dialog while its blocking HTTP worker is active."""

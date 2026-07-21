@@ -1125,6 +1125,7 @@ class BarskyApp(QMainWindow):
         sentence = dialog.result_sentence
         items = dialog.result_items
         back = dialog.result_back
+        verified_surfaces = getattr(dialog, "result_verified_surfaces", {}) or {}
 
         # Duplicate detection for new cards
         if edit_card_id is None:
@@ -1140,17 +1141,33 @@ class BarskyApp(QMainWindow):
                     return self._add_sentence_card(edit_card_id=dup_id)
                 # else: continue creating new card
 
-        if edit_card_id is not None:
-            update_sentence_card(
-                self.conn, edit_card_id,
-                front=sentence, back=back, items=items,
-            )
-            QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
-            self._refresh_current_card(edit_card_id)
-        else:
-            card_id = insert_sentence_card(self.conn, sentence, items, back)
-            QMessageBox.information(self, "Added", "Card added to Box 1.")
-            self._show_new_card(card_id, sentence, back)
+        try:
+            if edit_card_id is not None:
+                update_sentence_card(
+                    self.conn, edit_card_id,
+                    front=sentence, back=back, items=items,
+                    verified_surfaces=verified_surfaces,
+                )
+                QMessageBox.information(
+                    self, "Updated", "Card updated and moved to Box 1."
+                )
+                self._refresh_current_card(edit_card_id)
+            else:
+                card_id = insert_sentence_card(
+                    self.conn,
+                    sentence,
+                    items,
+                    back,
+                    verified_surfaces=verified_surfaces,
+                )
+                QMessageBox.information(self, "Added", "Card added to Box 1.")
+                self._show_new_card(card_id, sentence, back)
+        except ValueError as e:
+            # Dialog validation passed, but insert/update still rejected
+            # (e.g. residual surface not re-verified). Show a dialog instead
+            # of an uncaught traceback from the Alt+ shortcut path.
+            QMessageBox.warning(self, "Could not save card", str(e))
+            return
 
         # Shared catalog → auto-sync linked word/phrase projection.
         self._sync_linked_word_phrase_quiet()
