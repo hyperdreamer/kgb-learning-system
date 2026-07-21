@@ -205,10 +205,20 @@ class TestFinalFormRegressions:
         window = SimpleNamespace(
             current_card=(1, "current", "back", 1),
             cards_due=[(2, "queued", "back", 2), (3, "other", "back", 1)],
+            _daily_review_history=[(2, "queued", "back", 2), (4, "graded", "back", 3)],
+            _daily_queue_snapshot=[(2, "queued", "back", 2), (3, "other", "back", 1)],
+            _paused_cards_due=[(2, "queued", "back", 2)],
+            _paused_daily_queue=[(2, "queued", "back", 2), (5, "paused", "back", 1)],
+            _paused_review_history=[(2, "queued", "back", 2)],
         )
         BarskyApp._remove_card_from_review_state(window, 2)
         assert [card[0] for card in window.cards_due] == [3]
         assert window.current_card[0] == 1
+        assert [card[0] for card in window._daily_review_history] == [4]
+        assert [card[0] for card in window._daily_queue_snapshot] == [3]
+        assert window._paused_cards_due == []
+        assert [card[0] for card in window._paused_daily_queue] == [5]
+        assert window._paused_review_history == []
 
     def test_sentence_expression_labels_accept_structured_pairs(self):
         _qt_app()
@@ -2790,6 +2800,9 @@ class TestReviewControls:
                        due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)],
                        mode="daily",
                        paused_card=(1, "c1", "b1", 1), paused_mode="daily")
+        # In-memory helper DB is not a sentence catalog; avoid sense purge path.
+        w._db_type = None
+        w._save_settings = lambda: None
 
         returned = w._delete_card_by_id(1)
 
@@ -2808,6 +2821,132 @@ class TestReviewControls:
         # Returns the integer id
         assert returned == 1
         conn.close(); w.close()
+
+    def test_delete_sentence_card_purges_senses_and_resyncs_wp(self, tmp_path):
+        """R2-1: sentence delete purges orphan senses and re-derives W/P."""
+        import os
+        import sqlite3
+        from kgb_srs.catalog import DatabaseType, write_database_type
+        from kgb_srs.db import init_db
+        from kgb_srs.schema import insert_sentence_card
+        from kgb_srs.senses import (
+            ensure_linked_word_phrase_database,
+            get_sense,
+        )
+
+        db_root = tmp_path / "db"
+        sent_dir = db_root / "Language-based" / "Sentence-based"
+        sent_dir.mkdir(parents=True)
+        sentence_path = str(sent_dir / "English_barsky.db")
+
+        conn = init_db(sentence_path)
+        write_database_type(conn, DatabaseType.LANGUAGE_SENTENCE)
+        card_id = insert_sentence_card(
+            conn,
+            "He insists on speaking himself.",
+            [("insist on", "to demand firmly")],
+        )
+        sense_id = conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (card_id,),
+        ).fetchone()[0]
+        assert get_sense(conn, sense_id) is not None
+
+        wp_path, stats = ensure_linked_word_phrase_database(
+            conn, sentence_path, str(db_root), sync=True
+        )
+        assert stats is not None
+        assert stats["expressions"] == 1
+        wp = init_db(wp_path)
+        try:
+            fronts = {
+                r[0].lower()
+                for r in wp.execute("SELECT front FROM cards").fetchall()
+            }
+            assert fronts == {"insist on"}
+        finally:
+            wp.close()
+
+        w = self._win(
+            conn=conn,
+            card=(card_id, "He insists on speaking himself.", "", 1),
+            due=[(card_id, "He insists on speaking himself.", "", 1)],
+            mode="daily",
+        )
+        w._db_type = DatabaseType.LANGUAGE_SENTENCE
+        w.current_db_path = sentence_path
+        w.settings = dict(w.settings)
+        w.settings["database_root"] = str(db_root)
+        # closeEvent saves settings; keep tests from polluting the real file.
+        w._save_settings = lambda: None
+        w._daily_review_history = [
+            (card_id, "He insists on speaking himself.", "", 1)
+        ]
+        w._daily_queue_snapshot = list(w.cards_due)
+        w._paused_cards_due = list(w.cards_due)
+        w._paused_daily_queue = list(w.cards_due)
+        w._paused_review_history = list(w._daily_review_history)
+
+        w._delete_card_by_id(card_id)
+
+        assert conn.execute(
+            "SELECT id FROM cards WHERE id=?", (card_id,)
+        ).fetchone() is None
+        assert get_sense(conn, sense_id) is None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM expression_senses"
+        ).fetchone()[0] == 0
+        assert w._daily_review_history == []
+        assert w._daily_queue_snapshot == []
+        assert w._paused_cards_due == []
+        assert w._paused_daily_queue == []
+        assert w._paused_review_history == []
+
+        wp = init_db(wp_path)
+        try:
+            fronts = [
+                r[0] for r in wp.execute("SELECT front FROM cards").fetchall()
+            ]
+            assert fronts == []
+        finally:
+            wp.close()
+        conn.close()
+        w.close()
+
+    def test_previous_daily_skips_deleted_history_entries(self):
+        """R2-1: previous daily skips ghost history when card was deleted."""
+        from kgb_srs.schema import ensure_unfamiliar_items_table
+
+        conn = self._db(1, 2, 3)
+        ensure_unfamiliar_items_table(conn)
+        w = self._win(
+            conn=conn,
+            card=(3, "c3", "b3", 1),
+            due=[],
+            mode="daily",
+        )
+        w._db_type = None  # knowledge-style path: no expression fetch
+        w._daily_review_history = [
+            (1, "c1", "b1", 2),
+            (2, "c2", "b2", 2),
+        ]
+        # Delete the most recent graded card out from under history.
+        conn.execute("DELETE FROM cards WHERE id=2")
+        conn.commit()
+
+        # Avoid full graphics path; we only care about history/current selection.
+        w.draw_card_ui = lambda: None
+        w.card_ui = None
+
+        w._previous_daily_card()
+
+        assert w.current_card is not None
+        assert w.current_card[0] == 1
+        assert w.current_card[3] == 1  # re-fetched from DB
+        assert [c[0] for c in w.cards_due] == [3]
+        assert w._daily_review_history == []
+        conn.close()
+        w.close()
 
     # -- widget sanity ----------------------------------------------------
 
@@ -2981,3 +3120,79 @@ class TestDBCreationDialogNoWordPhrase:
         dialog._on_create()
         assert dialog.selected_type == DatabaseType.LANGUAGE_SENTENCE
         dialog.close()
+
+
+class TestTtsTempCleanup:
+    """R2-2: temp barsky_tts_*.mp3 files must not linger forever."""
+
+    def test_unlink_tts_temp_removes_file(self, tmp_path):
+        from kgb_srs.tts import unlink_tts_temp
+
+        p = tmp_path / "barsky_tts_deadbeef.mp3"
+        p.write_bytes(b"fake")
+        assert p.exists()
+        assert unlink_tts_temp(str(p)) is None
+        assert not p.exists()
+        # Missing path is a no-op.
+        assert unlink_tts_temp(str(p)) is None
+        assert unlink_tts_temp(None) is None
+
+    def test_speak_text_replaces_previous_temp_file(self, tmp_path, monkeypatch):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+
+        old = tmp_path / "barsky_tts_old.mp3"
+        new = tmp_path / "barsky_tts_new.mp3"
+        old.write_bytes(b"old")
+        new.write_bytes(b"new")
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+
+            def __init__(self, text, voice):
+                super().__init__()
+                self.text = text
+                self.voice = voice
+
+            def start(self):
+                self.audio_ready.emit(str(new))
+                self.finished.emit()
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+
+        class FakePlayer:
+            def setSource(self, *_a, **_k):
+                return None
+
+            def play(self):
+                return None
+
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=str(old),
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            player=FakePlayer(),
+        )
+        # Bind real helpers onto the lightweight stand-in.
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        btn = SimpleNamespace(enabled=True, text="🔊 Listen")
+        btn.setEnabled = lambda v: setattr(btn, "enabled", v)
+        btn.setText = lambda t: setattr(btn, "text", t)
+
+        mw.BarskyApp.speak_text(window, "hello", btn)
+
+        assert not old.exists()
+        assert window._tts_temp_path == str(new)
+        assert new.exists()

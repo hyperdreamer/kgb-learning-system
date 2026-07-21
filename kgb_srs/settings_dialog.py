@@ -111,6 +111,7 @@ class SettingsDialog(QDialog):
         self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
         self.preview_tts_worker = None
+        self._tts_temp_path = None
         self.setWindowTitle("App Settings")
         self.setMinimumSize(620, 480)
 
@@ -612,11 +613,18 @@ class SettingsDialog(QDialog):
             return
         self.current_voice = short_name
 
+    def _cleanup_tts_temp(self):
+        """Best-effort unlink of the last preview TTS temp MP3."""
+        from .tts import unlink_tts_temp
+
+        self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
+
     def _preview_voice(self, short_name):
         if not short_name or self.preview_tts_worker is not None:
             return
         # Stop any currently playing sample before starting a new one.
         self.preview_player.stop()
+        self._cleanup_tts_temp()
         self._set_preview_controls_enabled(False)
         worker = TTSWorker(_PREVIEW_SAMPLE, short_name)
         self.preview_tts_worker = worker
@@ -630,8 +638,13 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_preview_finished(self, file_path):
+        self._tts_temp_path = file_path
         self.preview_player.setSource(QUrl.fromLocalFile(file_path))
         self.preview_player.play()
+
+    def closeEvent(self, event):
+        self._cleanup_tts_temp()
+        super().closeEvent(event)
 
     def _on_preview_error(self, message):
         QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")

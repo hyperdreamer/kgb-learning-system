@@ -10,6 +10,17 @@ import edge_tts
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+def unlink_tts_temp(path):
+    """Best-effort delete of a TTS temp MP3. Returns None."""
+    if not path:
+        return None
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    return None
+
+
 class TTSWorker(QThread):
     """Worker thread that generates TTS audio without blocking the GUI."""
 

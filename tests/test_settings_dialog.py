@@ -1047,3 +1047,37 @@ def test_voice_error_still_allows_save_of_current_voice(monkeypatch, settings):
     assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
     dialog.save_button.click()
     assert saved[0]["tts_voice"] == settings["tts_voice"]
+
+
+def test_preview_cleanup_unlinks_temp_on_next_preview_and_close(tmp_path, monkeypatch, settings):
+    """R2-2: settings preview unlinks previous temp MP3 and cleans on close."""
+    _app()
+    from kgb_srs import settings_dialog as module
+    from kgb_srs.settings_dialog import SettingsDialog
+
+    FakeTTSWorker.instances = []
+    monkeypatch.setattr(module, "TTSWorker", FakeTTSWorker)
+    monkeypatch.setattr(module, "VoiceListWorker", FakeVoiceWorker)
+
+    dialog = SettingsDialog(settings)
+    try:
+        old = tmp_path / "barsky_tts_preview_old.mp3"
+        new = tmp_path / "barsky_tts_preview_new.mp3"
+        old.write_bytes(b"old")
+        new.write_bytes(b"new")
+        dialog._tts_temp_path = str(old)
+
+        # Force a preview start; FakeTTSWorker does not auto-emit.
+        dialog._preview_voice("en-US-AndrewNeural")
+        assert not old.exists()
+        assert len(FakeTTSWorker.instances) == 1
+        tts = FakeTTSWorker.instances[0]
+        tts.audio_ready.emit(str(new))
+        assert dialog._tts_temp_path == str(new)
+        assert new.exists()
+
+        dialog.close()
+        assert not new.exists()
+        assert dialog._tts_temp_path is None
+    finally:
+        dialog.close()

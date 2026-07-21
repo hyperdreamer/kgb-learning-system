@@ -181,6 +181,7 @@ class BarskyApp(QMainWindow):
 
         self.tts_worker = None
         self.voice_worker = None
+        self._tts_temp_path = None
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -245,6 +246,7 @@ class BarskyApp(QMainWindow):
             if self.tts_worker is worker:
                 self.tts_worker = None
 
+        self._cleanup_tts_temp()
         event.accept()
 
     # ------------------------------------------------------------------
@@ -1016,10 +1018,19 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # TTS
     # ------------------------------------------------------------------
+    def _cleanup_tts_temp(self):
+        """Best-effort unlink of the last generated TTS temp MP3."""
+        from .tts import unlink_tts_temp
+
+        self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
+
     def speak_text(self, text, btn):
         if self.tts_worker is not None and self.tts_worker.isRunning():
             # Avoid stacking workers; ignore while one is already generating.
             return
+
+        # Drop the previous temp file before generating a new one.
+        self._cleanup_tts_temp()
 
         btn.setEnabled(False)
         btn.setText("⏳ Preparing...")
@@ -1029,6 +1040,7 @@ class BarskyApp(QMainWindow):
         self.tts_worker = worker
 
         def on_audio_ready(file_path):
+            self._tts_temp_path = file_path
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.play()
             btn.setEnabled(True)
@@ -1281,9 +1293,18 @@ class BarskyApp(QMainWindow):
     def _remove_card_from_review_state(self, card_id):
         """Remove a deleted card from current and queued review state."""
         card_id = int(card_id)
-        self.cards_due = [card for card in self.cards_due if card[0] != card_id]
+
+        def _without(cards):
+            return [card for card in cards if card[0] != card_id]
+
+        self.cards_due = _without(self.cards_due)
         if self.current_card is not None and self.current_card[0] == card_id:
             self.current_card = None
+        self._daily_review_history = _without(self._daily_review_history)
+        self._daily_queue_snapshot = _without(self._daily_queue_snapshot)
+        self._paused_cards_due = _without(self._paused_cards_due)
+        self._paused_daily_queue = _without(self._paused_daily_queue)
+        self._paused_review_history = _without(self._paused_review_history)
 
     def _delete_card_by_id(self, card_id):
         """Execute DELETE + commit, clean review state, clear matching paused.
@@ -1299,6 +1320,14 @@ class BarskyApp(QMainWindow):
                 and int(self._paused_review_card[0]) == card_id):
             self._paused_review_card = None
             self._paused_review_mode = ""
+        if (
+            getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE
+            and self.conn is not None
+        ):
+            from .senses import purge_orphan_senses
+
+            purge_orphan_senses(self.conn, commit=True)
+            self._sync_linked_word_phrase_quiet()
         return card_id
 
     # ------------------------------------------------------------------
@@ -1679,22 +1708,31 @@ class BarskyApp(QMainWindow):
         if self.review_mode != "daily" or not self._daily_review_history:
             return
 
-        # Push current (ungraded) card to front of queue.
+        # Skip deleted/missing history entries instead of showing a ghost card.
+        prev_card = None
+        while self._daily_review_history:
+            candidate = self._daily_review_history.pop()
+            prev_id = candidate[0]
+            if self.conn is not None:
+                c = self.conn.cursor()
+                c.execute(
+                    "SELECT id, front, back, box FROM cards WHERE id = ?",
+                    (prev_id,),
+                )
+                fresh = c.fetchone()
+                if fresh is None:
+                    continue
+                prev_card = fresh
+            else:
+                prev_card = candidate
+            break
+
+        if prev_card is None:
+            return
+
+        # Push current (ungraded) card to front of queue only after success.
         if self.current_card is not None:
             self.cards_due.insert(0, self.current_card)
-
-        # Pop last card from history and re-fetch so display matches DB.
-        prev_card = self._daily_review_history.pop()
-        prev_id = prev_card[0]
-        if self.conn is not None:
-            c = self.conn.cursor()
-            c.execute(
-                "SELECT id, front, back, box FROM cards WHERE id = ?",
-                (prev_id,),
-            )
-            fresh = c.fetchone()
-            if fresh is not None:
-                prev_card = fresh
 
         if self.card_ui:
             self.scene.removeItem(self.card_ui)

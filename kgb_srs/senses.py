@@ -259,6 +259,9 @@ def purge_orphan_senses(conn, *, commit: bool = False) -> int:
 
     Returns the number of deleted rows.
     """
+    from .schema import ensure_unfamiliar_items_table
+
+    ensure_unfamiliar_items_table(conn)
     ensure_expression_senses_table(conn)
     cur = conn.cursor()
     cur.execute(
