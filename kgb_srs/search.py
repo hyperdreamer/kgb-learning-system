@@ -33,6 +33,9 @@ def _normalize_search_text(s: str) -> str:
     ).casefold()
 
 
+_REGISTERED_CONNS: set = set()
+
+
 def _register_search_functions(conn):
     """Register Unicode-aware search helpers for casefolded substring match.
 
@@ -40,7 +43,13 @@ def _register_search_functions(conn):
     substring of haystack, 0 otherwise.  %, _, backslash, and diacritics
     are all treated literally — no LIKE wildcards and no accent
     sensitivity.
+
+    Registration is idempotent; only performed once per connection.
     """
+    if conn in _REGISTERED_CONNS:
+        return
+    _REGISTERED_CONNS.add(conn)
+
     def _contains(haystack, needle):
         if haystack is None or needle is None:
             return 0

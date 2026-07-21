@@ -512,11 +512,6 @@ def derive_word_phrase_database(
     ensure_expression_senses_table(source_conn)
     backfill_senses_from_items(source_conn)
 
-    if write_type:
-        from .catalog import DatabaseType, write_database_type
-
-        write_database_type(target_conn, DatabaseType.LANGUAGE_WORD_PHRASE)
-
     entries = derive_word_phrase_entries(source_conn)
     inserted = 0
     updated = 0
@@ -541,6 +536,11 @@ def derive_word_phrase_database(
             if normalize_sentence(front or "") not in keep_fronts:
                 cur.execute("DELETE FROM cards WHERE id=?", (card_id,))
                 pruned += 1
+
+    if write_type:
+        from .catalog import DatabaseType, write_database_type
+
+        write_database_type(target_conn, DatabaseType.LANGUAGE_WORD_PHRASE)
 
     target_conn.commit()
     return {

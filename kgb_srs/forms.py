@@ -1476,9 +1476,8 @@ class WordPhraseCardDialog(QDialog):
                 self._clear_all_rows()
                 # Populate from AI results
                 for m in meanings:
-                    # Extract meaning and example from contextual_meaning
-                    meaning_text, example_text = self._split_meaning_example(
-                        m.contextual_meaning)
+                    meaning_text = m.meaning
+                    example_text = m.example
                     self._add_meaning_row(meaning=meaning_text, example=example_text)
                 if not self._meaning_rows:
                     self._add_meaning_row()

@@ -866,36 +866,47 @@ class BarskyApp(QMainWindow):
         if self.conn:
             self.conn.close()
 
-        self.conn = init_db(self.current_db_path)
+        try:
+            self.conn = init_db(self.current_db_path)
 
-        # --- Metadata inference / persistence ---
-        db_type = read_database_type(self.conn)
-        if db_type is None:
-            db_type = infer_database_type(self.current_db_path)
-            write_database_type(self.conn, db_type)
+            # --- Metadata inference / persistence ---
+            db_type = read_database_type(self.conn)
+            if db_type is None:
+                db_type = infer_database_type(self.current_db_path)
+                write_database_type(self.conn, db_type)
 
-        self._db_type = db_type
+            self._db_type = db_type
 
-        if db_type == DatabaseType.LANGUAGE_SENTENCE:
-            from .schema import ensure_sentence_schema
-            from .senses import ensure_linked_word_phrase_database
+            if db_type == DatabaseType.LANGUAGE_SENTENCE:
+                from .schema import ensure_sentence_schema
+                from .senses import ensure_linked_word_phrase_database
 
-            ensure_sentence_schema(self.conn)
-            # Old sentence DBs without a link get one automatically.
-            try:
-                ensure_linked_word_phrase_database(
-                    self.conn,
-                    self.current_db_path,
-                    get_database_root(self.settings),
-                    sync=True,
+                ensure_sentence_schema(self.conn)
+                # Old sentence DBs without a link get one automatically.
+                try:
+                    ensure_linked_word_phrase_database(
+                        self.conn,
+                        self.current_db_path,
+                        get_database_root(self.settings),
+                        sync=True,
+                    )
+                except Exception:
+                    pass
+
+            # --- Restore random review ---
+            c = self.conn.cursor()
+            c.execute("SELECT value FROM settings WHERE key = 'random_review'")
+            res = c.fetchone()
+        except Exception as e:
+            if self.conn:
+                self.conn.close()
+            self.conn = None
+            if not silent:
+                QMessageBox.warning(
+                    self, "Error",
+                    f"Failed to open database:\n{self.current_db_path}\n\n{e}"
                 )
-            except Exception:
-                pass
-
-        # --- Restore random review ---
-        c = self.conn.cursor()
-        c.execute("SELECT value FROM settings WHERE key = 'random_review'")
-        res = c.fetchone()
+            return
 
         is_random = True
         if res:

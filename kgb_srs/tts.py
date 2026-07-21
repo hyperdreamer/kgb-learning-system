@@ -38,6 +38,10 @@ class TTSWorker(QThread):
 
         communicate = edge_tts.Communicate(self.text, self.voice)
         await communicate.save(temp_file)
+        try:
+            os.chmod(temp_file, 0o600)
+        except OSError:
+            pass
         return temp_file
 
     def run(self):

@@ -124,7 +124,13 @@ def init_db(db_path_or_conn):
     if isinstance(db_path_or_conn, sqlite3.Connection):
         conn = db_path_or_conn
     else:
+        is_new = os.path.isfile(db_path_or_conn) is False
         conn = sqlite3.connect(db_path_or_conn)
+        if is_new:
+            try:
+                os.chmod(db_path_or_conn, 0o600)
+            except OSError:
+                pass
 
     conn.execute("PRAGMA foreign_keys = ON")
 

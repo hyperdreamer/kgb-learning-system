@@ -21,6 +21,8 @@ class MeaningResult:
     """A single meaning entry returned by the AI."""
     expression: str = ""
     contextual_meaning: str = ""
+    meaning: str = ""
+    example: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +216,9 @@ def parse_sense_assignment(
     if raw_sense_id is not None and str(raw_sense_id).strip() != "":
         try:
             sense_id = int(raw_sense_id)
-        except (TypeError, ValueError) as e:
-            raise AIValidationError(
-                f"sense_id must be an integer or null, got {raw_sense_id!r}"
-            ) from e
+        except (TypeError, ValueError):
+            # Treat non-integer values (including literal "null") as None.
+            sense_id = None
 
     meaning = data.get("meaning", "")
     meaning_text = str(meaning).strip() if meaning is not None else ""
@@ -429,6 +430,8 @@ def parse_word_phrase_meanings(
         results.append(MeaningResult(
             expression="",
             contextual_meaning=formatted,
+            meaning=str(meaning_text).strip(),
+            example=str(example).strip(),
         ))
 
     return results

@@ -236,8 +236,75 @@ _IRREGULAR_VERB_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"rewrite", "rewrites", "rewriting", "rewritten", "rewrote", "underwrite", "underwrites", "underwriting", "underwritten", "underwrote", "write", "writes", "writing", "written", "wrote"}),
 )
 
+# Irregular noun plural forms (mouse/mice, child/children, etc.)
+_IRREGULAR_NOUN_GROUPS: tuple[frozenset[str], ...] = (
+    frozenset({"mouse", "mice"}),
+    frozenset({"child", "children"}),
+    frozenset({"foot", "feet"}),
+    frozenset({"tooth", "teeth"}),
+    frozenset({"goose", "geese"}),
+    frozenset({"man", "men"}),
+    frozenset({"woman", "women"}),
+    frozenset({"ox", "oxen"}),
+    frozenset({"die", "dice"}),
+    frozenset({"crisis", "crises"}),
+    frozenset({"phenomenon", "phenomena"}),
+    frozenset({"criterion", "criteria"}),
+    frozenset({"louse", "lice"}),
+    frozenset({"person", "people", "persons"}),
+    frozenset({"sheep", "sheep"}),
+    frozenset({"deer", "deer"}),
+    frozenset({"fish", "fishes"}),
+    frozenset({"species", "species"}),
+    frozenset({"series", "series"}),
+    frozenset({"datum", "data"}),
+    frozenset({"medium", "media"}),
+    frozenset({"bacterium", "bacteria"}),
+    frozenset({"curriculum", "curricula"}),
+    frozenset({"index", "indices", "indexes"}),
+    frozenset({"appendix", "appendices", "appendixes"}),
+    frozenset({"matrix", "matrices"}),
+    frozenset({"vertex", "vertices"}),
+    frozenset({"axis", "axes"}),
+    frozenset({"thesis", "theses"}),
+    frozenset({"hypothesis", "hypotheses"}),
+    frozenset({"parenthesis", "parentheses"}),
+    frozenset({"synthesis", "syntheses"}),
+    frozenset({"analysis", "analyses"}),
+    frozenset({"diagnosis", "diagnoses"}),
+    frozenset({"oasis", "oases"}),
+    frozenset({"cactus", "cacti", "cactuses"}),
+    frozenset({"fungus", "fungi", "funguses"}),
+    frozenset({"nucleus", "nuclei"}),
+    frozenset({"stimulus", "stimuli"}),
+    frozenset({"syllabus", "syllabi", "syllabuses"}),
+    frozenset({"focus", "foci", "focuses"}),
+    frozenset({"radius", "radii"}),
+    frozenset({"alumnus", "alumni"}),
+    frozenset({"larva", "larvae"}),
+    frozenset({"alga", "algae"}),
+    frozenset({"formula", "formulae", "formulas"}),
+    frozenset({"nebula", "nebulae", "nebulas"}),
+    frozenset({"vertebra", "vertebrae"}),
+    frozenset({"antenna", "antennae", "antennas"}),
+    frozenset({"vita", "vitae"}),
+    frozenset({"addendum", "addenda"}),
+    frozenset({"erratum", "errata"}),
+    frozenset({"memorandum", "memoranda", "memorandums"}),
+    frozenset({"ovum", "ova"}),
+    frozenset({"stratum", "strata"}),
+    frozenset({"symposium", "symposia", "symposiums"}),
+    frozenset({"automaton", "automata", "automatons"}),
+    frozenset({"codex", "codices"}),
+    frozenset({"apex", "apices", "apexes"}),
+    frozenset({"vortex", "vortices", "vortexes"}),
+)
+
 _IRREGULAR_LOOKUP: dict[str, frozenset[str]] = {
-    form: group for group in _IRREGULAR_VERB_GROUPS for form in group
+    form: group
+    for groups in (_IRREGULAR_VERB_GROUPS, _IRREGULAR_NOUN_GROUPS)
+    for group in groups
+    for form in group
 }
 
 
