@@ -11,7 +11,9 @@ expression, using source sentences as examples.
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from .validation import normalize_sentence
@@ -38,7 +40,7 @@ class Sense:
 # ---------------------------------------------------------------------------
 
 
-def ensure_expression_senses_table(conn) -> None:
+def ensure_expression_senses_table(conn, *, commit: bool = True) -> None:
     """Create expression_senses and link column on unfamiliar_items.
 
     Idempotent. Safe on legacy DBs.
@@ -71,7 +73,8 @@ def ensure_expression_senses_table(conn) -> None:
             "ALTER TABLE unfamiliar_items ADD COLUMN sense_id INTEGER "
             "REFERENCES expression_senses(id)"
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +107,8 @@ def list_senses_for_expression(conn, expression: str) -> list[Sense]:
     return [_row_to_sense(r) for r in cur.fetchall()]
 
 
-def get_sense(conn, sense_id: int) -> Sense | None:
-    ensure_expression_senses_table(conn)
+def get_sense(conn, sense_id: int, *, commit: bool = True) -> Sense | None:
+    ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
     cur.execute(
         "SELECT id, expression, meaning, expression_norm, meaning_norm "
@@ -117,10 +120,10 @@ def get_sense(conn, sense_id: int) -> Sense | None:
 
 
 def find_sense_by_meaning(
-    conn, expression: str, meaning: str
+    conn, expression: str, meaning: str, *, commit: bool = True
 ) -> Sense | None:
     """Exact normalized (expression, meaning) lookup."""
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
     expr_norm = normalize_sentence(expression)
     meaning_norm = normalize_sentence(meaning)
     if not expr_norm or not meaning_norm:
@@ -151,7 +154,7 @@ def create_or_get_sense(
     Nested callers pass commit=False so outer transactions stay intact.
     Unique conflicts use a SAVEPOINT instead of a full rollback.
     """
-    ensure_expression_senses_table(conn)
+    ensure_expression_senses_table(conn, commit=commit)
     expr = (expression or "").strip()
     meaning_text = (meaning or "").strip()
     if not expr:
@@ -159,7 +162,9 @@ def create_or_get_sense(
     if not meaning_text:
         raise ValueError("meaning must be non-empty")
 
-    existing = find_sense_by_meaning(conn, expr, meaning_text)
+    existing = find_sense_by_meaning(
+        conn, expr, meaning_text, commit=commit
+    )
     if existing is not None:
         return existing
 
@@ -189,7 +194,9 @@ def create_or_get_sense(
         # Race / unique conflict: undo only the nested insert attempt.
         cur.execute("ROLLBACK TO SAVEPOINT sense_ins")
         cur.execute("RELEASE SAVEPOINT sense_ins")
-        existing = find_sense_by_meaning(conn, expr, meaning_text)
+        existing = find_sense_by_meaning(
+            conn, expr, meaning_text, commit=commit
+        )
         if existing is not None:
             return existing
         raise
@@ -209,7 +216,7 @@ def resolve_sense_for_item(
     create/get by (expression, meaning).
     """
     if preferred_sense_id is not None:
-        sense = get_sense(conn, preferred_sense_id)
+        sense = get_sense(conn, preferred_sense_id, commit=commit)
         if sense is not None:
             if normalize_sentence(sense.expression) == normalize_sentence(
                 expression
@@ -596,40 +603,91 @@ def ensure_linked_word_phrase_database(
     ensure_expression_senses_table(source_conn)
     backfill_senses_from_items(source_conn)
 
+    canonical_path = default_word_phrase_path_for_sentence(
+        sentence_db_path, db_root
+    )
     path = get_linked_word_phrase_db(source_conn)
-    if not path or not os.path.isfile(path):
-        path = default_word_phrase_path_for_sentence(sentence_db_path, db_root)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+    if (
+        not path
+        or not os.path.isfile(path)
+        or os.path.realpath(path) != os.path.realpath(canonical_path)
+    ):
+        # A saved link is not authority to derive into that file.  Only the
+        # matching canonical projection path may be opened and mutated.
+        path = canonical_path
+        os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
         # Create empty DB shell if needed, then link.
-        target = init_db(path)
+        target = init_db(canonical_path)
         try:
             from .catalog import DatabaseType, write_database_type
 
             write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
         finally:
             target.close()
-        set_linked_word_phrase_db(source_conn, path)
+        set_linked_word_phrase_db(source_conn, canonical_path)
 
     stats = None
     if sync:
-        stats = sync_linked_word_phrase_database(source_conn)
+        stats = sync_linked_word_phrase_database(
+            source_conn,
+            sentence_db_path=sentence_db_path,
+            db_root=db_root,
+        )
     return path, stats
 
 
-def sync_linked_word_phrase_database(source_conn) -> dict | None:
+def sync_linked_word_phrase_database(
+    source_conn,
+    *,
+    sentence_db_path: str | None = None,
+    db_root: str | None = None,
+) -> dict | None:
     """If the sentence DB has a linked W/P path, fully re-derive it.
 
-    Creates the target file when the link exists but the file is missing.
-    Returns stats dict, or None if no link.
+    When the sentence DB path and root are supplied, the saved target must
+    resolve to this sentence DB's canonical projection path. Legacy direct
+    callers may omit them, but then only an existing target explicitly marked
+    as a word/phrase DB is eligible for synchronization.
+
+    Returns stats dict, or None when no safe linked target is available.
     """
     path = get_linked_word_phrase_db(source_conn)
     if not path:
         return None
 
+    canonical_path = None
+    if sentence_db_path is not None and db_root is not None:
+        canonical_path = default_word_phrase_path_for_sentence(
+            sentence_db_path, db_root
+        )
+        # Do not open a saved target unless it is the owned canonical file.
+        if os.path.realpath(path) != os.path.realpath(canonical_path):
+            return None
+    else:
+        # Legacy callers did not provide enough context to establish path
+        # ownership. Inspect existing metadata read-only before opening the
+        # target for a destructive projection refresh.
+        if not os.path.isfile(path):
+            return None
+        try:
+            target = sqlite3.connect(
+                f"{Path(os.path.realpath(path)).as_uri()}?mode=ro", uri=True
+            )
+            try:
+                from .catalog import DatabaseType, read_database_type
+
+                if read_database_type(target) != DatabaseType.LANGUAGE_WORD_PHRASE:
+                    return None
+            finally:
+                target.close()
+        except (OSError, ValueError, sqlite3.Error):
+            return None
+
     from .schema import init_db
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    target = init_db(path)
+    target_path = canonical_path or path
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    target = init_db(target_path)
     try:
         stats = derive_word_phrase_database(source_conn, target)
     finally:

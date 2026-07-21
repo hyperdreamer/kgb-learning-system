@@ -450,7 +450,7 @@ def insert_sentence_card(
             if preferred_sense_id is not None:
                 from .senses import get_sense
 
-                pref = get_sense(conn, preferred_sense_id)
+                pref = get_sense(conn, preferred_sense_id, commit=False)
                 if pref is not None and normalize_sentence(
                     pref.expression
                 ) == normalize_sentence(expr):
@@ -594,7 +594,7 @@ def update_sentence_card(
         for expr, meaning, preferred_sense_id, surface in deduped:
             sense = None
             if preferred_sense_id is not None:
-                pref = get_sense(conn, preferred_sense_id)
+                pref = get_sense(conn, preferred_sense_id, commit=False)
                 if pref is not None and normalize_sentence(
                     pref.expression
                 ) == normalize_sentence(expr):

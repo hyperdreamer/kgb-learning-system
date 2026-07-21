@@ -74,32 +74,6 @@ Re-open only with an explicit product decision and regression tests.
 
 ---
 
-## 11. Sentence-card writes can become partially durable after a child-row failure
-
-| Field | Value |
-|-------|-------|
-| **Severity** | Medium (data integrity) |
-| **Files** | `kgb_srs/schema.py:394-476, 540-619`; `kgb_srs/senses.py:40-74, 138-194, 256-278` |
-| **Behavior** | `insert_sentence_card()` / `update_sentence_card()` attempt an outer rollback, but `create_or_get_sense()` and `purge_orphan_senses()` call helpers that commit internally. A trigger rejecting a later `unfamiliar_items` row can therefore leave the card, earlier child row, and orphan senses persisted after the operation reports failure. |
-| **Why deferred** | Correcting it requires transaction-aware schema/migration helpers and an audit of callers that currently rely on their implicit commits. It can affect legacy migration, projection, and CRUD boundaries. |
-| **Risk if fixed** | Medium — a broad commit-timing change could regress callers or leave migrations uncommitted unless covered end-to-end. |
-| **Suggested fix (when ready)** | Run schema/migration setup before CRUD, then use one transaction/savepoint with no nested commits until final success. Add trigger-induced rollback tests for both insert and update. |
-
----
-
-## 12. A non-canonical linked W/P path can overwrite an unrelated database
-
-| Field | Value |
-|-------|-------|
-| **Severity** | High (data loss) |
-| **Files** | `kgb_srs/senses.py:478-491, 593-610, 619-630` |
-| **Behavior** | A stored `linked_word_phrase_db` accepts any existing absolute path. Later projection sync derives into that target, pruning cards absent from the source and changing its metadata to `language_word_phrase`. A malformed link to a Knowledge database can delete its unrelated cards and retag it. |
-| **Why deferred** | Existing installations may contain non-canonical legacy links. Enforcing the canonical same-name projection path needs a deliberate migration/repair policy rather than silently changing user data links. |
-| **Risk if fixed** | Medium — link validation/migration can change existing database relationships and must avoid overwriting or orphaning a legacy projection. |
-| **Suggested fix (when ready)** | Canonicalize and require `<database_root>/Language-based/Word-Phrase-based/<same-name>` before deriving. On invalid link, leave the target untouched, repair the stored link to the canonical path, and add a regression test using an existing Knowledge DB as the malformed target. |
-
----
-
 ## Round 7 fixes (applied on `dev`)
 
 - Settings dialog close/reject/accept now defers destruction until all active voice, TTS-preview, AI-test, and model-refresh workers have actually finished; cleanup occurs only on the real close.
@@ -151,6 +125,7 @@ Round 5 final re-audit: **CLEAN** — 472 tests, ruff 0 violations, ACTIONABLE F
 See commit:
 
 - `334c200` — audit round 6 (M1: unsafe e.reason→getattr in worker threads; M2: narrow bare except→(sqlite3.Error, OSError) in _open_and_infer_type; L4: rename _http_request→http_request public; L5: remove dead create_ai_worker)
+- `66f79ea` — IGNORED reconsideration (atomic sentence-card rollback across nested sense helpers; canonical W/P link enforcement that preserves malformed legacy targets)
 
 ---
 
