@@ -10,6 +10,7 @@ expression, using source sentences as examples.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -378,19 +379,55 @@ def upsert_word_phrase_card(
     return card_id, action
 
 
+# Settings key on sentence DBs: absolute path of linked word/phrase DB.
+LINKED_WORD_PHRASE_DB_KEY = "linked_word_phrase_db"
+
+
+def get_linked_word_phrase_db(conn) -> str | None:
+    """Return the absolute path of the linked word/phrase DB, or None."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT value FROM settings WHERE key = ?",
+        (LINKED_WORD_PHRASE_DB_KEY,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    path = (row[0] or "").strip()
+    return path or None
+
+
+def set_linked_word_phrase_db(conn, path: str | None, *, commit: bool = True) -> None:
+    """Persist or clear the linked word/phrase DB path on a sentence DB."""
+    if path is None or not str(path).strip():
+        conn.execute(
+            "DELETE FROM settings WHERE key = ?",
+            (LINKED_WORD_PHRASE_DB_KEY,),
+        )
+    else:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (LINKED_WORD_PHRASE_DB_KEY, os.path.abspath(str(path).strip())),
+        )
+    if commit:
+        conn.commit()
+
+
 def derive_word_phrase_database(
     source_conn,
     target_conn,
     *,
     write_type: bool = True,
+    prune_missing: bool = True,
 ) -> dict:
     """Copy unique (expression, sense) units into a word/phrase DB.
 
     *source_conn* is a sentence DB with expression_senses populated
     (or backfilled from unfamiliar_items).
-    *target_conn* is the destination word/phrase DB.
+    *target_conn* is the destination word/phrase DB (read-only for users;
+    content is always derived from the shared sense catalog).
 
-    Returns stats: {expressions, senses, inserted, updated}.
+    Returns stats: {expressions, senses, inserted, updated, pruned}.
     """
     # Ensure source inventory exists and backfill from item meanings.
     ensure_expression_senses_table(source_conn)
@@ -405,8 +442,10 @@ def derive_word_phrase_database(
     inserted = 0
     updated = 0
     sense_count = 0
+    keep_fronts: set[str] = set()
     for front, back, senses in entries:
         sense_count += len(senses)
+        keep_fronts.add(normalize_sentence(front))
         _id, action = upsert_word_phrase_card(
             target_conn, front, back, commit=False
         )
@@ -414,13 +453,47 @@ def derive_word_phrase_database(
             inserted += 1
         else:
             updated += 1
+
+    pruned = 0
+    if prune_missing:
+        cur = target_conn.cursor()
+        cur.execute("SELECT id, front FROM cards")
+        for card_id, front in cur.fetchall():
+            if normalize_sentence(front or "") not in keep_fronts:
+                cur.execute("DELETE FROM cards WHERE id=?", (card_id,))
+                pruned += 1
+
     target_conn.commit()
     return {
         "expressions": len(entries),
         "senses": sense_count,
         "inserted": inserted,
         "updated": updated,
+        "pruned": pruned,
     }
+
+
+def sync_linked_word_phrase_database(source_conn) -> dict | None:
+    """If the sentence DB has a linked W/P path, fully re-derive it.
+
+    Returns stats dict, or None if no link / path missing.
+    """
+    import sqlite3
+
+    path = get_linked_word_phrase_db(source_conn)
+    if not path:
+        return None
+    if not os.path.isfile(path):
+        return None
+
+    from .schema import init_db
+
+    target = init_db(path)
+    try:
+        stats = derive_word_phrase_database(source_conn, target)
+    finally:
+        target.close()
+    return stats
 
 
 def backfill_senses_from_items(conn, *, commit: bool = True) -> int:

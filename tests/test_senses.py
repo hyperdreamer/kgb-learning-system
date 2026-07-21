@@ -198,3 +198,53 @@ class TestDeriveWordPhrase:
             assert "side of a river" in bank_back
         finally:
             target.close()
+
+
+class TestLinkedWordPhraseSync:
+    def test_link_and_auto_sync(self, conn, tmp_path):
+        from kgb_srs.senses import (
+            set_linked_word_phrase_db,
+            get_linked_word_phrase_db,
+            sync_linked_word_phrase_database,
+            derive_word_phrase_database,
+        )
+
+        insert_sentence_card(
+            conn,
+            "He insists on speaking himself.",
+            [("insist on", "to demand firmly")],
+        )
+        target_path = tmp_path / "dict_barsky.db"
+        target = init_db(str(target_path))
+        try:
+            stats = derive_word_phrase_database(conn, target)
+            assert stats["expressions"] == 1
+        finally:
+            target.close()
+
+        set_linked_word_phrase_db(conn, str(target_path))
+        assert get_linked_word_phrase_db(conn) is not None
+
+        # Add another sense and sync
+        insert_sentence_card(
+            conn,
+            "I went to the bank.",
+            [("bank", "financial institution")],
+        )
+        stats2 = sync_linked_word_phrase_database(conn)
+        assert stats2 is not None
+        assert stats2["expressions"] == 2
+
+        target2 = init_db(str(target_path))
+        try:
+            cur = target2.cursor()
+            cur.execute("SELECT front FROM cards ORDER BY front")
+            fronts = {r[0].lower() for r in cur.fetchall()}
+            assert fronts == {"bank", "insist on"}
+        finally:
+            target2.close()
+
+    def test_sync_without_link_returns_none(self, conn):
+        from kgb_srs.senses import sync_linked_word_phrase_database
+
+        assert sync_linked_word_phrase_database(conn) is None

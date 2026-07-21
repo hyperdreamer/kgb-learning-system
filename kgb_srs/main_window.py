@@ -41,7 +41,7 @@ from .config import (
 from .db import init_db, find_databases
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
-from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
+from .forms import SentenceCardDialog, DBCreationDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 from .schema import (
@@ -68,9 +68,6 @@ _DB_MENU_STYLESHEET = (
     " padding-bottom: 6px;"
     " }"
 )
-
-
-from .forms import SentenceCardDialog, DBCreationDialog, WordPhraseCardDialog
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +328,7 @@ class BarskyApp(QMainWindow):
             self.new_db_btn.setStyleSheet(
                 self._toolbar_button_style("new_db", font_family, font_size)
             )
-        for attr in ("add_entry_btn", "browse_btn", "settings_btn"):
+        for attr in ("add_entry_btn", "browse_btn", "settings_btn", "derive_wp_btn"):
             btn = getattr(self, attr, None)
             if btn is not None:
                 btn.setStyleSheet(
@@ -931,7 +928,14 @@ class BarskyApp(QMainWindow):
         if db_type == DatabaseType.LANGUAGE_SENTENCE:
             self._add_sentence_card()
         elif db_type == DatabaseType.LANGUAGE_WORD_PHRASE:
-            self._add_word_phrase_card()
+            QMessageBox.information(
+                self,
+                "Read-only Word/Phrase Database",
+                "Word/phrase cards come only from the shared sense catalog.\n\n"
+                "Add or edit sentences in a sentence-based database, then "
+                "use Derive W/P (or the linked auto-sync) to update this "
+                "dictionary. Manual add/edit is disabled.",
+            )
         else:
             self._add_knowledge_card()
 
@@ -988,6 +992,23 @@ class BarskyApp(QMainWindow):
             QMessageBox.information(self, "Added", "Card added to Box 1.")
             self._show_new_card(card_id, sentence, back)
 
+        # Shared catalog → auto-sync linked word/phrase projection.
+        self._sync_linked_word_phrase_quiet()
+
+    def _sync_linked_word_phrase_quiet(self) -> None:
+        """Re-derive linked W/P DB from expression_senses after sentence changes."""
+        if not self.conn:
+            return
+        if getattr(self, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE:
+            return
+        try:
+            from .senses import sync_linked_word_phrase_database
+
+            sync_linked_word_phrase_database(self.conn)
+        except Exception:
+            # Never block sentence save on projection failure.
+            pass
+
     def derive_word_phrase_database(self):
         """Project the open sentence DB into a word/phrase DB by (expression, sense)."""
         if not self.conn or getattr(self, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE:
@@ -998,7 +1019,12 @@ class BarskyApp(QMainWindow):
             )
             return
 
-        from .senses import derive_word_phrase_database, list_all_senses
+        from .senses import (
+            derive_word_phrase_database,
+            list_all_senses,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+        )
 
         if not list_all_senses(self.conn):
             # Try backfill from items first.
@@ -1014,66 +1040,83 @@ class BarskyApp(QMainWindow):
                 )
                 return
 
-        # Default target name from source leaf name.
-        source_path = self.current_db_path or ""
-        leaf = os.path.basename(source_path)
-        if leaf.endswith("_barsky.db"):
-            leaf = leaf[: -len("_barsky.db")]
-        default_name = f"{leaf}-senses" if leaf else "derived-senses"
-
-        name_dialog = DynamicInputDialog(
-            self,
-            "Derive Word/Phrase Database",
-            "New word/phrase database name:",
-            default_name,
-        )
-        if name_dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        name = (name_dialog.text_value or "").strip()
-        if not name:
-            return
-        if not validate_db_name(name):
-            QMessageBox.warning(
-                self,
-                "Invalid Name",
-                f"Database name '{name}' contains invalid characters.",
-            )
-            return
-
-        db_root = get_database_root(self.settings)
-        try:
-            ensure_database_root_structure(db_root)
-        except OSError as exc:
-            QMessageBox.warning(
-                self,
-                "Database Directory",
-                f"Could not prepare database directory:\n{db_root}\n\n{exc}",
-            )
-            return
-
-        subdir = DB_DIR_LANGUAGE_WORD_PHRASE
-        target_dir = os.path.join(db_root, subdir)
-        os.makedirs(target_dir, exist_ok=True)
-        filename = safe_db_filename(name)
-        target_path = os.path.join(target_dir, filename)
-
-        if os.path.exists(target_path):
+        # Prefer reusing the already-linked target when present.
+        linked = get_linked_word_phrase_db(self.conn)
+        target_path = None
+        if linked and os.path.isfile(linked):
             reply = QMessageBox.question(
                 self,
-                "Database Exists",
-                f"'{name}' already exists.\n\nUpdate its word/phrase cards from current senses?",
+                "Linked Word/Phrase Database",
+                f"Update the linked word/phrase database?\n\n{linked}",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            if reply != QMessageBox.StandardButton.Yes:
+            if reply == QMessageBox.StandardButton.Yes:
+                target_path = linked
+
+        if target_path is None:
+            # Default target name from source leaf name.
+            source_path = self.current_db_path or ""
+            leaf = os.path.basename(source_path)
+            if leaf.endswith("_barsky.db"):
+                leaf = leaf[: -len("_barsky.db")]
+            default_name = f"{leaf}-senses" if leaf else "derived-senses"
+
+            name_dialog = DynamicInputDialog(
+                self,
+                "Derive Word/Phrase Database",
+                "New word/phrase database name "
+                "(content is derived only — no manual editing):",
+                default_name,
+            )
+            if name_dialog.exec() != QDialog.DialogCode.Accepted:
                 return
+            name = (name_dialog.text_value or "").strip()
+            if not name:
+                return
+            if not validate_db_name(name):
+                QMessageBox.warning(
+                    self,
+                    "Invalid Name",
+                    f"Database name '{name}' contains invalid characters.",
+                )
+                return
+
+            db_root = get_database_root(self.settings)
+            try:
+                ensure_database_root_structure(db_root)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self,
+                    "Database Directory",
+                    f"Could not prepare database directory:\n{db_root}\n\n{exc}",
+                )
+                return
+
+            subdir = DB_DIR_LANGUAGE_WORD_PHRASE
+            target_dir = os.path.join(db_root, subdir)
+            os.makedirs(target_dir, exist_ok=True)
+            filename = safe_db_filename(name)
+            target_path = os.path.join(target_dir, filename)
+
+            if os.path.exists(target_path):
+                reply = QMessageBox.question(
+                    self,
+                    "Database Exists",
+                    f"'{name}' already exists.\n\n"
+                    "Rebuild it from the shared sense catalog?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
 
         target_conn = init_db(target_path)
         try:
-            from .senses import derive_word_phrase_database as _derive
-
-            stats = _derive(self.conn, target_conn)
+            stats = derive_word_phrase_database(self.conn, target_conn)
         finally:
             target_conn.close()
+
+        # Always keep the sentence DB linked for auto-sync on future saves.
+        set_linked_word_phrase_db(self.conn, target_path)
 
         QMessageBox.information(
             self,
@@ -1081,118 +1124,13 @@ class BarskyApp(QMainWindow):
             (
                 f"Wrote {stats['expressions']} expression(s) / "
                 f"{stats['senses']} sense(s).\n"
-                f"Inserted: {stats['inserted']}  Updated: {stats['updated']}\n\n"
-                f"{target_path}"
+                f"Inserted: {stats['inserted']}  Updated: {stats['updated']}"
+                f"  Pruned: {stats.get('pruned', 0)}\n\n"
+                f"{target_path}\n\n"
+                "This dictionary is read-only. Future sentence saves will "
+                "auto-sync it from the shared sense catalog."
             ),
         )
-
-    def _add_word_phrase_card(self, edit_card_id=None, existing_front=""):
-        """Show the word/phrase-based card dialog with inline AI meanings."""
-        meanings_data = None
-
-        if edit_card_id is not None:
-            if not existing_front:
-                c = self.conn.cursor()
-                c.execute("SELECT front, back FROM cards WHERE id=?", (edit_card_id,))
-                row = c.fetchone()
-                if not row:
-                    return
-                existing_front = row[0]
-                # Try to extract meaning/example pairs from existing back text
-                meanings_data = self._parse_back_to_meanings(row[1])
-
-            dialog = WordPhraseCardDialog(
-                self,
-                "Edit Word/Phrase",
-                front=existing_front,
-                meanings_data=meanings_data,
-                settings=self.settings,
-            )
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            front = dialog.result_front
-            back = dialog.result_back
-            meanings = dialog.result_meanings
-        else:
-            dialog = WordPhraseCardDialog(
-                self,
-                "Add New Word/Phrase",
-                settings=self.settings,
-            )
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-            front = dialog.result_front
-            back = dialog.result_back
-            meanings = dialog.result_meanings
-
-        if not front or not back:
-            return
-
-        c = self.conn.cursor()
-
-        # Duplicate check for new cards
-        if edit_card_id is None:
-            c.execute(
-                "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
-                (front,),
-            )
-            existing_card = c.fetchone()
-            if existing_card:
-                card_id, ex_front, ex_back, ex_box = existing_card
-                QMessageBox.information(
-                    self, "Already Exists",
-                    f"'{ex_front}' is already in your database (Box {ex_box}).\n\n"
-                    "Opening Edit window."
-                )
-                return self._add_word_phrase_card(edit_card_id=card_id, existing_front=ex_front)
-
-        today_str = datetime.date.today().isoformat()
-
-        if edit_card_id is not None:
-            c.execute(
-                "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-                (front, back, today_str, edit_card_id),
-            )
-            self.conn.commit()
-            QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
-            self._refresh_current_card(edit_card_id)
-        else:
-            c.execute(
-                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
-                (front, back, today_str),
-            )
-            card_id = c.lastrowid
-            self.conn.commit()
-            QMessageBox.information(self, "Added", "Word/phrase added to Box 1.")
-            self._show_new_card(card_id, front, back)
-
-    @staticmethod
-    def _parse_back_to_meanings(back: str) -> list[tuple[str, str]] | None:
-        """Try to extract (meaning, example) pairs from existing back text.
-
-        Returns None if parsing fails, so dialog starts fresh.
-        """
-        if not back:
-            return None
-        import re
-        result = []
-        # Pattern: "1. meaning\n*example*" or just "meaning"
-        parts = re.split(r'\n\n|\n(?=\d+\.)', back)
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            # Remove number prefix
-            part = re.sub(r'^\d+\.\s*', '', part)
-            # Extract example in *...*
-            example_match = re.search(r'\*(.+?)\*', part)
-            if example_match:
-                example = example_match.group(1).strip()
-                meaning = part[:example_match.start()].strip().rstrip('\n')
-                result.append((meaning, example))
-            else:
-                result.append((part, ""))
-        return result if result else None
 
     def _add_knowledge_card(self, edit_card_id=None, existing_front=""):
         """Add/edit a knowledge-based (generic front/back) card.
@@ -1445,8 +1383,13 @@ class BarskyApp(QMainWindow):
                 self._add_sentence_card(edit_card_id=card_id)
                 return
             if db_type_edit == DatabaseType.LANGUAGE_WORD_PHRASE:
-                dialog.close()
-                self._add_word_phrase_card(edit_card_id=card_id)
+                QMessageBox.information(
+                    dialog,
+                    "Read-only Word/Phrase Card",
+                    "This dictionary is derived from the shared sense catalog.\n\n"
+                    "Edit the expression/sense via sentence cards, then "
+                    "re-derive or rely on auto-sync. Manual edit is disabled.",
+                )
                 return
 
             c = self.conn.cursor()
@@ -1530,17 +1473,21 @@ class BarskyApp(QMainWindow):
         has_paused = self._paused_review_card is not None
 
         self.delete_entry_btn.setEnabled(has_db and has_card)
+        is_sentence = (
+            has_db
+            and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE
+        )
+        is_wp = (
+            has_db
+            and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
+        )
+        # W/P is a derived projection — no manual Add Entry.
+        if hasattr(self, "add_entry_btn"):
+            self.add_entry_btn.setVisible(has_db and not is_wp)
+            self.add_entry_btn.setEnabled(has_db and not is_wp)
         if hasattr(self, "derive_wp_btn"):
-            self.derive_wp_btn.setVisible(
-                has_db
-                and getattr(self, "_db_type", None)
-                == DatabaseType.LANGUAGE_SENTENCE
-            )
-            self.derive_wp_btn.setEnabled(
-                has_db
-                and getattr(self, "_db_type", None)
-                == DatabaseType.LANGUAGE_SENTENCE
-            )
+            self.derive_wp_btn.setVisible(is_sentence)
+            self.derive_wp_btn.setEnabled(is_sentence)
 
         if not has_db:
             self.start_btn.setEnabled(False)

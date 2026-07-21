@@ -1605,14 +1605,18 @@ class DBCreationDialog(QDialog):
         self._sentence_radio = QRadioButton("Sentence-based")
         self._sentence_radio.setToolTip(
             "Cards have a sentence with unfamiliar words/phrases. "
-            "AI generates contextual meanings."
+            "AI assigns senses in a shared catalog; a word/phrase "
+            "dictionary can be derived from those senses."
         )
         group_layout.addWidget(self._sentence_radio)
 
-        self._word_phrase_radio = QRadioButton("Word/Phrase-based")
+        self._word_phrase_radio = QRadioButton(
+            "Word/Phrase-based (derived only)"
+        )
         self._word_phrase_radio.setToolTip(
-            "Cards have a word or phrase on the front. "
-            "AI generates meanings with examples."
+            "Read-only dictionary projection of the shared sense catalog. "
+            "Create via Derive W/P from a sentence database — "
+            "manual add/edit is disabled."
         )
         group_layout.addWidget(self._word_phrase_radio)
 
@@ -1629,7 +1633,7 @@ class DBCreationDialog(QDialog):
         )
         group_layout.addWidget(self._knowledge_radio)
 
-        self._word_phrase_radio.setChecked(True)  # default
+        self._sentence_radio.setChecked(True)  # default: authoring path
         layout.addWidget(group)
 
         # Database name
