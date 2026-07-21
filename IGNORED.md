@@ -36,11 +36,50 @@ Re-open only with an explicit product decision and regression tests.
 
 ---
 
+## 3. `find_duplicate_sentence_card` linear-scans all cards (O(n))
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low (efficiency) |
+| **Files** | `kgb_srs/schema.py:328-333` |
+| **Behavior** | Fetches every card row then re-queries child items per candidate. O(n) with nested queries. |
+| **Why deferred** | Performance optimization, not a correctness bug. Changing query logic risks breaking the duplicate-detection UX (edit-offer instead of silent duplicate). |
+| **Risk if fixed** | Medium — duplicate detection is a user-facing gate. A missed duplicate silently creates a redundant card. |
+| **Suggested fix (when ready)** | Push normalization into SQLite via generated column or registered collation, or filter candidates with SQL WHERE before Python-side loop. Needs duplicate-detection regression tests. |
+
+---
+
+## 4. QThread subclasses redefined on every worker creation
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low (efficiency) |
+| **Files** | `kgb_srs/ai_provider.py:640-739` |
+| **Behavior** | `_get_ai_worker_class()` and siblings define new QThread subclasses on every invocation, re-executing the `class AIWorker(QThread):` block. |
+| **Why deferred** | No correctness impact — signal binding is per-instance. Moving classes to module level risks breaking closure-variable capture or lazy-import ordering. |
+| **Risk if fixed** | Medium — QThread with pyqtSignal requires QApplication to exist. Module-level class definitions at import time could fail if Qt isn't initialized yet. |
+| **Suggested fix (when ready)** | Define classes once at module level, guarding with a lazy-init pattern or deferring the PyQt6 import to after QApplication creation. |
+
+---
+
+## 5. `parse_sense_assignment` silently swallows invalid `sense_id` (behavior change)
+
+| Field | Value |
+|-------|--------|
+| **Severity** | Low (observation, not a bug) |
+| **Files** | `kgb_srs/ai_parser.py:215-221` |
+| **Behavior** | Previously raised `AIValidationError` for non-integer `sense_id` values (e.g., literal `"null"` string from AI). Now silently falls back to `sense_id = None`. |
+| **Why deferred** | Intentional trade-off in round 3 fix. The old behavior was overly strict for rare AI output quirks. The silent fallback is safer for end users but could mask future AI parsing regressions. |
+| **Risk if changed back** | Low — restoring the error would re-break on literal `"null"` strings from certain LLMs. |
+
+---
+
 ## Not ignored (fixed on `dev`)
 
 See commits:
 
 - `876a37d` — audit round 1 (W/P SRS preserve, orphan purge on write, review grading, SAVEPOINT, AI sense_id, TTS signal/lifetime, membership close guard, no manual W/P create, resume queue)
 - `0eb2055` — audit round 2 (delete → purge + W/P re-sync, history scrub, Previous skips ghosts, TTS temp unlink, CHANGELOG count)
+- `f48b8f3` — audit round 3 (meaning/example split via MeaningResult fields, atomic W/P derivation commit, DB-open error handling + conn close, search function registration cache, DB/TTS file permissions 0o600, non-integer sense_id silent fallback, 60+ irregular noun plurals)
 
-Round 3 re-audit: **CLEAN** of remaining actionable safe findings (437 tests).
+Round 4 re-audit: **CLEAN** — no actionable findings remain (473 tests).
