@@ -490,6 +490,27 @@ class TestHighlightUnfamiliarInSentence:
             "A **cafe\u0301** is open."
         )
 
+    def test_nfc_item_highlights_nfd_surface_before_possessive(self):
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+        )
+
+        sentence = "The cafe\u0301's owner arrived."
+        span = locate_item_surface_span(sentence, "café")
+        assert span is not None
+        assert sentence[span[0]:span[1]] == "cafe\u0301"
+        assert highlight_unfamiliar_in_sentence(sentence, ["café"]) == (
+            "The **cafe\u0301**'s owner arrived."
+        )
+
+    def test_nfc_item_highlights_nfd_surface_before_punctuation(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        assert highlight_unfamiliar_in_sentence("Cafe\u0301!", ["café"]) == (
+            "**Cafe\u0301**!"
+        )
+
     def test_trailing_punctuation_not_inside_bold(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
 

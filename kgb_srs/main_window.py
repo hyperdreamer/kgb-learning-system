@@ -100,14 +100,17 @@ def _compute_display_path(db_path, db_type, legacy_display):
 
 def _open_and_infer_type(db_path):
     """Open a DB briefly to read or infer its type."""
+    conn = None
     try:
         conn = sqlite3.connect(db_path)
         db_type = read_database_type(conn)
-        conn.close()
         if db_type is not None:
             return db_type
     except (sqlite3.Error, OSError):
         pass
+    finally:
+        if conn is not None:
+            conn.close()
     return infer_database_type(db_path)
 
 

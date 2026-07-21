@@ -706,6 +706,42 @@ def _ws_tokens_with_spans(text: str) -> list[tuple[str, int, int]]:
     return tokens
 
 
+def _nfc_casefold_with_original_spans(text: str) -> tuple[str, list[tuple[int, int]]]:
+    """Return NFC/casefolded *text* together with offsets into the input.
+
+    Normalizing an entire string can change its length (notably for NFD
+    characters), so indices into that normalized string cannot be used to
+    slice the original sentence.  Normalize each base character and its
+    following combining marks as a unit instead, retaining the original span
+    for every resulting character.
+    """
+    normalized_parts: list[str] = []
+    spans: list[tuple[int, int]] = []
+    i = 0
+    while i < len(text):
+        start = i
+        i += 1
+        while i < len(text) and unicodedata.combining(text[i]):
+            i += 1
+        part = unicodedata.normalize("NFC", text[start:i]).casefold()
+        normalized_parts.append(part)
+        spans.extend([(start, i)] * len(part))
+    return "".join(normalized_parts), spans
+
+
+def _normalized_literal_span(sentence: str, item: str) -> tuple[int, int] | None:
+    """Locate a NFC/NFD-equivalent literal while returning original offsets."""
+    needle = unicodedata.normalize("NFC", item).casefold()
+    if not needle:
+        return None
+    haystack, spans = _nfc_casefold_with_original_spans(sentence)
+    start = haystack.find(needle)
+    if start < 0:
+        return None
+    end = start + len(needle)
+    return spans[start][0], spans[end - 1][1]
+
+
 def locate_item_surface_span(
     sentence: str,
     item: str,
@@ -756,8 +792,9 @@ def locate_item_surface_span(
                 end = window[-1][2]
                 return (start, end)
 
-    # Path 2: case-insensitive literal substring of the raw item text.
-    # Useful for continuous scripts and multi-word/punct spans.
+    # Path 2: Unicode-normalized, case-insensitive literal substring.
+    # Useful for continuous scripts and multi-word/punct spans.  The mapped
+    # offsets keep an NFD surface sliceable from the original sentence.
     # Single alphabetic English lemmas must NOT substring-match inside
     # longer words (go ⊂ cargo) — those use whole-token path 3.
     raw = item.strip()
@@ -766,9 +803,9 @@ def locate_item_surface_span(
     norm_item = normalize_sentence(item)
     single_alpha = bool(re.fullmatch(r"[a-z]+", norm_item))
     if not single_alpha:
-        m = re.search(re.escape(raw), sentence, flags=re.IGNORECASE)
-        if m is not None:
-            return (m.start(), m.end())
+        span = _normalized_literal_span(sentence, raw)
+        if span is not None:
+            return span
 
     # Path 3: whole-token or hyphen-segment match for single alphabetic lemmas.
     if single_alpha:

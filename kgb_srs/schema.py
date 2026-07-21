@@ -121,7 +121,8 @@ def init_db(db_path_or_conn):
     Accepts either a path string (returns a new connection) or an existing
     sqlite3.Connection (returns it unchanged after ensuring schema).
     """
-    if isinstance(db_path_or_conn, sqlite3.Connection):
+    owns_connection = not isinstance(db_path_or_conn, sqlite3.Connection)
+    if not owns_connection:
         conn = db_path_or_conn
     else:
         is_new = os.path.isfile(db_path_or_conn) is False
@@ -132,22 +133,27 @@ def init_db(db_path_or_conn):
             except OSError:
                 pass
 
-    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
 
-    c = conn.cursor()
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS cards
-           (id INTEGER PRIMARY KEY, front TEXT, back TEXT,
-            box INTEGER, next_review DATE)"""
-    )
-    c.execute(
-        """CREATE TABLE IF NOT EXISTS settings
-           (key TEXT PRIMARY KEY, value TEXT)"""
-    )
-    c.execute(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('random_review', '1')"
-    )
-    conn.commit()
+        c = conn.cursor()
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS cards
+               (id INTEGER PRIMARY KEY, front TEXT, back TEXT,
+                box INTEGER, next_review DATE)"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS settings
+               (key TEXT PRIMARY KEY, value TEXT)"""
+        )
+        c.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('random_review', '1')"
+        )
+        conn.commit()
+    except Exception:
+        if owns_connection:
+            conn.close()
+        raise
     return conn
 
 

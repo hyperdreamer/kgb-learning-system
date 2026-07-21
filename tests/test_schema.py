@@ -80,6 +80,46 @@ class TestInitDb:
         finally:
             os.unlink(db_path)
 
+    def test_failure_closes_path_owned_connection(self, tmp_path, monkeypatch):
+        original_connect = sqlite3.connect
+        opened = []
+
+        def connect_then_reject_schema(*args, **kwargs):
+            conn = original_connect(*args, **kwargs)
+            conn.set_authorizer(
+                lambda action, *_args: (
+                    sqlite3.SQLITE_DENY
+                    if action == sqlite3.SQLITE_CREATE_TABLE
+                    else sqlite3.SQLITE_OK
+                )
+            )
+            opened.append(conn)
+            return conn
+
+        monkeypatch.setattr("kgb_srs.schema.sqlite3.connect", connect_then_reject_schema)
+        with pytest.raises(sqlite3.DatabaseError):
+            init_db(str(tmp_path / "failed-init.db"))
+
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            opened[0].execute("SELECT 1")
+
+    def test_failure_does_not_close_caller_connection(self):
+        conn = sqlite3.connect(":memory:")
+        conn.set_authorizer(
+            lambda action, *_args: (
+                sqlite3.SQLITE_DENY
+                if action == sqlite3.SQLITE_CREATE_TABLE
+                else sqlite3.SQLITE_OK
+            )
+        )
+        try:
+            with pytest.raises(sqlite3.DatabaseError):
+                init_db(conn)
+            conn.set_authorizer(None)
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # ensure_unfamiliar_items_table
