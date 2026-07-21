@@ -20,12 +20,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QAbstractItemView,
     QMessageBox,
-    QFormLayout,
-    QComboBox,
     QRadioButton,
-    QButtonGroup,
     QGroupBox,
-    QFileDialog,
     QProgressBar,
     QSizePolicy,
     QTabWidget,
@@ -43,15 +39,13 @@ from .validation import (
 from .ai_provider import (
     AIProviderConfig,
     AIClient,
-    _make_http_call,
-    build_sentence_prompt,
+    _http_request,
     build_sense_assignment_prompt,
     build_word_phrase_prompt,
     build_membership_prompt,
     AIMissingConfigError,
 )
 from .ai_parser import (
-    parse_sentence_meanings,
     parse_sense_assignment,
     parse_word_phrase_meanings,
     parse_membership_claims,
@@ -103,10 +97,11 @@ class _AIGenerateWorker(QThread):
         try:
             client = AIClient(self._config)
             url, headers, body = client.build_request(self._prompt)
-            raw = _make_http_call(
+            raw = _http_request(
                 url, headers,
-                json.dumps(body).encode("utf-8"),
+                body=json.dumps(body).encode("utf-8"),
                 timeout=self._config.timeout_seconds,
+                method="POST",
             )
             content = client.parse_response(raw)
             self.result.emit(content)
@@ -1505,30 +1500,6 @@ class WordPhraseCardDialog(QDialog):
             self._ai_worker = None
             self._restore_ui_after_ai()
 
-    @staticmethod
-    def _split_meaning_example(contextual_meaning: str) -> tuple[str, str]:
-        """Split a contextual_meaning string into (meaning, example).
-
-        The AI formats output like:
-            "1. A domestic feline\\n*The cat sat on the mat.*"
-        We extract the meaning text and example text.
-        """
-        import re
-        text = contextual_meaning.strip()
-        # Try to find pattern: "1. meaning\\n*example.*" or similar
-        # First, strip the number prefix like "1. "
-        text = re.sub(r'^\d+\.\s*', '', text)
-        # Split on italic example: *...*
-        example_match = re.search(r'\*(.+?)\*', text)
-        if example_match:
-            example = example_match.group(1).strip()
-            meaning_text = text[:example_match.start()].strip()
-            # Remove trailing newlines/punctuation from meaning
-            meaning_text = meaning_text.rstrip('\n').rstrip()
-            return meaning_text, example
-        return text, ""
-
-    def _clear_all_rows(self):
         """Remove all meaning tabs."""
         while self._meanings_tabs.count():
             page = self._meanings_tabs.widget(0)

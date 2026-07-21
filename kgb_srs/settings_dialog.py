@@ -877,9 +877,7 @@ class SettingsDialog(QDialog):
         worker.error.connect(self._on_preview_error)
         # Real QThread.finished (not the payload signal) clears the ref.
         worker.finished.connect(self._on_preview_worker_done)
-        worker.error.connect(self._on_preview_worker_done)
         worker.finished.connect(worker.deleteLater)
-        worker.error.connect(worker.deleteLater)
         worker.start()
 
     def _on_preview_finished(self, file_path):

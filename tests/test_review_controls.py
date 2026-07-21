@@ -34,15 +34,16 @@ import pytest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 
+from kgb_srs.main_window import BarskyApp
+from kgb_srs.schema import init_db, ensure_unfamiliar_items_table
+from kgb_srs.catalog import DatabaseType, write_database_type
+
 @pytest.fixture(autouse=True)
 def _dismiss_message_boxes(monkeypatch):
     """Prevent modal dialogs from blocking the headless review-control tests."""
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
     monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
 
-from kgb_srs.main_window import BarskyApp
-from kgb_srs.schema import init_db, ensure_unfamiliar_items_table
-from kgb_srs.catalog import DatabaseType, write_database_type
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -414,7 +415,7 @@ class TestRestartDailyReview:
         app.start_review()
 
         # Save the first card ID for later verification.
-        first_id = app.current_card[0]
+        app.current_card[0]
 
         # Grade a card (it moves to history, queue shrinks).
         app.is_current_flipped = True
@@ -568,7 +569,6 @@ class TestProcessAnswerFreshBox:
     def test_previous_refetches_box_from_db(self, app_with_db):
         app, _, conn = app_with_db
         app.start_review()
-        first = app.current_card
         app.is_current_flipped = True
         app.process_answer(correct=True)
         assert app._daily_review_history

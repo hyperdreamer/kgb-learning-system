@@ -391,20 +391,6 @@ def build_membership_prompt(sentence: str, missing_items: list[str]) -> str:
 # HTTP helper (stdlib only — no extra dependency)
 # ---------------------------------------------------------------------------
 
-def _make_http_call(
-    url: str,
-    headers: dict,
-    body: bytes,
-    timeout: int,
-) -> str:
-    """Make a synchronous HTTP POST call using stdlib urllib.
-
-    Returns the response body as a string.
-    Raises urllib.error.URLError on network/timeout errors.
-    """
-    return _http_request(url, headers, body=body, timeout=timeout, method="POST")
-
-
 def _http_request(
     url: str,
     headers: dict,
@@ -429,7 +415,7 @@ class AIClient:
     Usage:
         client = AIClient(config)
         url, headers, body = client.build_request(user_prompt)
-        raw = _make_http_call(url, headers, body, config.timeout_seconds)
+        raw = _http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
         text = client.parse_response(raw)
     """
 
@@ -518,7 +504,7 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
 
     started = time.monotonic()
     try:
-        _make_http_call(url, headers, body, timeout=config.timeout_seconds)
+        _http_request(url, headers, body=body, timeout=config.timeout_seconds, method="POST")
         latency_ms = (time.monotonic() - started) * 1000.0
         return True, f"OK — {config.model} reachable", latency_ms
     except urllib.error.HTTPError as exc:
@@ -656,10 +642,11 @@ def _get_ai_worker_class():
             try:
                 client = AIClient(self._config)
                 url, headers, body = client.build_request(self._prompt)
-                raw = _make_http_call(
+                raw = _http_request(
                     url, headers,
-                    json.dumps(body).encode("utf-8"),
+                    body=json.dumps(body).encode("utf-8"),
                     timeout=self._config.timeout_seconds,
+                    method="POST",
                 )
                 content = client.parse_response(raw)
                 self.result.emit(content)

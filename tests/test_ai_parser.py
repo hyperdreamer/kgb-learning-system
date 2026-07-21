@@ -6,7 +6,6 @@ import pytest
 from kgb_srs.ai_parser import (
     parse_sentence_meanings,
     parse_word_phrase_meanings,
-    MeaningResult,
     AIParseError,
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,

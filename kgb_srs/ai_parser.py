@@ -6,8 +6,7 @@ No network calls — pure parsing and validation logic.
 
 import json
 import re
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from .validation import normalize_sentence
 

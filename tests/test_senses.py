@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 
 import pytest
 
@@ -447,7 +446,7 @@ class TestCreateOrGetSenseSavepoint:
     """FIX 5: unique conflict must not rollback outer transaction."""
 
     def test_conflict_preserves_outer_card_row(self, conn):
-        from kgb_srs.senses import create_or_get_sense, find_sense_by_meaning
+        from kgb_srs.senses import create_or_get_sense
         import kgb_srs.senses as senses_mod
 
         # Outer uncommitted work.

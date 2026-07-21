@@ -332,17 +332,6 @@ class TestBuildWordPhrasePrompt:
 
 
 # ---------------------------------------------------------------------------
-# make_http_call — unit-testable stub
-# ---------------------------------------------------------------------------
-
-class TestMakeHttpCall:
-    def test_default_implementation_returns_mock_response(self):
-        """The default no-network _make_http_call should raise on missing
-        urllib or return an error. We just verify it exists and is callable."""
-        from kgb_srs.ai_provider import _make_http_call
-        assert callable(_make_http_call)
-
-
 # ---------------------------------------------------------------------------
 # test_connection
 # ---------------------------------------------------------------------------
@@ -367,7 +356,7 @@ class TestTestConnection:
     def test_success(self, monkeypatch):
         import kgb_srs.ai_provider as module
 
-        def fake_http(url, headers, body, timeout):
+        def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
             assert url == "https://api.example.com/v1/chat/completions"
             assert headers["Authorization"] == "Bearer sk-test"
             payload = json.loads(body.decode("utf-8"))
@@ -378,7 +367,7 @@ class TestTestConnection:
                 "choices": [{"message": {"content": "pong"}}]
             })
 
-        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        monkeypatch.setattr(module, "_http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is True
         assert "test-model" in message
@@ -387,7 +376,7 @@ class TestTestConnection:
     def test_http_401(self, monkeypatch):
         import kgb_srs.ai_provider as module
 
-        def fake_http(url, headers, body, timeout):
+        def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
             raise urllib.error.HTTPError(
                 url,
                 401,
@@ -398,7 +387,7 @@ class TestTestConnection:
                 }).encode("utf-8")),
             )
 
-        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        monkeypatch.setattr(module, "_http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is False
         assert "Invalid API key" in message
@@ -407,10 +396,10 @@ class TestTestConnection:
     def test_timeout(self, monkeypatch):
         import kgb_srs.ai_provider as module
 
-        def fake_http(url, headers, body, timeout):
+        def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
             raise urllib.error.URLError(TimeoutError("timed out"))
 
-        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        monkeypatch.setattr(module, "_http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is False
         assert "timed out" in message.lower()
@@ -419,10 +408,10 @@ class TestTestConnection:
     def test_network_error(self, monkeypatch):
         import kgb_srs.ai_provider as module
 
-        def fake_http(url, headers, body, timeout):
+        def fake_http(url, headers, *, body=None, timeout=0, method="GET"):
             raise urllib.error.URLError("connection refused")
 
-        monkeypatch.setattr(module, "_make_http_call", fake_http)
+        monkeypatch.setattr(module, "_http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
         assert ok is False
         assert "connection refused" in message.lower() or "Network error" in message

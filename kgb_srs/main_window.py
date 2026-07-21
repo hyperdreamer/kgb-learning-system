@@ -4,7 +4,6 @@ import os
 import sqlite3
 import datetime
 import random
-import re
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -14,7 +13,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QComboBox,
     QPushButton,
     QGraphicsView,
     QGraphicsScene,
@@ -45,19 +43,15 @@ from .forms import SentenceCardDialog, DBCreationDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 from .schema import (
-    ensure_unfamiliar_items_table, migrate_unfamiliar_items_meaning,
     insert_sentence_card, get_sentence_card, update_sentence_card,
-    find_duplicate_sentence_card, validate_db_name, safe_db_filename,
+    find_duplicate_sentence_card, validate_db_name,
     resolve_db_path,
 )
-from .catalog import (DatabaseType, DatabaseCategory, infer_database_type,
+from .catalog import (DatabaseType, infer_database_type,
                        read_database_type, write_database_type,
                        build_catalog_tree, DB_DIR_LANGUAGE_SENTENCE,
                        DB_DIR_LANGUAGE_WORD_PHRASE, DB_DIR_KNOWLEDGE)
-from .validation import validate_unfamiliar_items, deduplicate_unfamiliar_items
 from .search import search_sentence_cards, search_word_phrase_cards
-from .ai_provider import AIProviderConfig
-from .secret_line_edit import SecretLineEdit, _make_eye_icons
 from .settings_dialog import SettingsDialog
 
 _DB_MENU_STYLESHEET = (
@@ -1474,7 +1468,7 @@ class BarskyApp(QMainWindow):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(table)
 
-        db_type_local = getattr(self, "_db_type", None)
+        getattr(self, "_db_type", None)
 
         def refresh_list():
             table.setRowCount(0)

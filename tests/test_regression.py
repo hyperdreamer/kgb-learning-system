@@ -6,7 +6,6 @@ Many tests will FAIL before the corresponding fixes are implemented.
 
 import os
 import sqlite3
-import tempfile
 import json
 import pytest
 
@@ -16,23 +15,17 @@ from kgb_srs.schema import (
     insert_sentence_card,
     get_sentence_card,
     update_sentence_card,
-    find_databases,
     resolve_db_path,
-    validate_db_name,
 )
 from kgb_srs.catalog import (
     DatabaseType,
-    DatabaseCategory,
     infer_database_type,
-    build_catalog_tree,
     DB_DIR_LANGUAGE_SENTENCE,
-    DB_DIR_LANGUAGE_WORD_PHRASE,
     DB_DIR_KNOWLEDGE,
 )
 from kgb_srs.ai_parser import (
     parse_sentence_meanings,
     parse_word_phrase_meanings,
-    AIParseError,
     AIValidationError,
     MAX_WORD_PHRASE_MEANINGS,
 )
@@ -41,7 +34,6 @@ from kgb_srs.search import (
     search_sentence_cards,
     search_word_phrase_cards,
 )
-from kgb_srs.validation import normalize_sentence, deduplicate_unfamiliar_items
 
 
 _QT_APP = None
@@ -63,7 +55,7 @@ class TestFinalFormRegressions:
         from PyQt6.QtWidgets import QLineEdit
         from PyQt6.QtCore import QSize
         from PyQt6.QtGui import QAction
-        from kgb_srs.main_window import SecretLineEdit, _make_eye_icons
+        from kgb_srs.secret_line_edit import SecretLineEdit, _make_eye_icons
 
         field = SecretLineEdit("sk-secret")
 
@@ -147,7 +139,7 @@ class TestFinalFormRegressions:
            exists left of (or above) the image centre.
         """
         _qt_app()
-        from kgb_srs.main_window import _make_eye_icons
+        from kgb_srs.secret_line_edit import _make_eye_icons
 
         sz = 20  # default used by SecretLineEdit
         _hidden_icon, visible_icon = _make_eye_icons(size=sz)
@@ -1379,7 +1371,6 @@ class TestReviewQueuePreservation:
     def test_edit_current_card_updates_it(self):
         """Editing the current card should refresh it."""
         current_card = (1, "front1", "back1", 2)
-        cards_due = [(1, "f1", "b1", 2), (2, "f2", "b2", 3)]
 
         card_id = 1
         fresh = (1, "front1_updated", "back1_updated", 1)
@@ -1666,40 +1657,6 @@ class TestMenuSubmenuSpacing:
         leaves = collect_leaves(menu)
         assert len(leaves) >= 1
         assert leaves[0].data() == str(dummy)
-
-# ============================================================================
-# Blocker #2: Explicit AND/OR with multi-word operands
-# ============================================================================
-
-class TestExplicitANDORMultiword:
-    """parse_search_tokens must join adjacent non-operator words."""
-
-    def test_and_with_multiword_operand(self):
-        groups = parse_search_tokens("new york AND city")
-        assert groups == [["new york", "city"]], (
-            f"Expected [['new york', 'city']], got {groups}"
-        )
-
-    def test_or_with_multiword_operands(self):
-        groups = parse_search_tokens("new york OR los angeles")
-        assert groups == [["new york"], ["los angeles"]], (
-            f"Expected [['new york'], ['los angeles']], got {groups}"
-        )
-
-    def test_preserves_literal_plain_multiword(self):
-        """Plain multi-word query without AND/OR still one literal operand."""
-        groups = parse_search_tokens("new york")
-        assert groups == [["new york"]]
-
-    def test_mixed_or_and_multiword(self):
-        groups = parse_search_tokens("big apple AND city OR small town")
-        assert groups == [["big apple", "city"], ["small town"]], (
-            f"Expected [['big apple', 'city'], ['small town']], got {groups}"
-        )
-
-    def test_case_insensitive_operators_multiword(self):
-        groups = parse_search_tokens("new york and city")
-        assert groups == [["new york", "city"]]
 
 # ============================================================================
 # Blocker #2: Explicit AND/OR with multi-word operands
@@ -2235,7 +2192,6 @@ class TestDropZoneLayoutDoesNotOverflow:
         lie inside the viewport, and the zone bottom must leave ≥ 10 px
         internal inset from the viewport bottom edge."""
         _qt_app()
-        from PyQt6.QtCore import QPoint
 
         win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
 
@@ -2339,7 +2295,8 @@ class TestReviewControls:
     @staticmethod
     def _db(*ids):
         """Return in-memory conn with cards inserted (all due today)."""
-        import sqlite3, datetime
+        import sqlite3
+        import datetime
         from kgb_srs.db import init_db
         conn = sqlite3.connect(":memory:")
         init_db(conn)
@@ -2607,7 +2564,8 @@ class TestReviewControls:
         """IDLE state: Start enabled; Restart/Previous/Close disabled.
 
         force_seq_btn has been removed (merged into the primary button)."""
-        import tempfile, os
+        import tempfile
+        import os
         conn = self._db(1)
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
         tmp.close()
@@ -2629,7 +2587,8 @@ class TestReviewControls:
             assert not hasattr(w, "force_seq_btn")
         finally:
             os.unlink(tmp.name)
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_and_close_enabled_during_review(self):
         """Delete/Close enabled when card + active review mode exist."""
@@ -2639,7 +2598,8 @@ class TestReviewControls:
 
         assert w.delete_entry_btn.isEnabled()
         assert w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_buttons_disabled_after_close(self):
         """After close_review, Delete and Close are disabled."""
@@ -2649,7 +2609,8 @@ class TestReviewControls:
 
         assert not w.delete_entry_btn.isEnabled()
         assert not w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_wp_hides_add_and_delete_entry(self):
         """Word/phrase DBs hide Add/Delete Entry (projection-only)."""
@@ -2673,7 +2634,8 @@ class TestReviewControls:
             cur = conn.cursor()
             cur.execute("SELECT COUNT(*) FROM cards")
             assert cur.fetchone()[0] == 1
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_start_selected_card_review_opens_one_card_session(self):
         """Browse → Review Selected starts a one-card daily session."""
@@ -2689,7 +2651,8 @@ class TestReviewControls:
         assert w.cards_due == []
         assert [c[0] for c in w._daily_queue_snapshot] == [2]
         assert w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_start_selected_card_review_missing_card(self):
         """Missing card id does not start a review."""
@@ -2701,7 +2664,8 @@ class TestReviewControls:
             imock.assert_called()
         assert w.current_card is None
         assert w.review_mode == ""
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_keyboard_shortcuts_are_installed(self):
         """Main window installs Alt-based review/chrome shortcuts."""
@@ -2727,7 +2691,8 @@ class TestReviewControls:
             assert any(expected in k or k == expected for k in keys), (
                 f"Missing shortcut {expected!r} in {sorted(keys)}"
             )
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_shortcut_reveal_and_grade(self):
         """Alt+R reveals; Alt+Right grades correct only after flip."""
@@ -2755,7 +2720,8 @@ class TestReviewControls:
             w._shortcut_correct()
             cur.execute("SELECT box FROM cards WHERE id=1")
             assert cur.fetchone()[0] == 2
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_shortcut_tooltips_use_alt(self):
         """Button tooltips document Alt shortcuts."""
@@ -2766,7 +2732,8 @@ class TestReviewControls:
         assert "Alt+X" in w.close_review_btn.toolTip()
         assert "Alt+T" in w.restart_review_btn.toolTip()
         assert "Alt+P" in w.previous_review_btn.toolTip()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     # -- finding #2: close preserves queue ---------------------------------
 
@@ -2779,7 +2746,8 @@ class TestReviewControls:
         snapshot = list(w.cards_due)
         w.close_review()
         assert w.cards_due == snapshot, "cards_due must survive close unchanged"
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     # -- close semantics ---------------------------------------------------
 
@@ -2794,7 +2762,8 @@ class TestReviewControls:
         assert w._paused_review_mode == "daily"
         assert w.current_card is None
         assert w.review_mode == ""
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_close_does_not_mutate_db(self):
         """close_review leaves the database unchanged."""
@@ -2808,7 +2777,8 @@ class TestReviewControls:
         after = list(conn.execute(
             "SELECT id, box, next_review FROM cards ORDER BY id").fetchall())
         assert before == after
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_close_noop_without_card(self):
         """close_review is safe when no card is shown."""
@@ -2831,7 +2801,8 @@ class TestReviewControls:
         assert w.current_card[0] == 2, "paused card must be first"
         assert w._paused_review_card is None
         assert [c[0] for c in w.cards_due] == [3], "preserved queue follows"
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_resume_no_duplicate_in_queue(self):
         """Paused card is de-duplicated from the resumed queue."""
@@ -2841,7 +2812,8 @@ class TestReviewControls:
         w.close_review()
         w.start_review()
         assert sum(1 for c in w.cards_due if c[0] == 2) == 0
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_resume_skips_deleted_paused(self):
         """If paused card was deleted, silently skip to next card."""
@@ -2849,10 +2821,12 @@ class TestReviewControls:
         w = self._win(conn=conn, card=(1, "c1", "b1", 1),
                        due=[(2, "c2", "b2", 1)], mode="daily")
         w.close_review()
-        conn.execute("DELETE FROM cards WHERE id=1"); conn.commit()
+        conn.execute("DELETE FROM cards WHERE id=1")
+        conn.commit()
         w.start_review()
         assert w.current_card[0] != 1
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_resume_fresh_db_data(self):
         """Resumed card re-fetched from DB (sees external edits)."""
@@ -2864,7 +2838,8 @@ class TestReviewControls:
         w.start_review()
         assert w.current_card[1] == "updated"
         assert w.current_card[3] == 2
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_daily_start_without_pause_fresh_query(self):
         """No paused card → normal daily review with fresh DB query."""
@@ -2873,14 +2848,16 @@ class TestReviewControls:
         w.start_review()
         assert w.current_card is not None
         assert w.review_mode == "daily"
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
 
     # -- DB load clears paused state --------------------------------------
 
     def test_db_load_clears_paused_state(self):
         """Loading a database resets paused review state."""
-        import tempfile, os
+        import tempfile
+        import os
         conn = self._db(1)
         # Create a real temp DB so load_database doesn't early-return
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
@@ -2899,7 +2876,8 @@ class TestReviewControls:
             assert w._paused_review_mode == ""
         finally:
             os.unlink(tmp.name)
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     # -- delete behavior --------------------------------------------------
 
@@ -2918,7 +2896,8 @@ class TestReviewControls:
         assert w.current_card[0] == 2
         assert w._paused_review_card is None
         assert w._paused_review_mode == ""
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_last_card_disables_buttons(self):
         """Deleting the last card: no current card, buttons disabled."""
@@ -2933,7 +2912,8 @@ class TestReviewControls:
         assert w.current_card is None
         assert not w.delete_entry_btn.isEnabled()
         assert not w.close_review_btn.isEnabled()
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_removes_from_queue(self):
         """Deleted card removed from cards_due."""
@@ -2946,7 +2926,8 @@ class TestReviewControls:
             w.delete_current_card()
 
         assert 1 not in [c[0] for c in w.cards_due]
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_card_by_id_helper(self):
         """_delete_card_by_id: DB row gone, review state + paused cleared."""
@@ -2975,12 +2956,11 @@ class TestReviewControls:
         assert w._paused_review_mode == ""
         # Returns the integer id
         assert returned == 1
-        conn.close(); w.close()
+        conn.close()
+        w.close()
 
     def test_delete_sentence_card_purges_senses_and_resyncs_wp(self, tmp_path):
         """R2-1: sentence delete purges orphan senses and re-derives W/P."""
-        import os
-        import sqlite3
         from kgb_srs.catalog import DatabaseType, write_database_type
         from kgb_srs.db import init_db
         from kgb_srs.schema import insert_sentence_card
@@ -3230,7 +3210,7 @@ class TestProgrammaticMeaningSenseId:
     def test_programmatic_meaning_preserves_sense_id(self):
         from PyQt6.QtWidgets import QApplication
         import sys
-        app = QApplication.instance() or QApplication(sys.argv)
+        QApplication.instance() or QApplication(sys.argv)
 
         from kgb_srs.forms import SentenceCardDialog
 
@@ -3316,7 +3296,7 @@ class TestDBCreationDialogNoWordPhrase:
     def test_no_word_phrase_radio(self):
         from PyQt6.QtWidgets import QApplication
         import sys
-        app = QApplication.instance() or QApplication(sys.argv)
+        QApplication.instance() or QApplication(sys.argv)
         from kgb_srs.forms import DBCreationDialog
         from kgb_srs.catalog import DatabaseType
 

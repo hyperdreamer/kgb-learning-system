@@ -17,7 +17,7 @@ import re
 import sqlite3
 import datetime
 
-from .validation import deduplicate_unfamiliar_items, normalize_sentence
+from .validation import normalize_sentence
 
 # ---------------------------------------------------------------------------
 # Constants

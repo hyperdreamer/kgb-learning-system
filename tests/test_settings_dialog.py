@@ -196,7 +196,6 @@ def _emit_voices(dialog, worker, voices=None):
 
 
 def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch, settings):
-    from kgb_srs.settings_dialog import SettingsDialog
 
     dialog, worker = _dialog(monkeypatch, settings)
 
@@ -512,7 +511,6 @@ def test_database_root_browser_stages_selected_directory(monkeypatch, settings):
 
 
 def test_save_creates_canonical_database_root_structure(monkeypatch, settings, tmp_path):
-    import kgb_srs.settings_dialog as module
     from kgb_srs.config import CANONICAL_DB_SUBDIRS
 
     saved = []
@@ -532,7 +530,6 @@ def test_save_creates_canonical_database_root_structure(monkeypatch, settings, t
 
 
 def test_save_stores_empty_database_root_for_project_default(monkeypatch, settings):
-    import kgb_srs.settings_dialog as module
     from kgb_srs.config import DIR_DB
 
     saved = []
@@ -568,7 +565,7 @@ def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeyp
 
 
 def test_api_key_uses_existing_secret_line_edit(monkeypatch, settings):
-    from kgb_srs.main_window import SecretLineEdit
+    from kgb_srs.secret_line_edit import SecretLineEdit
 
     dialog, _ = _dialog(monkeypatch, settings)
     assert isinstance(dialog.ai_api_key_input, SecretLineEdit)

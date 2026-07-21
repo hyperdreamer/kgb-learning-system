@@ -12,14 +12,7 @@ from kgb_srs.schema import (
     get_sentence_card,
     update_sentence_card,
     find_databases,
-    DB_SUFFIX,
-    validate_db_name,
     resolve_db_path,
-)
-from kgb_srs.catalog import (
-    DatabaseType,
-    write_database_type,
-    read_database_type,
 )
 
 
@@ -339,7 +332,8 @@ class TestResolveDbPath:
 
     def test_symlink_escape_rejected(self, tmp_path):
         """Symlink escapes are caught by realpath resolution."""
-        import os as _os, shutil
+        import os as _os
+        import shutil
         base = str(tmp_path)
         subdir = os.path.join(base, "sub")
         os.makedirs(subdir, exist_ok=True)

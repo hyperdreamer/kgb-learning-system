@@ -1,7 +1,6 @@
 """Tests for database root resolution and structure helpers."""
 
 import os
-import tempfile
 
 from kgb_srs.config import (
     CANONICAL_DB_SUBDIRS,

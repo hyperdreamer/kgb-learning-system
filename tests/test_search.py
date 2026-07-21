@@ -1,8 +1,6 @@
 """Tests for kgb_srs.search — database search across card types."""
 
-import os
 import sqlite3
-import tempfile
 import pytest
 
 from kgb_srs.search import (
@@ -13,10 +11,7 @@ from kgb_srs.search import (
 from kgb_srs.schema import (
     init_db,
     ensure_unfamiliar_items_table,
-    insert_sentence_card,
-    update_sentence_card,
 )
-from kgb_srs.catalog import DatabaseType
 
 
 # ---------------------------------------------------------------------------

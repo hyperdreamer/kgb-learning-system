@@ -16,7 +16,6 @@ SQL tests each AND operand independently across all fields/child rows
 and ORs the groups together.
 """
 
-import re
 import unicodedata
 from typing import Optional
 

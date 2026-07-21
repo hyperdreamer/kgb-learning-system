@@ -312,7 +312,6 @@ class TestValidateUnfamiliarItems:
 
     def test_ai_residual_surfaces_allow_insert_for_irregular_lie(self, tmp_path):
         """AI residual surface (lay) must survive insert re-validation for lie."""
-        import sqlite3
         from kgb_srs.ai_parser import MembershipClaim
         from kgb_srs.schema import init_db, insert_sentence_card
         from kgb_srs.validation import apply_ai_membership_claims, validate_unfamiliar_items
