@@ -305,6 +305,11 @@ def _highlight_expression_in_example(example: str, expression: str) -> str:
     return highlight_unfamiliar_in_sentence(text, [expr])
 
 
+# Em spaces used for example indent. ASCII spaces / Qt block-indent are not
+# reliable in the review WebEngine view (Chromium ignores -qt-block-indent).
+_EXAMPLE_INDENT = "\u2003\u2003"  # two em spaces ≈ 2em left indent
+
+
 def build_word_phrase_back_from_senses(
     senses: Iterable[Sense],
     examples_by_sense_id: dict[int, list[str]] | None = None,
@@ -315,11 +320,10 @@ def build_word_phrase_back_from_senses(
 
         1. <meaning>
 
-            <example with **surface form** bolded>
+          <example with **surface form** bolded>
 
-    The example sits on its own indented line under the meaning so review
-    HTML shows clear hierarchy (Qt Markdown treats a 4-space prefix as an
-    indented block).
+    The example sits on its own line under the meaning, indented with em
+    spaces so both QTextDocument and WebEngine show a clear hierarchy.
     """
     parts: list[str] = []
     for i, sense in enumerate(senses, 1):
@@ -331,8 +335,7 @@ def build_word_phrase_back_from_senses(
         block = f"{i}. {meaning}" if meaning else f"{i}."
         if example:
             highlighted = _highlight_expression_in_example(example, sense.expression)
-            # 4 leading spaces → Qt Markdown indented paragraph under the sense.
-            block = f"{block}\n\n    {highlighted}"
+            block = f"{block}\n\n{_EXAMPLE_INDENT}{highlighted}"
         parts.append(block)
     return "\n\n".join(parts)
 

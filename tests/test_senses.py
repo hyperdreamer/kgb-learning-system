@@ -184,7 +184,7 @@ class TestDeriveWordPhrase:
         # Back layout: meaning, then indented example with bold surface form.
         insist_back = by_expr["insist on"][1]
         assert "to demand firmly" in insist_back
-        assert "    He **insists on** speaking himself." in insist_back
+        assert "\u2003\u2003He **insists on** speaking himself." in insist_back
         assert "*" not in insist_back.replace("**", "")  # no italic-only wrapping
 
         target_path = tmp_path / "derived_barsky.db"
@@ -221,7 +221,7 @@ class TestDeriveWordPhrase:
             {1: ["He insists on speaking himself."]},
         )
         assert back.startswith("1. to demand firmly")
-        assert "\n\n    He **insists on** speaking himself." in back
+        assert "\n\n\u2003\u2003He **insists on** speaking himself." in back
 
 
 class TestLinkedWordPhraseSync:
