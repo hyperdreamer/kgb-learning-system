@@ -4,6 +4,7 @@ import os
 import sqlite3
 import datetime
 import random
+import sys
 
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -247,7 +248,10 @@ class BarskyApp(QMainWindow):
             root = get_database_root(self.settings)
             rel = relative_db_path(self.current_db_path, root)
             self.settings["default_database"] = rel or ""
-        self._save_settings()
+        try:
+            self._save_settings()
+        except OSError as exc:
+            print(f"Could not save settings: {exc}", file=sys.stderr)
 
         worker = self.tts_worker
         if worker is not None and worker.isRunning():
@@ -843,6 +847,37 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # Database open / close
     # ------------------------------------------------------------------
+    def _clear_database_state(self):
+        """Clear all UI and session state tied to the current database."""
+        if self.conn:
+            self.conn.close()
+        self.conn = None
+        self.current_db_path = None
+        self.current_lang = None
+        self._db_type = None
+        self.current_card = None
+        self.cards_due = []
+        self.is_current_flipped = False
+        self.review_mode = ""
+        self._paused_review_card = None
+        self._paused_review_mode = ""
+        self._daily_review_history = []
+        self._daily_queue_snapshot = []
+        self._paused_cards_due = []
+        self._paused_daily_queue = []
+        self._paused_review_history = []
+        self.db_btn.setText("📂 Select Database")
+
+        for checkbox in (self.random_checkbox, self.all_cards_checkbox):
+            checkbox.blockSignals(True)
+            checkbox.setChecked(False)
+            checkbox.setEnabled(False)
+            checkbox.blockSignals(False)
+
+        self.scene.clear()
+        self.card_ui = None
+        self._update_button_visibility()
+
     def load_database(self, silent=False):
         """Open the database, ensure metadata, and initialize review state."""
         if not self.current_db_path:
@@ -859,6 +894,7 @@ class BarskyApp(QMainWindow):
 
         if self.conn:
             self.conn.close()
+            self.conn = None
 
         try:
             self.conn = init_db(self.current_db_path)
@@ -892,13 +928,12 @@ class BarskyApp(QMainWindow):
             c.execute("SELECT value FROM settings WHERE key = 'random_review'")
             res = c.fetchone()
         except Exception as e:
-            if self.conn:
-                self.conn.close()
-            self.conn = None
+            failed_path = self.current_db_path
+            self._clear_database_state()
             if not silent:
                 QMessageBox.warning(
                     self, "Error",
-                    f"Failed to open database:\n{self.current_db_path}\n\n{e}"
+                    f"Failed to open database:\n{failed_path}\n\n{e}"
                 )
             return
 
@@ -1772,6 +1807,8 @@ class BarskyApp(QMainWindow):
         if hasattr(self, "delete_entry_btn"):
             self.delete_entry_btn.setVisible(has_db and not is_wp)
             self.delete_entry_btn.setEnabled(has_db and has_card and not is_wp)
+        if hasattr(self, "browse_btn"):
+            self.browse_btn.setEnabled(has_db)
 
         if not has_db:
             self.start_btn.setEnabled(False)

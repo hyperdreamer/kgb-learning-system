@@ -465,14 +465,17 @@ class TestSentenceCardSenseAtomicity:
 
 
 class TestSenseAssignmentParser:
-    def test_reuse(self):
-        raw = (
-            '{"expression": "bank", "action": "reuse", '
-            '"sense_id": 3, "meaning": ""}'
-        )
+    @pytest.mark.parametrize("sense_id", [1, 3])
+    def test_reuse_json_integer_id_accepted(self, sense_id):
+        raw = json.dumps({
+            "expression": "bank",
+            "action": "reuse",
+            "sense_id": sense_id,
+            "meaning": "",
+        })
         a = parse_sense_assignment(raw, "bank", [1, 3, 5])
         assert a.action == "reuse"
-        assert a.sense_id == 3
+        assert a.sense_id == sense_id
 
     def test_create(self):
         raw = (
@@ -494,6 +497,17 @@ class TestSenseAssignmentParser:
 
     @pytest.mark.parametrize("sense_id", [True, False, 1.0, 1.5])
     def test_reuse_boolean_or_float_id_rejected(self, sense_id):
+        raw = json.dumps({
+            "expression": "bank",
+            "action": "reuse",
+            "sense_id": sense_id,
+            "meaning": "",
+        })
+        with pytest.raises(AIValidationError, match="sense_id"):
+            parse_sense_assignment(raw, "bank", [1, 3])
+
+    @pytest.mark.parametrize("sense_id", ["1", " 3 "])
+    def test_reuse_string_id_rejected(self, sense_id):
         raw = json.dumps({
             "expression": "bank",
             "action": "reuse",

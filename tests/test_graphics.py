@@ -125,3 +125,17 @@ def test_set_text_uses_content_font_not_ui_font_plus_four(monkeypatch):
     assert captured["markdown_text"] == "hello **world**"
     del item
     app.processEvents()
+
+
+def test_math_placeholder_collision_preserves_literal_and_math():
+    from kgb_srs.markdown_utils import (
+        markdown_to_html_fragment,
+        markdown_to_plain_text,
+    )
+
+    source = "BARSKYMATHPLACEHOLDER0TOKEN plus $x$"
+    html = markdown_to_html_fragment(source)
+
+    assert "BARSKYMATHPLACEHOLDER0TOKEN" in html
+    assert "$x$" in html
+    assert markdown_to_plain_text(source) == "BARSKYMATHPLACEHOLDER0TOKEN plus x"

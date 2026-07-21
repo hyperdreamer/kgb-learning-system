@@ -220,10 +220,13 @@ def parse_sense_assignment(
 
     raw_sense_id = data.get("sense_id", None)
     sense_id: int | None = None
-    if raw_sense_id is not None:
+    if action_norm == "reuse" and raw_sense_id is not None:
+        if type(raw_sense_id) is not int:
+            raise AIValidationError("sense_id must be an integer or null")
+        sense_id = raw_sense_id
+    elif raw_sense_id is not None:
         if isinstance(raw_sense_id, (bool, float)):
-            if action_norm == "reuse":
-                raise AIValidationError("sense_id must be an integer or null")
+            pass
         elif not isinstance(raw_sense_id, str) or raw_sense_id.strip():
             try:
                 sense_id = int(raw_sense_id)

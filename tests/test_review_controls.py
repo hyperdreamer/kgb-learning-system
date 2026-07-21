@@ -468,6 +468,97 @@ class TestNoDatabaseLoaded:
         app.deleteLater()
 
 
+class TestDatabaseLoadFailure:
+    def test_corrupt_load_clears_active_review_state(self, app_with_db, tmp_path):
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.current_card is not None
+        assert app.card_ui is not None
+
+        corrupt_db = tmp_path / "corrupt.db"
+        corrupt_db.write_bytes(b"not a sqlite database")
+        app.current_db_path = str(corrupt_db)
+        app.current_lang = "Corrupt"
+        app.load_database(silent=True)
+
+        assert app.conn is None
+        assert app.current_db_path is None
+        assert app.current_lang is None
+        assert app._db_type is None
+        assert app.current_card is None
+        assert app.cards_due == []
+        assert app.review_mode == ""
+        assert app._paused_review_card is None
+        assert app._paused_review_mode == ""
+        assert app._daily_review_history == []
+        assert app._daily_queue_snapshot == []
+        assert app._paused_cards_due == []
+        assert app._paused_daily_queue == []
+        assert app._paused_review_history == []
+        assert app.card_ui is None
+        assert app.scene.items() == []
+        assert app.db_btn.text() == "📂 Select Database"
+        assert not app.start_btn.isEnabled()
+        assert not app.restart_review_btn.isEnabled()
+        assert not app.previous_review_btn.isEnabled()
+        assert not app.close_review_btn.isEnabled()
+        assert not app.random_checkbox.isEnabled()
+        assert not app.all_cards_checkbox.isEnabled()
+        assert not app.browse_btn.isEnabled()
+
+        # Previously active actions are now no-ops rather than operating on
+        # the closed database or stale card.
+        app.flip_card()
+        app.process_answer(correct=True)
+        assert app.current_card is None
+
+
+class TestCloseEventSettingsFailure:
+    def test_settings_save_oserror_does_not_interrupt_cleanup(self, qapp, capsys):
+        app = BarskyApp()
+        cleanup_calls = []
+        worker_waits = []
+
+        def fail_save():
+            raise OSError("disk full")
+
+        class Signal:
+            def disconnect(self):
+                pass
+
+        class Worker:
+            audio_ready = Signal()
+            error = Signal()
+
+            def isRunning(self):
+                return True
+
+            def wait(self, timeout):
+                worker_waits.append(timeout)
+
+        class Event:
+            accepted = False
+
+            def accept(self):
+                self.accepted = True
+
+        app._save_settings = fail_save
+        app._cleanup_tts_temp = lambda: cleanup_calls.append(True)
+        app.tts_worker = Worker()
+        event = Event()
+        app.closeEvent(event)
+
+        assert event.accepted
+        assert cleanup_calls == [True]
+        assert worker_waits == [2000]
+        assert app.tts_worker is None
+        assert "Could not save settings: disk full" in capsys.readouterr().err
+
+        app._save_settings = lambda: None
+        app.close()
+        app.deleteLater()
+
+
 class TestDailyReviewHistoryTracking:
     """The daily review session must track viewed cards for Previous navigation."""
 
