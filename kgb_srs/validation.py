@@ -271,8 +271,11 @@ def _stem_candidates(token: str) -> set[str]:
     are expanded via a compact lookup. Suffix stripping usually requires a
     base of length ≥ 3; short irregular bases like go/do (from goes/does)
     are allowed at length ≥ 2 for -s/-es only.
+
+    Matching is case-insensitive: input is casefolded after punctuation strip
+    so surface forms like ``Exacted`` still stem to ``exact``.
     """
-    t = _strip_token_punct(token)
+    t = _strip_token_punct(token).casefold()
     if not t:
         return set()
 
@@ -346,9 +349,13 @@ def _stem_candidates(token: str) -> set[str]:
 
 
 def _tokens_flex_equal(a: str, b: str) -> bool:
-    """True if two tokens are equal or share an inflection stem candidate."""
-    sa = _strip_token_punct(a)
-    sb = _strip_token_punct(b)
+    """True if two tokens are equal or share an inflection stem candidate.
+
+    Comparison is case-insensitive so lemma ``exact`` matches surface
+    ``Exacted`` / ``EXACTED``.
+    """
+    sa = _strip_token_punct(a).casefold()
+    sb = _strip_token_punct(b).casefold()
     if not sa or not sb:
         return False
     if sa == sb:
@@ -571,6 +578,57 @@ def locate_unfamiliar_spans(
     return chosen
 
 
+def sort_items_by_sentence_order(sentence: str, items: list) -> list:
+    """Order unfamiliar items by first surface appearance in *sentence*.
+
+    Items that cannot be located keep relative order after all located ones.
+    Accepts structured ``(expression, meaning, ...)`` tuples or plain strings.
+    """
+    if not items:
+        return []
+
+    located: list[tuple[int, int, object]] = []  # (start, original_idx, item)
+    missing: list[tuple[int, object]] = []
+    for idx, item in enumerate(items):
+        expr = item[0] if isinstance(item, (tuple, list)) else item
+        span = locate_item_surface_span(sentence or "", str(expr or ""))
+        if span is None:
+            missing.append((idx, item))
+        else:
+            located.append((span[0], idx, item))
+    located.sort(key=lambda t: (t[0], t[1]))
+    return [item for _start, _idx, item in located] + [
+        item for _idx, item in missing
+    ]
+
+
+def format_sentence_meaning_lines(items: list) -> list[str]:
+    """Format expression+meaning lines for a sentence card back.
+
+    One item: ``**expr**: meaning`` (no number).
+    Multiple items: numbered ``1. **expr**: meaning``, one line each.
+    """
+    rows: list[tuple[str, str]] = []
+    for item in items:
+        if isinstance(item, (tuple, list)):
+            expr = str(item[0] or "").strip()
+            meaning = str(item[1] or "").strip() if len(item) > 1 else ""
+        else:
+            expr = str(item or "").strip()
+            meaning = ""
+        if not expr:
+            continue
+        rows.append((expr, meaning))
+    if not rows:
+        return []
+    numbered = len(rows) > 1
+    lines: list[str] = []
+    for i, (expr, meaning) in enumerate(rows, start=1):
+        body = f"**{expr}**: {meaning}" if meaning else f"**{expr}**"
+        lines.append(f"{i}. {body}" if numbered else body)
+    return lines
+
+
 def highlight_unfamiliar_in_sentence(
     sentence: str,
     items: list[str],
@@ -590,6 +648,16 @@ def highlight_unfamiliar_in_sentence(
     parts: list[str] = []
     pos = 0
     for start, end in spans:
+        if start < pos:
+            continue
+        # Shrink span so leading/trailing punctuation stays outside the bold
+        # mark (e.g. ``Exacted!`` → bold ``Exacted`` + bare ``!``).
+        while start < end and sentence[start] in _PUNCT_STRIP:
+            start += 1
+        while end > start and sentence[end - 1] in _PUNCT_STRIP:
+            end -= 1
+        if start >= end:
+            continue
         if start < pos:
             continue
         parts.append(sentence[pos:start])

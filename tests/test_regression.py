@@ -228,6 +228,55 @@ class TestFinalFormRegressions:
             "bonjour", "ami"
         ]
 
+    def test_sentence_card_display_orders_and_numbers_meanings(self, tmp_path):
+        """Review back: bold both surfaces; number multi-item meanings in sentence order."""
+        _qt_app()
+        import sqlite3
+        from types import SimpleNamespace
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.schema import init_db, insert_sentence_card
+
+        db_path = tmp_path / "sentence_display.db"
+        conn = sqlite3.connect(db_path)
+        init_db(conn)
+        # Insert exact before grievance so DB id order is reverse of sentence order.
+        sentence = (
+            "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        )
+        card_id = insert_sentence_card(
+            conn,
+            sentence,
+            [
+                ("exact", "to demand and obtain (revenge) from someone"),
+                (
+                    "grievance",
+                    "a real or imagined wrong or injustice that is the cause for revenge",
+                ),
+            ],
+            back="",
+        )
+        win = SimpleNamespace(conn=conn)
+        md = BarskyApp._build_sentence_card_display(
+            win,
+            card_id,
+            sentence,
+            "",
+            flipped=True,
+            metadata="**Box 1** | ID: `1`",
+        )
+        assert "**Grievance**" in md
+        assert "**Exacted**" in md
+        # Meanings ordered by sentence appearance, numbered, separate blocks.
+        assert "1. **grievance**:" in md
+        assert "2. **exact**:" in md
+        g_pos = md.index("1. **grievance**:")
+        e_pos = md.index("2. **exact**:")
+        assert g_pos < e_pos
+        # Separate lines / blocks (blank line between numbered entries).
+        between = md[g_pos:e_pos]
+        assert "\n\n" in between
+        conn.close()
+
     def test_settings_file_is_owner_only(self, tmp_path, monkeypatch):
         import stat
         import kgb_srs.config as config
@@ -563,7 +612,7 @@ class TestFinalFormRegressions:
             ("world", "earth"),
         ]
         assert dialog.result_back == (
-            "**Hello**: greeting\n\n**world**: earth"
+            "1. **Hello**: greeting\n\n2. **world**: earth"
         )
         dialog.close()
 

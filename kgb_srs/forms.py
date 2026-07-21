@@ -1007,9 +1007,14 @@ class SentenceCardDialog(QDialog):
         self._result_sentence = sentence
         self._result_items = result_items
         # Back is derived from structured meanings (no separate editor).
-        self._result_back = "\n\n".join(
-            f"**{expr}**: {meaning}" for expr, meaning, _sid in result_items
+        # Order by first surface appearance in the sentence; number when >1.
+        from .validation import (
+            format_sentence_meaning_lines,
+            sort_items_by_sentence_order,
         )
+
+        ordered = sort_items_by_sentence_order(sentence, result_items)
+        self._result_back = "\n\n".join(format_sentence_meaning_lines(ordered))
         self.accept()
 
     @property

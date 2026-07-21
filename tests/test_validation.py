@@ -329,6 +329,61 @@ class TestHighlightUnfamiliarInSentence:
         out = highlight_unfamiliar_in_sentence(s, ["日本語"])
         assert out == "私は**日本語**を勉強しています"
 
+    def test_bold_capitalized_inflected_surface(self):
+        """Lemma ``exact`` must bold capitalized ``Exacted`` (case-insensitive flex)."""
+        from kgb_srs.validation import (
+            highlight_unfamiliar_in_sentence,
+            locate_item_surface_span,
+        )
+
+        s = "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        assert locate_item_surface_span(s, "exact") is not None
+        out = highlight_unfamiliar_in_sentence(s, ["exact", "grievance"])
+        assert out == (
+            "Revenge for a **Grievance** of a Hundred Generations "
+            "May Still Be **Exacted**!"
+        )
+
+    def test_trailing_punctuation_not_inside_bold(self):
+        from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
+        assert highlight_unfamiliar_in_sentence(
+            "Exacted!", ["exact"]
+        ) == "**Exacted**!"
+
+
+# ---------------------------------------------------------------------------
+# Sentence-order sort + numbered meaning lines
+# ---------------------------------------------------------------------------
+
+class TestSentenceMeaningDisplayHelpers:
+    def test_sort_items_by_sentence_order(self):
+        from kgb_srs.validation import sort_items_by_sentence_order
+
+        s = "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        # Insert order is reverse of sentence order.
+        items = [("exact", "demand"), ("grievance", "wrong")]
+        ordered = sort_items_by_sentence_order(s, items)
+        assert [e for e, _m in ordered] == ["grievance", "exact"]
+
+    def test_format_sentence_meaning_lines_single_unnumbered(self):
+        from kgb_srs.validation import format_sentence_meaning_lines
+
+        assert format_sentence_meaning_lines([("exact", "demand")]) == [
+            "**exact**: demand"
+        ]
+
+    def test_format_sentence_meaning_lines_multiple_numbered(self):
+        from kgb_srs.validation import format_sentence_meaning_lines
+
+        lines = format_sentence_meaning_lines(
+            [("grievance", "wrong"), ("exact", "demand")]
+        )
+        assert lines == [
+            "1. **grievance**: wrong",
+            "2. **exact**: demand",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # deduplicate_unfamiliar_items

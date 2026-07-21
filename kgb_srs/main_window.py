@@ -134,6 +134,18 @@ def _expression_labels(items):
     return [item[0] if isinstance(item, (tuple, list)) else item for item in items]
 
 
+def _sort_items_by_sentence_order(sentence, items):
+    """Order unfamiliar items by first surface appearance in *sentence*."""
+    from .validation import sort_items_by_sentence_order
+    return sort_items_by_sentence_order(sentence, items)
+
+
+def _format_sentence_meaning_lines(items) -> list[str]:
+    """Format expression+meaning lines for the card back."""
+    from .validation import format_sentence_meaning_lines
+    return format_sentence_meaning_lines(items)
+
+
 def _highlight_sentence_for_items(sentence, items):
     """Bold matched surface forms of unfamiliar items inside *sentence*."""
     from .validation import highlight_unfamiliar_in_sentence
@@ -2023,20 +2035,19 @@ class BarskyApp(QMainWindow):
         Unfamiliar list — the mark is the list.
 
         Back: same highlighted sentence, then each expression with its
-        contextual meaning once (no bullet list, no duplicate derived back).
+        contextual meaning. Items are ordered by first appearance in the
+        sentence. Multiple items are numbered and separated as distinct
+        blocks so Markdown keeps them on separate lines.
         """
         items = _fetch_expressions_for_card(self.conn, card_id)
-        highlighted = _highlight_sentence_for_items(sentence, items)
+        ordered = _sort_items_by_sentence_order(sentence, items)
+        highlighted = _highlight_sentence_for_items(sentence, ordered)
 
         if flipped:
             lines = [metadata, "", highlighted, "", "---", ""]
-            for item in items:
-                expr = item[0] if isinstance(item, tuple) else item
-                meaning = item[1] if isinstance(item, tuple) and len(item) > 1 else ""
-                if meaning:
-                    lines.append(f"**{expr}**: {meaning}")
-                else:
-                    lines.append(f"**{expr}**")
+            meaning_lines = _format_sentence_meaning_lines(ordered)
+            # Blank line between entries so Markdown does not collapse them.
+            lines.append("\n\n".join(meaning_lines))
             # cards.back is a derived cache of the same expression+meaning
             # pairs — do not append it again under a second separator.
             return "\n".join(lines)
