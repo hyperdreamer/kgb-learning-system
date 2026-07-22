@@ -706,11 +706,11 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
             end = start + len(norm_surface)
             left_is_alphanumeric = (
                 start > 0
-                and norm_sentence[start - 1] in "abcdefghijklmnopqrstuvwxyz0123456789"
+                and norm_sentence[start - 1] in "abcdefghijklmnopqrstuvwxyz0123456789_"
             )
             right_is_alphanumeric = (
                 end < len(norm_sentence)
-                and norm_sentence[end] in "abcdefghijklmnopqrstuvwxyz0123456789"
+                and norm_sentence[end] in "abcdefghijklmnopqrstuvwxyz0123456789_"
             )
             if not left_is_alphanumeric and not right_is_alphanumeric:
                 return True

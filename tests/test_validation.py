@@ -311,6 +311,24 @@ class TestValidateUnfamiliarItems:
 
         assert not surface_form_in_sentence("2go.", "go.")
 
+    def test_ascii_surface_rejects_underscore_adjacent_substring(self):
+        from kgb_srs.validation import surface_form_in_sentence
+
+        assert not surface_form_in_sentence("Use go_home for navigation.", "go")
+
+    def test_ai_membership_claim_rejects_underscore_adjacent_surface(self):
+        from kgb_srs.ai_parser import MembershipClaim
+        from kgb_srs.validation import apply_ai_membership_claims
+
+        result = apply_ai_membership_claims(
+            "Use go_home for navigation.",
+            ["go"],
+            [MembershipClaim("go", True, "go")],
+        )
+
+        assert result.valid is False
+        assert result.missing == ["go"]
+
     def test_unicode_terminal_punctuation_rejects_embedded_ai_surface(self):
         from kgb_srs.ai_parser import MembershipClaim
         from kgb_srs.validation import (
