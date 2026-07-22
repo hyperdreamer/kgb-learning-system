@@ -43,6 +43,7 @@ from .config import (
     relative_db_path,
 )
 from .db import init_db, find_databases
+from .senses import ProjectionOwnershipConflictError
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
 from .forms import SentenceCardDialog, DBCreationDialog
@@ -768,7 +769,12 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
 
         display = os.path.join(subdir, name)
-        self.load_database(silent=False, db_path=path, display=display)
+        self.load_database(
+            silent=False,
+            db_path=path,
+            display=display,
+            offer_projection_adoption=False,
+        )
 
     # ------------------------------------------------------------------
     # Database open / close
@@ -824,6 +830,55 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             )
             conn.commit()
 
+    def _offer_projection_adoption(self, source_conn, source_path, conflict) -> bool:
+        """Offer explicit, backup-first adoption for one safe legacy conflict.
+
+        Only a markerless canonical W/P projection is eligible.  Declining or
+        failing adoption keeps sentence-database work independent of its
+        derived projection.
+        """
+        if conflict.conflict.get("code") != "word_phrase_projection_marker_missing":
+            return False
+
+        from . import senses
+
+        db_root = get_database_root(self.settings)
+        target_path = senses.default_word_phrase_path_for_sentence(source_path, db_root)
+        reply = QMessageBox.question(
+            self,
+            "Adopt Word/Phrase Projection?",
+            "A legacy word/phrase database is at the canonical projection path but "
+            "does not record which sentence database owns it.\n\n"
+            f"Sentence source:\n{source_path}\n\n"
+            f"Word/phrase target:\n{target_path}\n\n"
+            "Adopting will first create a backup beside the target, then replace its "
+            "derived cards from this sentence database. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+
+        try:
+            _path, stats = senses.adopt_canonical_word_phrase_projection(
+                source_conn, source_path, db_root
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Projection Adoption Failed",
+                f"The sentence database remains usable.\n\n{exc}",
+            )
+            return False
+
+        QMessageBox.information(
+            self,
+            "Projection Adopted",
+            "The word/phrase projection was adopted and synchronized.\n\n"
+            f"Backup retained at:\n{stats['backup_path']}",
+        )
+        return True
+
     def _adopt_database(self, conn, path, display, db_type, is_random):
         """Replace the active database after its candidate has fully prepared."""
         old_conn = self.conn
@@ -854,7 +909,14 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.card_ui = None
         self._update_button_visibility()
 
-    def load_database(self, silent=False, *, db_path=None, display=None):
+    def load_database(
+        self,
+        silent=False,
+        *,
+        db_path=None,
+        display=None,
+        offer_projection_adoption=True,
+    ):
         """Prepare a candidate database, then atomically adopt it on success."""
         candidate_path = db_path or self.current_db_path
         candidate_display = display or self.current_lang
@@ -871,6 +933,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
 
         candidate_conn = None
+        projection_conflict = None
         try:
             candidate_conn = init_db(candidate_path)
 
@@ -893,7 +956,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                         get_database_root(self.settings),
                         sync=True,
                     )
+                except ProjectionOwnershipConflictError as conflict:
+                    projection_conflict = conflict
                 except Exception:
+                    # Projection failures must not block sentence-database use.
                     pass
 
             # --- Restore random review ---
@@ -916,6 +982,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._adopt_database(
             candidate_conn, candidate_path, candidate_display, db_type, is_random
         )
+
+        if projection_conflict is not None and not silent and offer_projection_adoption:
+            self._offer_projection_adoption(
+                candidate_conn, candidate_path, projection_conflict
+            )
 
         if not silent:
             QMessageBox.information(self, "Success", f"Loaded database: {display}")

@@ -283,6 +283,87 @@ def test_projection_ownership_conflict_does_not_block_sentence_database_load(
         )
 
 
+def test_silent_markerless_projection_load_never_offers_adoption(
+    window, tmp_path, monkeypatch
+):
+    """Startup silently adopts the sentence DB even when projection is markerless."""
+    root = tmp_path / "db"
+    candidate_path = root / "Language-based" / "Sentence-based" / "English_barsky.db"
+    candidate_path.parent.mkdir(parents=True)
+    candidate = init_db(str(candidate_path))
+    try:
+        write_database_type(candidate, DatabaseType.LANGUAGE_SENTENCE)
+        from kgb_srs.schema import ensure_sentence_schema
+
+        ensure_sentence_schema(candidate)
+    finally:
+        candidate.close()
+    target_path = root / "Language-based" / "Word-Phrase-based" / "English_barsky.db"
+    target_path.parent.mkdir(parents=True)
+    target = init_db(str(target_path))
+    try:
+        write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
+    finally:
+        target.close()
+
+    window.settings["database_root"] = str(root)
+    monkeypatch.setattr(
+        window,
+        "_offer_projection_adoption",
+        lambda *_args: pytest.fail("silent loading must not offer projection adoption"),
+    )
+
+    window.load_database(
+        silent=True,
+        db_path=str(candidate_path),
+        display="Language-based/Sentence-based/English",
+    )
+
+    assert window.current_db_path == str(candidate_path)
+
+
+def test_interactive_markerless_projection_offer_runs_after_database_adoption(
+    window, tmp_path, monkeypatch
+):
+    """A migration decision never delays making its sentence source usable."""
+    root = tmp_path / "db"
+    candidate_path = root / "Language-based" / "Sentence-based" / "English_barsky.db"
+    candidate_path.parent.mkdir(parents=True)
+    candidate = init_db(str(candidate_path))
+    try:
+        write_database_type(candidate, DatabaseType.LANGUAGE_SENTENCE)
+        from kgb_srs.schema import ensure_sentence_schema
+
+        ensure_sentence_schema(candidate)
+    finally:
+        candidate.close()
+    target_path = root / "Language-based" / "Word-Phrase-based" / "English_barsky.db"
+    target_path.parent.mkdir(parents=True)
+    target = init_db(str(target_path))
+    try:
+        write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
+    finally:
+        target.close()
+
+    window.settings["database_root"] = str(root)
+    offered_after_adoption = []
+
+    def offer(_conn, _path, _conflict):
+        offered_after_adoption.append(
+            window.current_db_path == str(candidate_path) and window.conn is not None
+        )
+        return False
+
+    monkeypatch.setattr(window, "_offer_projection_adoption", offer)
+    window.load_database(
+        silent=False,
+        db_path=str(candidate_path),
+        display="Language-based/Sentence-based/English",
+    )
+
+    assert offered_after_adoption == [True]
+
+
 def test_projection_ownership_conflict_does_not_block_sentence_database_create(
     window, tmp_path, monkeypatch
 ):

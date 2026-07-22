@@ -217,6 +217,53 @@ def test_create_new_database_handles_init_db_failure_without_changing_state(
     assert window.db_btn.text == "📂 Existing Database"
 
 
+def test_projection_marker_adoption_confirms_and_reports_backup(tmp_path, monkeypatch):
+    pytest.importorskip("PyQt6")
+    import kgb_srs.main_window as main_window
+    from kgb_srs.senses import ProjectionOwnershipConflictError
+
+    source = object()
+    source_path = str(tmp_path / "Sentence-based" / "English_barsky.db")
+    target_path = str(tmp_path / "WordPhrase-based" / "English_barsky.db")
+    backup_path = f"{target_path}.backup"
+    calls = []
+    messages = []
+    window = type("Window", (), {"settings": {"database_root": str(tmp_path)}})()
+    conflict = ProjectionOwnershipConflictError(
+        {"code": "word_phrase_projection_marker_missing", "message": "marker missing"}
+    )
+
+    monkeypatch.setattr(
+        main_window.QMessageBox,
+        "question",
+        lambda *args: main_window.QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        main_window.QMessageBox,
+        "information",
+        lambda *args: messages.append(args),
+    )
+    import kgb_srs.senses as senses
+
+    monkeypatch.setattr(
+        senses, "default_word_phrase_path_for_sentence", lambda *_: target_path
+    )
+    monkeypatch.setattr(
+        senses,
+        "adopt_canonical_word_phrase_projection",
+        lambda conn, path, root: (
+            calls.append((conn, path, root))
+            or (target_path, {"backup_path": backup_path})
+        ),
+    )
+
+    assert main_window.BarskyApp._offer_projection_adoption(
+        window, source, source_path, conflict
+    )
+    assert calls == [(source, source_path, str(tmp_path))]
+    assert messages and backup_path in messages[0][2]
+
+
 def test_create_new_database_handles_metadata_failure_and_closes_connection(
     tmp_path, monkeypatch
 ):
