@@ -2,6 +2,17 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [Unreleased]
+
+### Compatibility
+
+- Deprecated private form-helper aliases from `kgb_srs.forms`; dialogs and
+  first-party tests now use `kgb_srs.form_helpers`, while legacy imports warn
+  and remain available through 2.x.
+- Restored `tests/test_regression.py` as a deprecated direct-only pytest entry
+  point for the focused regression modules. Normal suite discovery excludes it
+  to prevent duplicate collection.
+
 ## [2.1.0] — 2026-07-22
 
 ### Changes

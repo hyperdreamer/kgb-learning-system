@@ -1,6 +1,7 @@
 """Regression tests for card-entry dialogs and form helpers."""
 
 import sqlite3
+import warnings
 
 
 from kgb_srs.ai_parser import MAX_WORD_PHRASE_MEANINGS
@@ -146,11 +147,62 @@ class TestFinalFormRegressions:
 
     def test_worker_result_signal_does_not_override_thread_finished(self):
         _qt_app()
-        from kgb_srs.forms import _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
 
         assert hasattr(_AIGenerateWorker, "result")
         # QThread.finished remains the inherited no-argument termination signal.
         assert "finished" not in _AIGenerateWorker.__dict__
+
+    def test_deprecated_form_helper_imports_resolve_canonical_exports(self):
+        """Legacy helper imports warn while preserving object identity."""
+        _qt_app()
+        from kgb_srs import form_helpers
+
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always")
+            from kgb_srs.forms import _AIGenerateWorker as worker_class
+            from kgb_srs.forms import _apply_ui_font as apply_ui_font
+
+        assert worker_class is form_helpers._AIGenerateWorker
+        assert apply_ui_font is form_helpers._apply_ui_font
+        messages = [str(warning.message) for warning in caught_warnings]
+        assert len(messages) == 2
+        assert all("kgb_srs.form_helpers" in message for message in messages)
+
+    def test_legacy_form_helper_monkeypatches_remain_effective(self, monkeypatch):
+        """Explicit facade overrides continue to reach dialog helpers in 2.x."""
+        _qt_app()
+        from kgb_srs import form_helpers
+        import kgb_srs.forms as forms
+        from kgb_srs.sentence_card_dialog import _create_ai_worker
+
+        font_calls = []
+
+        class FakeWorker:
+            def __init__(self, config, prompt):
+                self.config = config
+                self.prompt = prompt
+
+        def fake_apply_ui_font(widget, settings, parent):
+            font_calls.append((widget, settings, parent))
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                monkeypatch.setattr(forms, "_AIGenerateWorker", FakeWorker)
+                monkeypatch.setattr(forms, "_apply_ui_font", fake_apply_ui_font)
+
+            worker = _create_ai_worker("config", "prompt")
+            form_helpers.apply_ui_font("widget", {"font_size": 19}, "parent")
+
+            assert isinstance(worker, FakeWorker)
+            assert worker.config == "config"
+            assert worker.prompt == "prompt"
+            assert font_calls == [("widget", {"font_size": 19}, "parent")]
+        finally:
+            monkeypatch.undo()
+            forms.__dict__.pop("_AIGenerateWorker", None)
+            forms.__dict__.pop("_apply_ui_font", None)
 
     def test_sentence_dialog_preserves_meanings_and_rebuild_content(self):
         _qt_app()
@@ -417,7 +469,8 @@ class TestFinalFormRegressions:
         _qt_app()
         from PyQt6.QtCore import QThread
         from PyQt6.QtWidgets import QApplication
-        from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
 
         dialog = SentenceCardDialog(
             sentence="Hello world",
@@ -438,7 +491,7 @@ class TestFinalFormRegressions:
             def start(self):
                 started.append(True)
 
-        monkeypatch.setattr("kgb_srs.forms._AIGenerateWorker", FakeWorker)
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
         dialog._generate_ai_meanings()
         assert started
         assert dialog._ai_worker is not None
@@ -467,7 +520,7 @@ class TestFinalFormRegressions:
         """Run a controlled AI assignment response through the dialog."""
         from PyQt6.QtCore import QThread
         from PyQt6.QtWidgets import QApplication
-        from kgb_srs.forms import _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
 
         class FakeWorker(_AIGenerateWorker):
             def __init__(self, config, prompt):
@@ -476,7 +529,7 @@ class TestFinalFormRegressions:
             def start(self):
                 pass
 
-        monkeypatch.setattr("kgb_srs.forms._AIGenerateWorker", FakeWorker)
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
         dialog._generate_ai_meanings()
         assert dialog._ai_worker is not None
         dialog._ai_worker.result.emit(response)
@@ -665,7 +718,8 @@ class TestQThreadLifecycle:
     def test_result_signal_alone_does_not_restore_ui(self):
         """Receiving result signal must keep controls locked until finished."""
         _qt_app()
-        from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
         from PyQt6.QtCore import QThread
 
         dialog = SentenceCardDialog(
@@ -713,7 +767,8 @@ class TestQThreadLifecycle:
     def test_error_signal_alone_does_not_restore_ui(self):
         """Receiving error signal must keep controls locked until finished."""
         _qt_app()
-        from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
         from PyQt6.QtCore import QThread
 
         dialog = SentenceCardDialog(
@@ -746,7 +801,8 @@ class TestQThreadLifecycle:
     def test_cannot_start_second_worker_between_result_and_finished(self):
         """A second Generate must be blocked until thread fully terminates."""
         _qt_app()
-        from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
         from PyQt6.QtCore import QThread
 
         dialog = SentenceCardDialog(sentence="Hello", items=["Hello"])
@@ -774,7 +830,8 @@ class TestQThreadLifecycle:
     def test_word_phrase_dialog_same_lifecycle(self):
         """WordPhraseCardDialog must follow the same lifecycle rules."""
         _qt_app()
-        from kgb_srs.forms import WordPhraseCardDialog, _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import WordPhraseCardDialog
         from PyQt6.QtCore import QThread
 
         dialog = WordPhraseCardDialog(front="bonjour")
@@ -813,7 +870,8 @@ class TestQThreadLifecycle:
         self._ai_worker is not None AND isRunning().
         """
         _qt_app()
-        from kgb_srs.forms import SentenceCardDialog, _AIGenerateWorker
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
         from PyQt6.QtCore import QThread
 
         dialog = SentenceCardDialog(sentence="Hello", items=["Hello"])

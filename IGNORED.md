@@ -1,6 +1,6 @@
-# IGNORED.md — Deferred Decisions and Compatibility Risks
+# IGNORED.md — Deferred Decisions
 
-This file contains only intentional deferrals and active compatibility risks. Completed work belongs in Git history.
+This file contains only intentional deferrals. Completed work belongs in Git history.
 
 ## Intentional behavior
 
@@ -15,13 +15,3 @@ This file contains only intentional deferrals and active compatibility risks. Co
 ### Toolbar guards tolerate construction order
 
 Toolbar font styling uses guarded widget access because controls are created incrementally. A missing control skips only its own styling update; no runtime fault has been demonstrated.
-
-## Compatibility risks
-
-### `kgb_srs.forms` private legacy exports
-
-`_AIGenerateWorker` and `_apply_ui_font` remain available through `kgb_srs.forms` for existing callers and monkeypatch-based tests. New code should import them from `kgb_srs.form_helpers`. Removing the facade exports requires a documented deprecation cycle and compatibility migration.
-
-### Focused regression-test modules replace `test_regression.py`
-
-The former monolithic test module was intentionally removed in favor of focused `tests/test_*_regressions.py` modules. External scripts that invoke `tests/test_regression.py` must migrate to `python -m pytest tests/` or a relevant focused module; no compatibility forwarding file is retained because it would reintroduce the monolith/collection ambiguity.

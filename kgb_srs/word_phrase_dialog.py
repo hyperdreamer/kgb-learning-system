@@ -25,14 +25,12 @@ from .ai_parser import (
     parse_word_phrase_meanings,
 )
 from .ai_provider import AIProviderConfig, build_word_phrase_prompt
-from .form_helpers import _AIGenerateWorker, _apply_ui_font
+from . import form_helpers
 
 
 def _create_ai_worker(config, prompt):
-    """Create a worker through the public compatibility facade."""
-    from .forms import _AIGenerateWorker as worker_class
-
-    return worker_class(config, prompt)
+    """Create a worker through the canonical helper module."""
+    return form_helpers.create_ai_worker(config, prompt)
 
 
 class WordPhraseCardDialog(QDialog):
@@ -67,8 +65,8 @@ class WordPhraseCardDialog(QDialog):
         self._result_front = ""
         self._result_meanings: list[tuple[str, str]] = []
         self._settings = settings or {}
-        _apply_ui_font(self, self._settings, parent)
-        self._ai_worker: _AIGenerateWorker | None = None
+        form_helpers.apply_ui_font(self, self._settings, parent)
+        self._ai_worker: form_helpers._AIGenerateWorker | None = None
         # [{meaning_edit, example_edit, page}]
         self._meaning_rows: list[dict] = []
 

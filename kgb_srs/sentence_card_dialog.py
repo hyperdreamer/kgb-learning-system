@@ -28,7 +28,7 @@ from .ai_provider import (
     build_membership_prompt,
     build_sense_assignment_prompt,
 )
-from .form_helpers import _AIGenerateWorker, _apply_ui_font
+from . import form_helpers
 from .senses import get_sense, list_senses_for_expression
 from .validation import (
     apply_ai_membership_claims,
@@ -39,10 +39,8 @@ from .validation import (
 
 
 def _create_ai_worker(config, prompt):
-    """Create a worker through the public compatibility facade."""
-    from .forms import _AIGenerateWorker as worker_class
-
-    return worker_class(config, prompt)
+    """Create a worker through the canonical helper module."""
+    return form_helpers.create_ai_worker(config, prompt)
 
 
 class SentenceCardDialog(QDialog):
@@ -81,8 +79,8 @@ class SentenceCardDialog(QDialog):
         self._settings_file = settings_file
         self._geometry_persisted = False
         self._conn = conn  # optional: sentence DB for sense inventory
-        _apply_ui_font(self, self._settings, parent)
-        self._ai_worker: _AIGenerateWorker | None = None
+        form_helpers.apply_ui_font(self, self._settings, parent)
+        self._ai_worker: form_helpers._AIGenerateWorker | None = None
         # Membership results are only committed after the exact worker that
         # produced them has emitted ``finished``.
         self._membership_worker = None

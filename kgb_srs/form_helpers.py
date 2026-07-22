@@ -1,12 +1,21 @@
 """Shared support for card-entry dialogs."""
 
 import json
+import sys
 import urllib.error
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from .ai_provider import AIClient, AIMissingConfigError, AIProviderConfig, http_request
+
+
+def _legacy_form_helper_override(name: str, canonical):
+    """Return an explicitly patched 2.x facade helper when one exists."""
+    legacy_forms = sys.modules.get(f"{__package__}.forms")
+    if legacy_forms is None:
+        return canonical
+    return vars(legacy_forms).get(name, canonical)
 
 
 def _apply_ui_font(widget, settings: dict | None, parent=None) -> None:
@@ -27,6 +36,12 @@ def _apply_ui_font(widget, settings: dict | None, parent=None) -> None:
             pass
     if parent is not None:
         widget.setFont(parent.font())
+
+
+def apply_ui_font(widget, settings: dict | None, parent=None) -> None:
+    """Apply the UI font while honoring an explicit legacy facade override."""
+    helper = _legacy_form_helper_override("_apply_ui_font", _apply_ui_font)
+    helper(widget, settings, parent)
 
 
 class _AIGenerateWorker(QThread):
@@ -60,3 +75,9 @@ class _AIGenerateWorker(QThread):
             self.error.emit(str(exc))
         except Exception as exc:
             self.error.emit(f"Unexpected error: {exc}")
+
+
+def create_ai_worker(config: AIProviderConfig, prompt: str):
+    """Create an AI worker while honoring an explicit legacy facade override."""
+    worker_class = _legacy_form_helper_override("_AIGenerateWorker", _AIGenerateWorker)
+    return worker_class(config, prompt)

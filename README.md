@@ -167,6 +167,18 @@ When creating a new sentence card, if a card with the same normalized sentence a
   still live under the root are resolved at runtime and rewritten to relative
   form on the next save; absolute paths outside the root are treated as unset.
 
+### Compatibility migration
+
+- Private `kgb_srs.forms._AIGenerateWorker` and `_apply_ui_font` imports remain
+  available through the 2.x series and emit `DeprecationWarning`. Import and
+  monkeypatch their canonical names from `kgb_srs.form_helpers`; the aliases
+  are scheduled for removal in 3.0.
+- The focused `tests/test_*_regressions.py` modules are canonical. Existing
+  `python -m pytest tests/test_regression.py` automation remains supported as
+  a deprecated direct-only entry point through 2.x; it is excluded from normal
+  `python -m pytest tests/` discovery. Migrate scripts to the full suite or a
+  relevant focused module before 3.0.
+
 ---
 
 ## Usage Guide
@@ -276,7 +288,7 @@ kgb_srs/                    # Python package (__version__ = 2.1.0)
 ├── search.py               # Subtype-aware AND/OR search
 ├── ai_provider.py          # OpenAI-compatible HTTP client
 ├── ai_parser.py            # AI JSON response parsing & validation
-├── forms.py                # Backward-compatible dialog import facade
+├── forms.py                # Dialog facade; private helper aliases deprecated in 2.x
 ├── form_helpers.py         # Shared card-dialog styling and AI worker
 ├── sentence_card_dialog.py # Sentence card editor dialog
 ├── word_phrase_dialog.py   # Legacy W/P editor compatibility dialog
