@@ -11,8 +11,11 @@ Language learning is **sentence-first**: sentence databases feed a shared sense 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install PyQt6 edge-tts PyQt6-WebEngine   # WebEngine optional but recommended for math
+# Install direct runtime and test dependencies
+pip install -r requirements.txt
+
+# Optional: richer display-only MathJax review rendering
+pip install 'PyQt6-WebEngine>=6.6,<7'
 
 # Run
 python main.py
@@ -273,7 +276,8 @@ kgb_srs/                    # Python package (__version__ = 2.1.0)
 ├── dialogs.py              # Generic DynamicInputDialog
 ├── settings_dialog.py      # Categorized settings UI
 ├── graphics.py             # Flash card & drop zones
-├── main_window.py          # Main application window
+├── review_controller.py   # Daily-review state machine and queue scheduling
+├── main_window.py          # QMainWindow composition and UI lifecycle
 ├── markdown_utils.py       # Markdown + safe offline LaTeX fallback
 └── tts.py                  # Text-to-speech worker
 
@@ -292,14 +296,14 @@ db/                         # Database directory (git-ignored)
 # Run all tests
 python -m pytest tests/ -v
 
-# Run specific module tests
-python -m pytest tests/test_validation.py -v
-python -m pytest tests/test_catalog.py -v
-python -m pytest tests/test_schema.py -v
+# Run a focused domain module
+python -m pytest tests/test_forms.py -v
+python -m pytest tests/test_review_regressions.py -v
+python -m pytest tests/test_schema_regressions.py -v
+python -m pytest tests/test_search_regressions.py -v
+python -m pytest tests/test_catalog_regressions.py -v
 python -m pytest tests/test_ai_parser.py -v
 python -m pytest tests/test_ai_provider.py -v
-python -m pytest tests/test_search.py -v
-python -m pytest tests/test_regression.py -v
 ```
 
 ---
@@ -307,10 +311,11 @@ python -m pytest tests/test_regression.py -v
 ## Requirements
 
 - Python 3.10+
-- PyQt6
-- edge-tts
+- Direct runtime and test dependencies are listed in [`requirements.txt`](requirements.txt)
 - PyQt6-WebEngine *(optional, for the richer display-only review view)*
 
-```
-pip install PyQt6 edge-tts PyQt6-WebEngine
+```bash
+pip install -r requirements.txt
+# Optional richer MathJax review rendering
+pip install 'PyQt6-WebEngine>=6.6,<7'
 ```

@@ -65,7 +65,6 @@ from .review_controller import ReviewControllerMixin
 from .validation import (
     format_sentence_meaning_lines as _format_sentence_meaning_lines,
     highlight_unfamiliar_in_sentence as _highlight_sentence_for_items,
-    sort_items_by_sentence_order as _sort_items_by_sentence_order,
 )
 
 
@@ -906,33 +905,6 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         # Intentionally no DB write: keep SRS default (due-only) unless the
         # user opts in each time they open a database.
         return
-
-    def _load_review_queue(self, cursor):
-        """Return the card queue for a fresh review session.
-
-        Due-only when *All cards* is unchecked; every card when checked.
-        """
-        all_cards = bool(
-            getattr(self, "all_cards_checkbox", None)
-            and self.all_cards_checkbox.isChecked()
-        )
-        if all_cards:
-            cursor.execute(
-                "SELECT id, front, back, box FROM cards ORDER BY id"
-            )
-        else:
-            today_str = datetime.date.today().isoformat()
-            cursor.execute(
-                "SELECT id, front, back, box FROM cards "
-                "WHERE next_review <= ?",
-                (today_str,),
-            )
-        queue = list(cursor.fetchall())
-        if self.random_checkbox.isChecked():
-            random.shuffle(queue)
-        else:
-            queue.sort(key=lambda x: x[0])
-        return queue
 
     # ------------------------------------------------------------------
     # Canvas

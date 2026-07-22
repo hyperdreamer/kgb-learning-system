@@ -1,24 +1,27 @@
-# IGNORED.md — Deferred Decisions and Low-Priority Work
+# IGNORED.md — Deferred Decisions and Compatibility Risks
 
-This file contains only items that remain intentionally deferred after the audit/reconsideration work through the current `dev` state. Completed fixes are recorded in Git history, not duplicated here.
+This file contains only intentional deferrals and active compatibility risks. Completed work belongs in Git history.
 
-## Intentional Behavior
+## Intentional behavior
 
 ### Projection failures do not block sentence work
 
-`main_window.py` deliberately catches projection link/sync errors while loading or saving sentence cards. The sentence database remains usable if its derived W/P projection fails. Logging can be added later without changing this non-blocking contract.
+`main_window.py` deliberately catches word/phrase projection link or sync failures while loading or saving sentence cards. A sentence database remains usable when its derived W/P projection fails. Adding structured logging is deferred; it must not change this non-blocking contract.
 
 ### AI parser resilience for create actions
 
-`parse_sense_assignment()` tolerates a malformed/non-integer `sense_id` for AI `action=create` and treats it as no preferred sense. Reuse actions still validate referenced IDs. This is intentional compatibility with imperfect model output.
+`parse_sense_assignment()` accepts a malformed or non-integer `sense_id` for AI `action=create` as no preferred sense. Reuse actions still validate referenced IDs. This remains intentional compatibility with imperfect model output.
 
-### Toolbar guards tolerate initialization order
+### Toolbar guards tolerate construction order
 
-Toolbar font styling uses guarded widget access because controls are constructed incrementally. A missing control only skips its style update; there is no demonstrated runtime fault.
+Toolbar font styling uses guarded widget access because controls are created incrementally. A missing control skips only its own styling update; no runtime fault has been demonstrated.
 
-## Recent Completed Reconsideration Fixes
+## Compatibility risks
 
-- Pending commit — hardened review-card rendering and worker lifecycles; optimized duplicate lookup and clarified settings staging; made W/P projection paths safe, collision-free, and conflict-aware without automatic SRS-history merges.
-- `36da7cc` — split the oversized UI modules into focused review, menu, browse, and dialog modules; retained `forms.py` as a compatibility facade; cached lazy AI worker classes; removed SQLite connection retention; and centralized sentence-item normalization/deduplication.
-- `0f6a370` — atomic sentence-card rollback across nested sense helpers; canonical W/P link enforcement that preserves malformed legacy targets.
-- `d490c0c` — AI-created senses are materialized only on Save; cancelling the dialog leaves no orphan sense.
+### `kgb_srs.forms` private legacy exports
+
+`_AIGenerateWorker` and `_apply_ui_font` remain available through `kgb_srs.forms` for existing callers and monkeypatch-based tests. New code should import them from `kgb_srs.form_helpers`. Removing the facade exports requires a documented deprecation cycle and compatibility migration.
+
+### Focused regression-test modules replace `test_regression.py`
+
+The former monolithic test module was intentionally removed in favor of focused `tests/test_*_regressions.py` modules. External scripts that invoke `tests/test_regression.py` must migrate to `python -m pytest tests/` or a relevant focused module; no compatibility forwarding file is retained because it would reintroduce the monolith/collection ambiguity.

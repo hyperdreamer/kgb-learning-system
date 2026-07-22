@@ -1,0 +1,9 @@
+# Core desktop application (Python 3.10+)
+PyQt6>=6.6,<7
+edge-tts>=7.2,<8
+
+# Test suite
+pytest>=8,<10
+
+# Optional richer Markdown/MathJax review rendering:
+# PyQt6-WebEngine>=6.6,<7

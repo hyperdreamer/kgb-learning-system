@@ -116,6 +116,29 @@ class ReviewControllerMixin:
         self._update_button_visibility()
         self.show_next_card()
 
+    def _load_review_queue(self, cursor):
+        """Return the queue for a fresh daily review session.
+
+        Due-only when *All cards* is unchecked; every card when checked.
+        """
+        all_cards = bool(
+            getattr(self, "all_cards_checkbox", None)
+            and self.all_cards_checkbox.isChecked()
+        )
+        if all_cards:
+            cursor.execute("SELECT id, front, back, box FROM cards ORDER BY id")
+        else:
+            cursor.execute(
+                "SELECT id, front, back, box FROM cards WHERE next_review <= ?",
+                (datetime.date.today().isoformat(),),
+            )
+        queue = list(cursor.fetchall())
+        if self.random_checkbox.isChecked():
+            random.shuffle(queue)
+        else:
+            queue.sort(key=lambda card: card[0])
+        return queue
+
     def _previous_daily_card(self):
         """Step back one card in this daily session path (reverse of Next).
 
