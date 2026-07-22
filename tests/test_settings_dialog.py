@@ -1621,6 +1621,37 @@ def test_deferred_close_discards_preview_audio_and_suppresses_error(
 
 
 @pytest.mark.parametrize("action", ["close", "accept", "reject"])
+def test_immediate_dialog_exit_discards_queued_preview_callbacks(
+    tmp_path, monkeypatch, settings, action
+):
+    """Completed preview workers cannot present queued payloads after exit."""
+    from unittest.mock import MagicMock
+
+    dialog, _worker = _dialog(monkeypatch, settings)
+    preview = tmp_path / "barsky_tts_preview_after_exit.mp3"
+    preview.write_bytes(b"audio")
+    dialog.preview_player.setSource = MagicMock()
+    dialog.preview_player.play = MagicMock()
+    warning = MagicMock()
+    monkeypatch.setattr("kgb_srs.settings_dialog.QMessageBox.warning", warning)
+
+    dialog._preview_voice("en-US-AndrewNeural")
+    preview_worker = dialog.preview_tts_worker
+    assert preview_worker is not None
+
+    getattr(dialog, action)()
+    preview_worker.audio_ready.emit(str(preview))
+    preview_worker.error.emit("late failure")
+
+    assert dialog._terminal_closing
+    assert not preview.exists()
+    assert dialog._tts_temp_path is None
+    dialog.preview_player.setSource.assert_not_called()
+    dialog.preview_player.play.assert_not_called()
+    warning.assert_not_called()
+
+
+@pytest.mark.parametrize("action", ["close", "accept", "reject"])
 def test_dialog_exit_stops_preview_before_temp_cleanup(monkeypatch, settings, action):
     """Every immediate dialog exit stops preview playback before cleanup."""
     from unittest.mock import MagicMock

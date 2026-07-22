@@ -144,6 +144,7 @@ class SettingsDialog(QDialog):
         self._closing_workers = []
         self._deferred_close_action = None
         self._allow_deferred_close = False
+        self._terminal_closing = False
         self._tts_temp_path = None
         self.setWindowTitle("App Settings")
         self.setMinimumSize(620, 480)
@@ -873,6 +874,7 @@ class SettingsDialog(QDialog):
             not short_name
             or self.preview_tts_worker is not None
             or self._deferred_close_action is not None
+            or self._terminal_closing
         ):
             return
         # Stop any currently playing sample before starting a new one.
@@ -889,7 +891,7 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_preview_finished(self, file_path):
-        if self._deferred_close_action is not None:
+        if self._deferred_close_action is not None or self._terminal_closing:
             from .tts import unlink_tts_temp
 
             unlink_tts_temp(file_path)
@@ -906,6 +908,7 @@ class SettingsDialog(QDialog):
             return
         # QDialog.closeEvent() calls reject(), so retain this guard through the
         # superclass call to avoid re-entering the worker-close deferral.
+        self._terminal_closing = True
         self._allow_deferred_close = True
         try:
             self._stop_preview_and_cleanup()
@@ -917,6 +920,7 @@ class SettingsDialog(QDialog):
         """Accept immediately unless a worker thread must finish first."""
         if self._defer_close_for_running_workers("accept"):
             return
+        self._terminal_closing = True
         self._stop_preview_and_cleanup()
         super().accept()
 
@@ -927,6 +931,7 @@ class SettingsDialog(QDialog):
             return
         if self._defer_close_for_running_workers("reject"):
             return
+        self._terminal_closing = True
         self._stop_preview_and_cleanup()
         super().reject()
 
@@ -985,6 +990,7 @@ class SettingsDialog(QDialog):
                 self._allow_deferred_close = True
                 self.close()
             else:
+                self._terminal_closing = True
                 self._stop_preview_and_cleanup()
                 if action == "accept":
                     super().accept()
@@ -992,7 +998,7 @@ class SettingsDialog(QDialog):
                     super().reject()
 
     def _on_preview_error(self, message):
-        if self._deferred_close_action is not None:
+        if self._deferred_close_action is not None or self._terminal_closing:
             return
         QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")
 

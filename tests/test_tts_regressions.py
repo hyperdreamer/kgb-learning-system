@@ -268,6 +268,86 @@ class TestTtsTempCleanup:
         assert event.accepted
         assert events == [("stop", None), ("cleanup", audio_path)]
 
+    def test_immediate_close_discards_queued_tts_audio_from_completed_worker(
+        self, tmp_path, monkeypatch
+    ):
+        """An idle worker's queued payload cannot play after terminal close."""
+        _qt_app()
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from PyQt6.QtCore import QObject, pyqtSignal
+
+        import kgb_srs.main_window as mw
+
+        late_audio = tmp_path / "barsky_tts_late_after_close.mp3"
+        late_audio.write_bytes(b"audio")
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            instance = None
+
+            def __init__(self, *_args):
+                super().__init__()
+                FakeWorker.instance = self
+
+            def start(self):
+                return None
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        class Event:
+            accepted = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                raise AssertionError("a completed TTS worker must not defer close")
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+        player = MagicMock()
+        card = object()
+        card_ui = object()
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=None,
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            player=player,
+            current_card=card,
+            card_ui=card_ui,
+            width=lambda: 800,
+            height=lambda: 600,
+            current_db_path=None,
+            _save_settings=lambda: None,
+        )
+        window._stop_tts_playback = mw.BarskyApp._stop_tts_playback.__get__(
+            window, type(window)
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        button = SimpleNamespace()
+        button.setEnabled = lambda _value: None
+        button.setText = lambda _text: None
+
+        mw.BarskyApp.speak_text(window, "hello", button)
+        event = Event()
+        mw.BarskyApp.closeEvent(window, event)
+        FakeWorker.instance.audio_ready.emit(str(late_audio))
+
+        assert event.accepted
+        assert window._terminal_closing
+        assert not late_audio.exists()
+        player.setSource.assert_not_called()
+        player.play.assert_not_called()
+
     def test_late_tts_audio_for_replaced_card_is_unlinked_without_playback(
         self, tmp_path, monkeypatch
     ):

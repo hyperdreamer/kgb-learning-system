@@ -155,6 +155,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._pending_close = False
         self._pending_close_worker = None
         self._close_completion_requested = False
+        self._terminal_closing = False
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -207,6 +208,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             self._pending_close_worker = worker
             event.ignore()
             return
+
+        # A worker may have emitted a queued payload after it stopped but
+        # before this immediate close path ran.  Suppress that callback.
+        self._terminal_closing = True
 
         self.settings["width"] = self.width()
         self.settings["height"] = self.height()
@@ -1050,6 +1055,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         return bool(
             getattr(self, "_pending_close", False)
             or getattr(self, "_close_completion_requested", False)
+            or getattr(self, "_terminal_closing", False)
         )
 
     def _on_tts_worker_finished(self, worker) -> None:
