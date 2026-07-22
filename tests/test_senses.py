@@ -1198,6 +1198,65 @@ class TestProjectionSafety:
             == external_before
         )
 
+    def test_canonical_target_symlink_to_database_inside_root_is_rejected(
+        self, tmp_path
+    ):
+        """A canonical filename must not redirect projection writes to a victim."""
+        from kgb_srs.catalog import DatabaseType, write_database_type
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            ensure_linked_word_phrase_database,
+        )
+
+        db_root = tmp_path / "db"
+        source_path = (
+            db_root / "Language-based" / "Sentence-based" / "English_barsky.db"
+        )
+        source_path.parent.mkdir(parents=True)
+        source = init_db(str(source_path))
+        victim_path = db_root / "Knowledge-based" / "Victim_barsky.db"
+        victim_path.parent.mkdir(parents=True)
+        victim = init_db(str(victim_path))
+        try:
+            ensure_sentence_schema(source)
+            insert_sentence_card(source, "I went home.", [("went", "past of go")])
+            write_database_type(victim, DatabaseType.KNOWLEDGE)
+            victim.execute(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+                ("victim", "must survive", 4, "2030-01-01"),
+            )
+            victim.commit()
+        finally:
+            source.close()
+            victim.close()
+
+        canonical_path = (
+            db_root / "Language-based" / "Word-Phrase-based" / "English_barsky.db"
+        )
+        canonical_path.parent.mkdir(parents=True)
+        try:
+            os.symlink(victim_path, canonical_path)
+        except (AttributeError, NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        source_before = source_path.read_bytes()
+        victim_before = victim_path.read_bytes()
+        source = sqlite3.connect(str(source_path))
+        try:
+            with pytest.raises(ProjectionPathSafetyError) as error:
+                ensure_linked_word_phrase_database(
+                    source, str(source_path), str(db_root), sync=True
+                )
+            assert (
+                error.value.conflict["code"]
+                == "sentence_projection_target_not_canonical"
+            )
+        finally:
+            source.close()
+
+        assert source_path.read_bytes() == source_before
+        assert victim_path.read_bytes() == victim_before
+
     def test_populated_legacy_flat_target_is_not_relinked_for_nested_source(
         self, conn, tmp_path
     ):

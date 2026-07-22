@@ -207,6 +207,34 @@ class TestBuildCatalogTree:
         }
         assert all(not isinstance(value, dict) for value in branch.values())
 
+    def test_legacy_collision_without_word_phrase_marker_uses_display_labels(self):
+        entries = [
+            (
+                "Languages/A/Shared",
+                "/legacy/Languages/A/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            (
+                "Languages/B/Shared",
+                "/legacy/Languages/B/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        ]
+
+        branch = build_catalog_tree(entries)["Language-based"]["Word/Phrase-based"]
+
+        assert branch == {
+            "Languages/A/Shared": (
+                "/legacy/Languages/A/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            "Languages/B/Shared": (
+                "/legacy/Languages/B/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        }
+        assert all(not isinstance(value, dict) for value in branch.values())
+
     def test_single_language_sentence(self):
         entry = (
             "Language-based/Sentence-based/French",

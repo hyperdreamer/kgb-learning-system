@@ -312,6 +312,12 @@ def build_catalog_tree(
                 if marker in normalized_display:
                     label = normalized_display.split(marker, 1)[1]
                     break
+            else:
+                # Legacy catalog displays can omit the W/P marker entirely
+                # (for example, Languages/A/Shared).  The basename alone
+                # would overwrite the other collision, while making nested
+                # dicts would violate the deliberately flat W/P menu.
+                label = normalized_display
         word_phrase_branch[label] = (db_path, db_type)
 
     return tree

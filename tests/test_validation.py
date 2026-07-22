@@ -153,6 +153,17 @@ class TestValidateUnfamiliarItems:
         assert result.valid is False
         assert "insist on" in result.missing
 
+    def test_single_token_irregular_match(self):
+        """Single spaced-language tokens still reach lemma matching."""
+        assert validate_unfamiliar_items("Went", ["go"]).valid
+
+    def test_continuous_scripts_do_not_use_inflection_matching(self):
+        # The English suffix rules must not turn a continuous mixed-script
+        # token into a stem match merely because it has no whitespace.
+        result = validate_unfamiliar_items("测试", ["测试ed"])
+        assert not result.valid
+        assert result.missing == ["测试ed"]
+
     def test_go_gone_went_irregular(self):
         """Irregular go/went/gone (and going/goes) share a lemma family."""
         assert validate_unfamiliar_items("He has gone home.", ["go"]).valid

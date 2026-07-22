@@ -704,6 +704,14 @@ def default_word_phrase_path_for_sentence(
     )
     target_real = os.path.realpath(target_lexical)
     root_real = os.path.realpath(root_lexical)
+    expected_target_real = os.path.normpath(
+        os.path.join(
+            root_real,
+            DB_DIR_LANGUAGE_WORD_PHRASE,
+            relative_parent,
+            f"{name}{DB_SUFFIX}",
+        )
+    )
     if not (
         contained(target_lexical, root_lexical) and contained(target_real, root_real)
     ):
@@ -716,6 +724,27 @@ def default_word_phrase_path_for_sentence(
                 "db_root": root_lexical,
                 "canonical_path": target_lexical,
                 "resolved_canonical_path": target_real,
+                "expected_resolved_canonical_path": expected_target_real,
+                "resolved_db_root": root_real,
+            }
+        )
+    # Containment alone is insufficient: a canonical projection filename can
+    # itself be a symlink to a different database *inside* the root.  init_db
+    # follows such a link, and a projection refresh would then destructively
+    # replace that unrelated database.  Comparing against the path assembled
+    # from the resolved root still works before the target exists: realpath
+    # then naturally returns this normalized expected path.
+    if target_real != expected_target_real:
+        raise ProjectionPathSafetyError(
+            {
+                "code": "sentence_projection_target_not_canonical",
+                "message": "Canonical word/phrase projection path must resolve "
+                "to its owned canonical file.",
+                "sentence_db_path": source_lexical,
+                "db_root": root_lexical,
+                "canonical_path": target_lexical,
+                "resolved_canonical_path": target_real,
+                "expected_resolved_canonical_path": expected_target_real,
                 "resolved_db_root": root_real,
             }
         )

@@ -587,13 +587,21 @@ def _tokenize(text: str) -> list[str]:
 def _flexible_phrase_match(norm_item: str, norm_sentence: str) -> bool:
     """Match item as a consecutive token sequence under flex token equality.
 
-    Requires both sides to yield at least one whitespace-separated token so
-    continuous CJK strings stay on the literal-only path.
+    Whitespace-tokenized phrases and single ASCII-word tokens are eligible;
+    continuous scripts stay on the literal-only path.
     """
-    # Need real whitespace separation for this path to be meaningful.
+    # Continuous scripts stay literal-only.  A pair of single ASCII-word
+    # tokens, however, is a normal spaced-language case even though neither
+    # value happens to contain whitespace (for example, ``go`` ↔ ``Went``).
+    # The inflection rules below are English-oriented, so do not apply them to
+    # arbitrary continuous Unicode text such as CJK.
     if " " not in norm_item and " " not in norm_sentence:
-        # Single-token item vs multi-token sentence still allowed.
-        if " " not in norm_sentence:
+        item_token = _strip_token_punct(norm_item)
+        sentence_token = _strip_token_punct(norm_sentence)
+        if not (
+            re.fullmatch(r"[a-z]+", item_token)
+            and re.fullmatch(r"[a-z]+", sentence_token)
+        ):
             return False
 
     item_tokens = _tokenize(norm_item)

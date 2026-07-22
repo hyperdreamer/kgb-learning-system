@@ -744,6 +744,52 @@ def test_close_waits_for_running_workers_before_destroying_dialog(
         dialog.close()
 
 
+def test_deferred_save_freezes_controls_and_keeps_persisted_snapshot(
+    monkeypatch, settings
+):
+    """A worker-delayed accept cannot silently discard apparent later edits."""
+    _app()
+    import kgb_srs.settings_dialog as module
+
+    voice_worker = BlockingVoiceWorker()
+    saved = []
+    monkeypatch.setattr(module, "VoiceListWorker", lambda: voice_worker)
+    monkeypatch.setattr(
+        module, "save_settings", lambda staged: saved.append(dict(staged))
+    )
+    dialog = module.SettingsDialog(settings)
+    finished = False
+
+    try:
+        assert voice_worker.started_event.wait(1)
+        dialog.window_width_input.setValue(1111)
+        dialog.save_and_apply()
+
+        assert saved[0]["width"] == 1111
+        assert dialog._deferred_close_action == "accept"
+        assert not dialog.isEnabled()
+        assert not dialog.window_width_input.isEnabled()
+        assert not dialog.database_root_input.isEnabled()
+
+        # Programmatic changes are still possible in Qt, but user editing is
+        # frozen and the deferred accept must retain the saved snapshot.
+        dialog.window_width_input.setValue(1555)
+        voice_worker.release_event.set()
+        assert voice_worker.wait(1000)
+        finished = True
+        _app().processEvents()
+
+        assert dialog.result() == dialog.DialogCode.Accepted
+        assert len(saved) == 1
+        assert saved[0]["width"] == 1111
+        assert settings["width"] == 1111
+    finally:
+        if not finished:
+            voice_worker.release_event.set()
+            voice_worker.wait(1000)
+        dialog.close()
+
+
 def test_api_key_uses_existing_secret_line_edit(monkeypatch, settings):
     from kgb_srs.secret_line_edit import SecretLineEdit
 

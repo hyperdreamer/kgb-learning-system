@@ -314,6 +314,11 @@ class TestUpdateSentenceCard:
         cur = migrated_conn.execute("SELECT box FROM cards WHERE id=?", (card_id,))
         assert cur.fetchone()[0] == 1
 
+    def test_insert_accepts_single_token_irregular_surface(self, migrated_conn):
+        card_id = insert_sentence_card(migrated_conn, "Went", [("go", "to move")])
+
+        assert get_sentence_card(migrated_conn, card_id)[3][0][:2] == ("go", "to move")
+
     def test_rejects_expression_not_in_sentence(self, migrated_conn):
         card_id = insert_sentence_card(
             migrated_conn, "Old sentence", [("Old", "old meaning")]
@@ -378,6 +383,51 @@ class TestUpdateSentenceCard:
             ("down", "below", "explicit"),
         ]
         assert calls == [(items, surfaces), (items, surfaces)]
+
+    def test_deleted_card_raises_clean_stale_edit_error_without_new_senses(
+        self, tmp_path
+    ):
+        db_path = tmp_path / "stale-edit_barsky.db"
+        editor = init_db(str(db_path))
+        deleter = None
+        try:
+            card_id = insert_sentence_card(
+                editor, "Old sentence", [("Old", "old meaning")]
+            )
+            # Simulate the editor having loaded/staged this card before another
+            # connection deletes it.
+            assert get_sentence_card(editor, card_id) is not None
+            deleter = init_db(str(db_path))
+            deleter.execute("DELETE FROM cards WHERE id=?", (card_id,))
+            deleter.commit()
+            senses_after_delete = editor.execute(
+                "SELECT expression, meaning FROM expression_senses ORDER BY id"
+            ).fetchall()
+
+            with pytest.raises(ValueError, match="Card no longer exists\\."):
+                update_sentence_card(
+                    editor,
+                    card_id,
+                    front="New sentence",
+                    back="new back",
+                    items=[("New", "new meaning")],
+                )
+
+            assert editor.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 0
+            assert (
+                editor.execute("SELECT COUNT(*) FROM unfamiliar_items").fetchone()[0]
+                == 0
+            )
+            assert (
+                editor.execute(
+                    "SELECT expression, meaning FROM expression_senses ORDER BY id"
+                ).fetchall()
+                == senses_after_delete
+            )
+        finally:
+            if deleter is not None:
+                deleter.close()
+            editor.close()
 
 
 # ---------------------------------------------------------------------------

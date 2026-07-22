@@ -18,6 +18,10 @@ Toolbar font styling uses guarded widget access because controls are created inc
 
 ## Compatibility risks
 
+### Database creation pathname race (TOCTOU)
+
+`BarskyApp.create_database()` validates that a requested database path does not exist and subsequently opens it with SQLite. A concurrent local process could create or replace that pathname in the gap. The simple `O_CREAT | O_EXCL` reservation suggested by audit is insufficient because another process can still replace the pathname after the reservation descriptor is closed and before SQLite opens it. A correct cross-platform repair needs an ownership-safe creation/open design and explicit failure semantics; it is deferred to avoid shipping a partial guarantee that could regress database creation.
+
 ### `kgb_srs.forms` private legacy exports
 
 `_AIGenerateWorker` and `_apply_ui_font` remain available through `kgb_srs.forms` for existing callers and monkeypatch-based tests. New code should import them from `kgb_srs.form_helpers`. Removing the facade exports requires a documented deprecation cycle and compatibility migration.

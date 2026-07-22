@@ -588,6 +588,8 @@ def update_sentence_card(
             "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
             (front, back, today, card_id),
         )
+        if cur.rowcount != 1:
+            raise ValueError("Card no longer exists.")
 
         # Replace unfamiliar items: delete old, insert new.
         cur.execute("DELETE FROM unfamiliar_items WHERE card_id=?", (card_id,))

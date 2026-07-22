@@ -953,6 +953,12 @@ class SettingsDialog(QDialog):
             return False
         if self._deferred_close_action is None:
             self._deferred_close_action = action
+            # Save & Apply has already persisted a snapshot when accept() is
+            # deferred.  Freeze the dialog so later edits cannot look staged
+            # even though they will not be included in that saved snapshot.
+            # Worker completion handlers may still update child widgets; Qt
+            # permits that while the disabled parent blocks user interaction.
+            self.setEnabled(False)
         for worker in workers:
             if worker not in self._closing_workers:
                 self._closing_workers.append(worker)
