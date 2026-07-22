@@ -2,6 +2,7 @@
 
 import os
 import json
+import sqlite3
 
 import pytest
 
@@ -73,6 +74,22 @@ def test_load_settings_ignores_invalid_scalar_values_and_starts_app(
         app.processEvents()
 
 
+def test_load_settings_logs_corrupt_json_and_uses_defaults(tmp_path, caplog):
+    """A broken settings file must remain non-fatal but be diagnosable."""
+    import logging
+    import kgb_srs.config as config
+
+    settings_path = tmp_path / "corrupt.json"
+    settings_path.write_text("{ not valid json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="kgb_srs.config"):
+        loaded = config.load_settings(settings_path)
+
+    assert loaded["width"] == config.DEFAULT_SETTINGS["width"]
+    assert "Could not load settings" in caplog.text
+    assert str(settings_path) in caplog.text
+
+
 class TestGetDatabaseRoot:
     def test_empty_settings_falls_back_to_project_db(self):
         assert get_database_root({}) == DIR_DB
@@ -132,6 +149,41 @@ class TestFindDatabasesUsesRoot:
         assert display.endswith("French")
         assert path == str(db_path)
 
+    def test_skips_symlinked_database_without_startup_mutation(self, tmp_path):
+        from kgb_srs.senses import ensure_all_sentence_databases_linked
+
+        root = tmp_path / "dbs"
+        sentence_dir = root / "Language-based" / "Sentence-based"
+        sentence_dir.mkdir(parents=True)
+        external_db = tmp_path / "external_barsky.db"
+        external = sqlite3.connect(external_db)
+        try:
+            external.execute("CREATE TABLE external_marker (value TEXT)")
+            external.commit()
+        finally:
+            external.close()
+
+        linked_db = sentence_dir / "External_barsky.db"
+        try:
+            linked_db.symlink_to(external_db)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        assert find_databases(str(root)) == []
+        assert ensure_all_sentence_databases_linked(str(root)) == []
+
+        external = sqlite3.connect(external_db)
+        try:
+            tables = {
+                row[0]
+                for row in external.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        finally:
+            external.close()
+        assert tables == {"external_marker"}
+
 
 class TestPathUnderRoot:
     def test_path_equals_root(self, tmp_path):
@@ -166,30 +218,45 @@ class TestPathUnderRoot:
         escaped = outside_link / "escaped_barsky.db"
         assert is_path_under_root(str(escaped), str(root)) is False
         assert relative_db_path(str(escaped), str(root)) is None
-        assert resolve_default_database({
-            "database_root": str(root),
-            "default_database": str(escaped),
-        }) == ""
-        assert resolve_default_database({
-            "database_root": str(root),
-            "default_database": os.path.join(
-                "outside-link", "escaped_barsky.db"
-            ),
-        }) == ""
+        assert (
+            resolve_default_database(
+                {
+                    "database_root": str(root),
+                    "default_database": str(escaped),
+                }
+            )
+            == ""
+        )
+        assert (
+            resolve_default_database(
+                {
+                    "database_root": str(root),
+                    "default_database": os.path.join(
+                        "outside-link", "escaped_barsky.db"
+                    ),
+                }
+            )
+            == ""
+        )
         assert normalize_default_database(str(escaped), str(root)) == ""
-        assert normalize_default_database(
-            os.path.join("outside-link", "escaped_barsky.db"), str(root)
-        ) == ""
+        assert (
+            normalize_default_database(
+                os.path.join("outside-link", "escaped_barsky.db"), str(root)
+            )
+            == ""
+        )
 
         normal = root / "normal" / "inside_barsky.db"
         assert is_path_under_root(str(normal), str(root)) is True
         assert relative_db_path(str(normal), str(root)) == os.path.join(
             "normal", "inside_barsky.db"
         )
-        assert resolve_default_database({
-            "database_root": str(root),
-            "default_database": os.path.join("normal", "inside_barsky.db"),
-        }) == str(normal)
+        assert resolve_default_database(
+            {
+                "database_root": str(root),
+                "default_database": os.path.join("normal", "inside_barsky.db"),
+            }
+        ) == str(normal)
         assert normalize_default_database(str(normal), str(root)) == os.path.join(
             "normal", "inside_barsky.db"
         )
@@ -223,14 +290,10 @@ class TestResolveDefaultDatabase:
     def test_relative_joins_root(self, tmp_path):
         settings = {
             "database_root": str(tmp_path),
-            "default_database": os.path.join(
-                "Language-based", "English_barsky.db"
-            ),
+            "default_database": os.path.join("Language-based", "English_barsky.db"),
         }
         expected = os.path.normpath(
-            os.path.join(
-                str(tmp_path), "Language-based", "English_barsky.db"
-            )
+            os.path.join(str(tmp_path), "Language-based", "English_barsky.db")
         )
         assert resolve_default_database(settings) == expected
 

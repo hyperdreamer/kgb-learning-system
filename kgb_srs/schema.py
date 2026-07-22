@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import datetime
+import tempfile
 
 from .validation import normalize_sentence
 
@@ -32,6 +33,7 @@ _FORBIDDEN_DB_NAME_RE = re.compile(r"[\x00-\x1f/\\\\]|\.\.")
 # ---------------------------------------------------------------------------
 # Database name validation
 # ---------------------------------------------------------------------------
+
 
 def validate_db_name(name: str) -> bool:
     """Validate a database display name for use as a path component.
@@ -97,16 +99,14 @@ def resolve_db_path(base_dir: str, subdir: str, name: str) -> str:
     common = os.path.commonpath([real_base, target])
     if common != real_base:
         raise ValueError(
-            f"Path traversal detected: {name!r} resolves outside "
-            f"base directory."
+            f"Path traversal detected: {name!r} resolves outside base directory."
         )
 
     # Ensure target is a direct child of the canonical directory
     target_dir = os.path.dirname(target)
     if target_dir != canon:
         raise ValueError(
-            f"Path traversal detected: {name!r} resolves outside "
-            f"canonical directory."
+            f"Path traversal detected: {name!r} resolves outside canonical directory."
         )
     return target
 
@@ -114,6 +114,7 @@ def resolve_db_path(base_dir: str, subdir: str, name: str) -> str:
 # ---------------------------------------------------------------------------
 # Database initialization
 # ---------------------------------------------------------------------------
+
 
 def init_db(db_path_or_conn):
     """Initialize or open a database.
@@ -149,6 +150,9 @@ def init_db(db_path_or_conn):
         c.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('random_review', '1')"
         )
+        c.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('all_cards_review', '0')"
+        )
         conn.commit()
     except Exception:
         if owns_connection:
@@ -157,9 +161,53 @@ def init_db(db_path_or_conn):
     return conn
 
 
+def create_database_exclusively(db_path, initializer=None, *, init_database=None):
+    """Build a database in a sibling staging file and publish it without clobbering.
+
+    ``initializer`` receives the initialized staging connection and may add
+    database-specific schema or metadata. ``init_database`` is an optional
+    connection initializer, primarily for callers that provide a local
+    failure boundary. Publication uses a hard link, whose destination creation
+    is atomic and fails if another creator won the race. The final target is
+    never unlinked or replaced by this helper.
+    """
+    target_path = os.fspath(db_path)
+    parent_dir = os.path.dirname(os.path.abspath(target_path))
+    filename = os.path.basename(target_path)
+    staging_fd, staging_path = tempfile.mkstemp(
+        prefix=f".{filename}.staging-", dir=parent_dir
+    )
+    os.close(staging_fd)
+
+    conn = None
+    try:
+        conn = (init_database or init_db)(staging_path)
+        if initializer is not None:
+            initializer(conn)
+        conn.commit()
+        conn.close()
+        conn = None
+
+        # os.link creates the destination only when it does not already exist.
+        # Unlike os.replace(), it cannot overwrite a competitor's database.
+        os.link(staging_path, target_path)
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        finally:
+            try:
+                os.unlink(staging_path)
+            except FileNotFoundError:
+                pass
+
+    return target_path
+
+
 # ---------------------------------------------------------------------------
 # Migration: unfamiliar_items
 # ---------------------------------------------------------------------------
+
 
 def ensure_unfamiliar_items_table(conn, *, commit: bool = True):
     """Create the unfamiliar_items table if it doesn't exist.
@@ -234,6 +282,7 @@ def ensure_sentence_schema(conn, *, commit: bool = True) -> None:
 # Validation helpers for sentence-card invariants
 # ---------------------------------------------------------------------------
 
+
 def _validate_expressions_in_sentence(
     sentence: str,
     items: list,
@@ -279,9 +328,7 @@ def _validate_expressions_in_sentence(
 
     if still_missing:
         missing_str = ", ".join(still_missing)
-        raise ValueError(
-            f"Expressions not found in sentence: {missing_str}"
-        )
+        raise ValueError(f"Expressions not found in sentence: {missing_str}")
 
 
 def _require_nonempty_meanings(items: list, operation: str):
@@ -322,9 +369,49 @@ def _preferred_sense_id(value) -> int | None:
         return None
 
 
+def _normalize_and_deduplicate_sentence_items(
+    items: list,
+    *,
+    verified_surfaces: dict[str, str] | None = None,
+) -> list[tuple[str, str, int | None, str]]:
+    """Normalize sentence items while preserving first-occurrence order."""
+    normalized: list[tuple[str, str, int | None, str]] = []
+    for item in items:
+        if isinstance(item, tuple):
+            expr = str(item[0])
+            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
+            sense_id = None
+            if len(item) > 2 and item[2] is not None:
+                sense_id = _preferred_sense_id(item[2])
+            surface = ""
+            if len(item) > 3 and item[3]:
+                surface = str(item[3]).strip()
+            normalized.append((expr, meaning, sense_id, surface))
+        else:
+            normalized.append((str(item), "", None, ""))
+
+    seen: set[str] = set()
+    deduped: list[tuple[str, str, int | None, str]] = []
+    for expr, meaning, sense_id, surface in normalized:
+        key = normalize_sentence(expr)
+        if key and key not in seen:
+            seen.add(key)
+            if not surface and verified_surfaces:
+                surface = (
+                    verified_surfaces.get(expr) or verified_surfaces.get(key) or ""
+                )
+                surface = str(surface).strip()
+            deduped.append((expr, meaning, sense_id, surface))
+
+    if not deduped:
+        raise ValueError("At least one non-empty unfamiliar item is required.")
+    return deduped
+
+
 # ---------------------------------------------------------------------------
 # Duplicate detection
 # ---------------------------------------------------------------------------
+
 
 def find_duplicate_sentence_card(conn, sentence: str, items: list):
     """Find an existing card with the same normalized sentence and
@@ -348,27 +435,45 @@ def find_duplicate_sentence_card(conn, sentence: str, items: list):
     if not norm_items:
         return None
 
-    # Find candidate cards with matching sentence (normalized)
+    # SQLite's built-in LOWER() neither NFC-normalizes nor implements Python's
+    # Unicode casefold semantics.  Register the application normalizer for
+    # this connection so SQLite can discard non-matching cards before we fetch
+    # their child rows.  A second, joined query fetches every candidate's
+    # children at once instead of one query per candidate.  Python still
+    # compares the lists to retain exact normalization and ordered-list
+    # semantics without delimiter-sensitive SQL aggregation.
+    conn.create_function("kgb_normalize_sentence", 1, normalize_sentence)
     cur = conn.cursor()
-    cur.execute("SELECT id, front FROM cards")
-    candidates = []
-    for row in cur.fetchall():
-        if normalize_sentence(row[1]) == norm_sentence:
-            candidates.append(row[0])
-
-    if not candidates:
+    cur.execute(
+        "SELECT id FROM cards WHERE kgb_normalize_sentence(front) = ? ORDER BY id",
+        (norm_sentence,),
+    )
+    if cur.fetchone() is None:
         return None
 
-    # For each candidate, check if expressions match (ordered list)
-    for cid in candidates:
-        cur.execute(
-            "SELECT expression FROM unfamiliar_items WHERE card_id=? ORDER BY id",
-            (cid,),
-        )
-        existing = [normalize_sentence(r[0]) for r in cur.fetchall()]
-        existing = [e for e in existing if e]
-        if existing == norm_items:
-            return cid
+    cur.execute(
+        """SELECT cards.id, unfamiliar_items.expression
+           FROM cards
+           JOIN unfamiliar_items ON unfamiliar_items.card_id = cards.id
+           WHERE kgb_normalize_sentence(cards.front) = ?
+           ORDER BY cards.id, unfamiliar_items.id""",
+        (norm_sentence,),
+    )
+
+    current_id = None
+    existing = []
+    for card_id, expression in cur:
+        if current_id is not None and card_id != current_id:
+            if existing == norm_items:
+                return current_id
+            existing = []
+        current_id = card_id
+        normalized = normalize_sentence(expression)
+        if normalized:
+            existing.append(normalized)
+
+    if current_id is not None and existing == norm_items:
+        return current_id
 
     return None
 
@@ -376,6 +481,7 @@ def find_duplicate_sentence_card(conn, sentence: str, items: list):
 # ---------------------------------------------------------------------------
 # Sentence-card CRUD
 # ---------------------------------------------------------------------------
+
 
 def insert_sentence_card(
     conn,
@@ -415,41 +521,9 @@ def insert_sentence_card(
 
     from .senses import create_or_get_sense
 
-    # Normalize items to (expression, meaning, sense_id, surface_form)
-    normalized: list[tuple[str, str, int | None, str]] = []
-    for item in unfamiliar_items:
-        if isinstance(item, tuple):
-            expr = str(item[0])
-            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
-            sense_id = None
-            if len(item) > 2 and item[2] is not None:
-                sense_id = _preferred_sense_id(item[2])
-            surface = ""
-            if len(item) > 3 and item[3]:
-                surface = str(item[3]).strip()
-            normalized.append((expr, meaning, sense_id, surface))
-        else:
-            normalized.append((str(item), "", None, ""))
-
-    # Deduplicate by expression
-    seen: set[str] = set()
-    deduped: list[tuple[str, str, int | None, str]] = []
-    for expr, meaning, sense_id, surface in normalized:
-        key = normalize_sentence(expr)
-        if key and key not in seen:
-            seen.add(key)
-            # Prefer verified_surfaces map when the item did not carry surface.
-            if not surface and verified_surfaces:
-                surface = (
-                    verified_surfaces.get(expr)
-                    or verified_surfaces.get(key)
-                    or ""
-                )
-                surface = str(surface).strip()
-            deduped.append((expr, meaning, sense_id, surface))
-
-    if not deduped:
-        raise ValueError("At least one non-empty unfamiliar item is required.")
+    deduped = _normalize_and_deduplicate_sentence_items(
+        unfamiliar_items, verified_surfaces=verified_surfaces
+    )
 
     today = datetime.date.today().isoformat()
 
@@ -473,9 +547,7 @@ def insert_sentence_card(
                     sense = pref
                     meaning = pref.meaning
             if sense is None:
-                sense = create_or_get_sense(
-                    conn, expr, meaning, commit=False
-                )
+                sense = create_or_get_sense(conn, expr, meaning, commit=False)
             cur.execute(
                 "INSERT INTO unfamiliar_items "
                 "(card_id, expression, meaning, sense_id, surface_form) "
@@ -500,9 +572,7 @@ def get_sentence_card(conn, card_id: int):
     or None. *sense_id* / *surface_form* may be empty for legacy rows.
     """
     cur = conn.cursor()
-    cur.execute(
-        "SELECT front, back, box FROM cards WHERE id=?", (card_id,)
-    )
+    cur.execute("SELECT front, back, box FROM cards WHERE id=?", (card_id,))
     card = cur.fetchone()
     if card is None:
         return None
@@ -514,10 +584,7 @@ def get_sentence_card(conn, card_id: int):
         "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
         (card_id,),
     )
-    items = [
-        (row[0], row[1], row[2], row[3] or "")
-        for row in cur.fetchall()
-    ]
+    items = [(row[0], row[1], row[2], row[3] or "") for row in cur.fetchall()]
 
     return (card[0], card[1], card[2], items)
 
@@ -547,9 +614,7 @@ def update_sentence_card(
 
     # Validate that every expression appears in the sentence (local rules,
     # plus any dialog-verified residual surfaces).
-    _validate_expressions_in_sentence(
-        front, items, verified_surfaces=verified_surfaces
-    )
+    _validate_expressions_in_sentence(front, items, verified_surfaces=verified_surfaces)
 
     # Reject empty meanings for sentence cards (newly edited)
     _require_nonempty_meanings(items, "update")
@@ -558,40 +623,9 @@ def update_sentence_card(
 
     from .senses import create_or_get_sense, get_sense
 
-    # Normalize items to (expression, meaning, sense_id, surface_form)
-    normalized: list[tuple[str, str, int | None, str]] = []
-    for item in items:
-        if isinstance(item, tuple):
-            expr = str(item[0])
-            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
-            sense_id = None
-            if len(item) > 2 and item[2] is not None:
-                sense_id = _preferred_sense_id(item[2])
-            surface = ""
-            if len(item) > 3 and item[3]:
-                surface = str(item[3]).strip()
-            normalized.append((expr, meaning, sense_id, surface))
-        else:
-            normalized.append((str(item), "", None, ""))
-
-    # Deduplicate by expression
-    seen: set[str] = set()
-    deduped: list[tuple[str, str, int | None, str]] = []
-    for expr, meaning, sense_id, surface in normalized:
-        key = normalize_sentence(expr)
-        if key and key not in seen:
-            seen.add(key)
-            if not surface and verified_surfaces:
-                surface = (
-                    verified_surfaces.get(expr)
-                    or verified_surfaces.get(key)
-                    or ""
-                )
-                surface = str(surface).strip()
-            deduped.append((expr, meaning, sense_id, surface))
-
-    if not deduped:
-        raise ValueError("At least one non-empty unfamiliar item is required.")
+    deduped = _normalize_and_deduplicate_sentence_items(
+        items, verified_surfaces=verified_surfaces
+    )
 
     today = datetime.date.today().isoformat()
 
@@ -601,6 +635,8 @@ def update_sentence_card(
             "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
             (front, back, today, card_id),
         )
+        if cur.rowcount != 1:
+            raise ValueError("Card no longer exists.")
 
         # Replace unfamiliar items: delete old, insert new.
         cur.execute("DELETE FROM unfamiliar_items WHERE card_id=?", (card_id,))
@@ -614,9 +650,7 @@ def update_sentence_card(
                     sense = pref
                     meaning = pref.meaning
             if sense is None:
-                sense = create_or_get_sense(
-                    conn, expr, meaning, commit=False
-                )
+                sense = create_or_get_sense(conn, expr, meaning, commit=False)
             cur.execute(
                 "INSERT INTO unfamiliar_items "
                 "(card_id, expression, meaning, sense_id, surface_form) "
@@ -637,6 +671,7 @@ def update_sentence_card(
 # Database discovery
 # ---------------------------------------------------------------------------
 
+
 def find_databases(base_dir=None):
     """Recursively find all _barsky.db files under *base_dir*.
 
@@ -647,6 +682,7 @@ def find_databases(base_dir=None):
     """
     if base_dir is None:
         from .config import get_database_root
+
         base_dir = get_database_root()
 
     results = []
@@ -657,6 +693,8 @@ def find_databases(base_dir=None):
         for f in files:
             if f.endswith(DB_SUFFIX):
                 full_path = os.path.join(root, f)
+                if os.path.islink(full_path):
+                    continue
                 db_name = f[: -len(DB_SUFFIX)]
                 rel_dir = os.path.relpath(root, base_dir)
                 if rel_dir == ".":

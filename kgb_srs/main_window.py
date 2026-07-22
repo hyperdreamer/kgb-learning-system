@@ -1,9 +1,10 @@
 """Main application window – BarskyApp."""
 
-import os
-import sqlite3
 import datetime
-import random
+import logging
+import os
+import secrets
+import sqlite3
 import sys
 
 from PyQt6.QtWidgets import (
@@ -13,158 +14,110 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QGraphicsView,
     QGraphicsScene,
     QMessageBox,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QAbstractItemView,
     QCheckBox,
     QMenu,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon, QShortcut, QKeySequence
+from PyQt6.QtGui import (
+    QFont,
+    QPainter,
+    QPen,
+    QColor,
+    QBrush,
+    QIcon,
+    QShortcut,
+    QKeySequence,
+)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import (
     load_settings,
     save_settings,
+    normalize_settings_path,
     get_database_root,
     ensure_database_root_structure,
     resolve_default_database,
     relative_db_path,
 )
-from .db import init_db, find_databases
+from .db import find_databases, init_db, rollback_after_failure
+from .senses import ProjectionOwnershipConflictError
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
 from .forms import SentenceCardDialog, DBCreationDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 from .schema import (
-    insert_sentence_card, get_sentence_card, update_sentence_card,
-    find_duplicate_sentence_card, validate_db_name,
+    insert_sentence_card,
+    get_sentence_card,
+    update_sentence_card,
+    find_duplicate_sentence_card,
+    validate_db_name,
     resolve_db_path,
+    create_database_exclusively,
 )
-from .catalog import (DatabaseType, infer_database_type,
-                       read_database_type, write_database_type,
-                       build_catalog_tree, DB_DIR_LANGUAGE_SENTENCE,
-                       DB_DIR_LANGUAGE_WORD_PHRASE, DB_DIR_KNOWLEDGE)
-from .search import search_sentence_cards, search_word_phrase_cards
+from .catalog import (
+    DatabaseType,
+    infer_database_type,
+    read_database_type,
+    write_database_type,
+    build_catalog_tree,
+    DB_DIR_LANGUAGE_SENTENCE,
+    DB_DIR_LANGUAGE_WORD_PHRASE,
+    DB_DIR_KNOWLEDGE,
+)
 from .settings_dialog import SettingsDialog
-
-_DB_MENU_STYLESHEET = (
-    "QMenu::item {"
-    " padding-left: 12px;"
-    " padding-right: 28px;"
-    " padding-top: 6px;"
-    " padding-bottom: 6px;"
-    " }"
+from .browse_dialog import (
+    BrowseCardsDialog,
+    _expression_labels,
+    _fetch_expressions_for_card,
+)
+from .database_menu import (
+    _DB_MENU_STYLESHEET,
+    _compute_display_path,
+    _expand_to_path,
+    _menu_contains,
+    _open_and_infer_type as _open_database_type,
+    build_db_menu,
+)
+from .review_controller import ReviewControllerMixin
+from .validation import (
+    format_sentence_meaning_lines as _format_sentence_meaning_lines,
+    highlight_unfamiliar_in_sentence as _highlight_sentence_for_items,
 )
 
 
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-def _compute_display_path(db_path, db_type, legacy_display):
-    """Compute the catalog display path for a database.
-
-    For databases under canonical directories, builds from the canonical path.
-    For legacy databases (e.g. db/Languages/English), prepends category/subtype
-    to the legacy display.
-    """
-    from .catalog import display_path_for
-
-    norm_path = os.path.normpath(db_path).replace("\\", "/")
-
-    canon_dirs = {
-        DatabaseType.LANGUAGE_SENTENCE: DB_DIR_LANGUAGE_SENTENCE.replace("\\", "/"),
-        DatabaseType.LANGUAGE_WORD_PHRASE: DB_DIR_LANGUAGE_WORD_PHRASE.replace("\\", "/"),
-        DatabaseType.KNOWLEDGE: DB_DIR_KNOWLEDGE.replace("\\", "/"),
-    }
-    canonical = canon_dirs.get(db_type, "")
-
-    if canonical and canonical in norm_path:
-        return display_path_for(db_path, db_type)
-
-    # Legacy path: prepend category and, for language DBs, subtype.
-    category = db_type.category_display
-    legacy = legacy_display.replace("\\", "/")
-    if db_type == DatabaseType.KNOWLEDGE:
-        return os.path.join(category, legacy)
-    return os.path.join(category, db_type.display, legacy)
+logger = logging.getLogger(__name__)
 
 
 def _open_and_infer_type(db_path):
-    """Open a DB briefly to read or infer its type."""
-    conn = None
-    try:
-        conn = sqlite3.connect(db_path)
-        db_type = read_database_type(conn)
-        if db_type is not None:
-            return db_type
-    except (sqlite3.Error, OSError):
-        pass
-    finally:
-        if conn is not None:
-            conn.close()
-    return infer_database_type(db_path)
+    """Compatibility wrapper for database-menu type discovery.
 
-
-def _fetch_expressions_for_card(conn, card_id):
-    """Fetch unfamiliar expressions for a sentence card.
-
-    Returns list of (expression, meaning, sense_id, surface_form) tuples.
+    The injection boundary retains monkeypatch-friendly public helpers while
+    the menu construction itself lives in :mod:`kgb_srs.database_menu`.
     """
-    from .schema import ensure_sentence_schema
-
-    ensure_sentence_schema(conn, commit=False)
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT expression, meaning, sense_id, surface_form "
-        "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
-        (card_id,),
+    return _open_database_type(
+        db_path,
+        connect=sqlite3.connect,
+        read=read_database_type,
+        infer=infer_database_type,
     )
-    return [
-        (r[0], r[1], r[2], r[3] or "")
-        for r in cur.fetchall()
-    ]
 
 
-def _expression_labels(items):
-    """Return expression text from structured or legacy child items."""
-    return [item[0] if isinstance(item, (tuple, list)) else item for item in items]
+def _rollback_quietly(conn):
+    """Rollback without hiding the SQLite failure being handled."""
+    rollback_after_failure(conn, "main-window card write")
 
-
-def _sort_items_by_sentence_order(sentence, items):
-    """Order unfamiliar items by first surface appearance in *sentence*."""
-    from .validation import sort_items_by_sentence_order
-    return sort_items_by_sentence_order(sentence, items)
-
-
-def _format_sentence_meaning_lines(items) -> list[str]:
-    """Format expression+meaning lines for the card back."""
-    from .validation import format_sentence_meaning_lines
-    return format_sentence_meaning_lines(items)
-
-
-def _highlight_sentence_for_items(sentence, items):
-    """Bold matched surface forms of unfamiliar items inside *sentence*.
-
-    Passes structured items so preferred ``surface_form`` (AI residual)
-    can bold irregulars the local inflection map does not cover.
-    """
-    from .validation import highlight_unfamiliar_in_sentence
-    return highlight_unfamiliar_in_sentence(sentence, items)
 
 # ---------------------------------------------------------------------------
 # BarskyApp
 # ---------------------------------------------------------------------------
 
-class BarskyApp(QMainWindow):
+
+class BarskyApp(ReviewControllerMixin, QMainWindow):
     """Main application window for the KGB 5-Box SRS System."""
 
     @staticmethod
@@ -172,11 +125,16 @@ class BarskyApp(QMainWindow):
         icon = QIcon.fromTheme(name)
         return icon if not icon.isNull() else QIcon()
 
-    def __init__(self):
+    def __init__(self, settings_file=None):
         super().__init__()
         self.setWindowTitle("KGB 5-Box SRS System")
 
-        self.settings = load_settings()
+        self.settings_file = (
+            normalize_settings_path(settings_file)
+            if settings_file is not None
+            else None
+        )
+        self.settings = load_settings(self.settings_file)
         self.resize(self.settings["width"], self.settings["height"])
 
         self.current_lang = None
@@ -184,16 +142,18 @@ class BarskyApp(QMainWindow):
         self.current_db_path = None
         self._db_type = None
         self.current_card = None
+        self._current_card_transition = None
         self.cards_due = []
         self.is_current_flipped = False
         self.review_mode = ""
 
         self._paused_review_card = None
+        self._paused_current_card_transition = None
         self._paused_review_mode = ""
 
         # Daily-review session state
-        self._daily_review_history = []       # cards graded this session
-        self._daily_queue_snapshot = []       # full original due queue (Restart)
+        self._daily_review_history = []  # cards graded this session
+        self._daily_queue_snapshot = []  # full original due queue (Restart)
 
         # Paused-session deep state (preserved across close/resume)
         self._paused_cards_due = []
@@ -203,6 +163,12 @@ class BarskyApp(QMainWindow):
         self.tts_worker = None
         self.voice_worker = None
         self._tts_temp_path = None
+        # A close requested during TTS is completed by the worker's actual
+        # finished signal.  Never block the GUI thread waiting for it.
+        self._pending_close = False
+        self._pending_close_worker = None
+        self._close_completion_requested = False
+        self._terminal_closing = False
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -228,23 +194,35 @@ class BarskyApp(QMainWindow):
 
         default_db = resolve_default_database(self.settings)
         if default_db and os.path.exists(default_db):
-            for display, path in find_databases(
-                get_database_root(self.settings)
-            ):
+            for display, path in find_databases(get_database_root(self.settings)):
                 if path == default_db:
-                    self.current_db_path = default_db
-                    self.current_lang = display
-                    self.db_btn.setText(f"📂 {self._leaf_name(display)}")
-                    self.load_database(silent=True)
+                    self.load_database(silent=True, db_path=default_db, display=display)
                     break
 
     # ------------------------------------------------------------------
     # Settings
     # ------------------------------------------------------------------
     def _save_settings(self):
-        save_settings(self.settings)
+        if self.settings_file is None:
+            save_settings(self.settings)
+        else:
+            save_settings(self.settings, self.settings_file)
 
     def closeEvent(self, event):
+        worker = self.tts_worker
+        if worker is not None and worker.isRunning():
+            # Keep the worker alive: it may still create a temp file which its
+            # callback must unlink.  Presentation callbacks consult this flag
+            # and therefore cannot play audio or show an error while closing.
+            self._pending_close = True
+            self._pending_close_worker = worker
+            event.ignore()
+            return
+
+        # A worker may have emitted a queued payload after it stopped but
+        # before this immediate close path ran.  Suppress that callback.
+        self._terminal_closing = True
+
         self.settings["width"] = self.width()
         self.settings["height"] = self.height()
         if self.current_db_path:
@@ -256,20 +234,7 @@ class BarskyApp(QMainWindow):
         except OSError as exc:
             print(f"Could not save settings: {exc}", file=sys.stderr)
 
-        worker = self.tts_worker
-        if worker is not None and worker.isRunning():
-            try:
-                worker.audio_ready.disconnect()
-            except TypeError:
-                pass
-            try:
-                worker.error.disconnect()
-            except TypeError:
-                pass
-            worker.wait(2000)
-            if self.tts_worker is worker:
-                self.tts_worker = None
-
+        self._stop_tts_playback()
         self._cleanup_tts_temp()
         event.accept()
 
@@ -304,26 +269,30 @@ class BarskyApp(QMainWindow):
 
         self.start_btn.setStyleSheet(
             self._button_style(
-                "#43A047", "#66BB6A",
+                "#43A047",
+                "#66BB6A",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
         self.restart_review_btn.setStyleSheet(
             self._button_style(
-                "#1E88E5", "#42A5F5",
+                "#1E88E5",
+                "#42A5F5",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
         self.previous_review_btn.setStyleSheet(
             self._button_style(
-                "#E53935", "#EF5350",
+                "#E53935",
+                "#EF5350",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
 
         self.delete_entry_btn.setStyleSheet(
             self._button_style(
-                "#D32F2F", "#F44336",
+                "#D32F2F",
+                "#F44336",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
@@ -392,76 +361,26 @@ class BarskyApp(QMainWindow):
         # delete_entry_btn already styled as review-control red button above.
 
     # ------------------------------------------------------------------
-    # Database Menu
+    # Database menu bridge
     # ------------------------------------------------------------------
     def build_db_menu(self, parent_menu):
-        """Build a hierarchical QMenu using catalog-based categories/subtypes."""
-        settings = getattr(self, "settings", None) or {}
-        dbs = find_databases(get_database_root(settings))
-        entries = []
-        for display, full_path in dbs:
-            db_type = _open_and_infer_type(full_path)
-            dp = _compute_display_path(full_path, db_type, display)
-            entries.append((dp, full_path, db_type))
+        """Build the catalog menu through the focused menu module."""
+        return build_db_menu(
+            self,
+            parent_menu,
+            find=find_databases,
+            infer=_open_and_infer_type,
+        )
 
-        tree = build_catalog_tree(entries)
-        current_path = getattr(self, "current_db_path", None)
-
-        def populate_menu(menu, subtree):
-            menu.setStyleSheet(_DB_MENU_STYLESHEET)
-            items = sorted(
-                subtree.items(),
-                key=lambda kv: (
-                    not isinstance(kv[1], dict),
-                    kv[0].lower(),
-                ),
-            )
-            for name, value in items:
-                if isinstance(value, dict):
-                    sub = QMenu(name, menu)
-                    populate_menu(sub, value)
-                    menu.addMenu(sub)
-                else:
-                    db_path, db_type = value
-                    bullet = "● " if db_path == current_path else ""
-                    label = f"{bullet}{name}"
-                    action = menu.addAction(label)
-                    action.setData(db_path)
-            return menu
-
-        return populate_menu(parent_menu, tree)
-
-    @staticmethod
-    def _menu_contains(menu, target_path):
-        for action in menu.actions():
-            if action.menu():
-                if BarskyApp._menu_contains(action.menu(), target_path):
-                    return True
-            elif action.data() == target_path:
-                return True
-        return False
-
-    @staticmethod
-    def _expand_to_path(menu, target_path):
-        for action in menu.actions():
-            if action.menu():
-                if BarskyApp._menu_contains(action.menu(), target_path):
-                    menu.setActiveAction(action)
-                    QTimer.singleShot(20, lambda m=action.menu(), t=target_path:
-                                      BarskyApp._expand_to_path(m, t))
-                    return
-            elif action.data() == target_path:
-                menu.setActiveAction(action)
-                return
+    _menu_contains = staticmethod(_menu_contains)
+    _expand_to_path = staticmethod(_expand_to_path)
 
     # ------------------------------------------------------------------
     # UI Setup
     # ------------------------------------------------------------------
     def setup_ui(self):
         central_widget = QWidget()
-        central_widget.setStyleSheet(
-            "QWidget { background-color: #FAFAFA; }"
-        )
+        central_widget.setStyleSheet("QWidget { background-color: #FAFAFA; }")
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(10)
@@ -515,9 +434,7 @@ class BarskyApp(QMainWindow):
         self.all_cards_checkbox = QCheckBox("All cards")
         self.all_cards_checkbox.setEnabled(False)
         self.all_cards_checkbox.setChecked(False)
-        self.all_cards_checkbox.stateChanged.connect(
-            self._on_all_cards_toggled
-        )
+        self.all_cards_checkbox.stateChanged.connect(self._on_all_cards_toggled)
         self.all_cards_checkbox.setToolTip(
             "When checked, Start Review includes every card in the database,\n"
             "not only cards due today. Grading still updates the schedule."
@@ -543,7 +460,9 @@ class BarskyApp(QMainWindow):
         self.add_entry_btn.setToolTip("Add a new card (Alt+N)")
         top_layout.addWidget(self.add_entry_btn)
 
-        self.delete_entry_btn = action_btn(" Delete Entry", "edit-delete", self.delete_current_card)
+        self.delete_entry_btn = action_btn(
+            " Delete Entry", "edit-delete", self.delete_current_card
+        )
         self.delete_entry_btn.setEnabled(False)
         self.delete_entry_btn.setToolTip("Delete the displayed card (Alt+D)")
         top_layout.addWidget(self.delete_entry_btn)
@@ -663,14 +582,14 @@ class BarskyApp(QMainWindow):
             return sc
 
         # Review flow
-        add("Alt+S", self._shortcut_primary)       # Start / Next
-        add("Alt+R", self._shortcut_reveal)        # Reveal
+        add("Alt+S", self._shortcut_primary)  # Start / Next
+        add("Alt+R", self._shortcut_reveal)  # Reveal
         add("Alt+Left", self._shortcut_incorrect)
         add("Alt+Right", self._shortcut_correct)
         add("Alt+1", self._shortcut_incorrect)
         add("Alt+2", self._shortcut_correct)
         add("Alt+X", self._shortcut_close_review)  # Close / eXit review
-        add("Alt+T", self._shortcut_restart)       # resTart
+        add("Alt+T", self._shortcut_restart)  # resTart
         add("Alt+P", self._shortcut_previous)
         add("Alt+L", self._shortcut_listen)
 
@@ -757,7 +676,9 @@ class BarskyApp(QMainWindow):
         pos = self.db_btn.mapToGlobal(self.db_btn.rect().bottomLeft())
 
         if self.current_db_path and self._menu_contains(menu, self.current_db_path):
-            QTimer.singleShot(10, lambda: self._expand_to_path(menu, self.current_db_path))
+            QTimer.singleShot(
+                10, lambda: self._expand_to_path(menu, self.current_db_path)
+            )
 
         menu.popup(pos)
 
@@ -771,11 +692,11 @@ class BarskyApp(QMainWindow):
             return
         for display, path in find_databases(get_database_root(self.settings)):
             if path == db_path:
-                self.current_db_path = db_path
-                self.current_lang = display
-                self.db_btn.setText(f"📂 {self._leaf_name(display)}")
-                self.load_database(silent=False)
+                self.load_database(silent=False, db_path=db_path, display=display)
                 return
+
+        display = action.text() if hasattr(action, "text") else self._leaf_name(db_path)
+        self.load_database(silent=False, db_path=db_path, display=display or db_path)
 
     def create_new_database(self):
         """Show category/subtype selection dialog, then create DB with metadata."""
@@ -799,9 +720,10 @@ class BarskyApp(QMainWindow):
 
         if not validate_db_name(name):
             QMessageBox.warning(
-                self, "Invalid Name",
+                self,
+                "Invalid Name",
                 f"Database name '{name}' contains invalid characters.\n\n"
-                "Names must not contain /, \\, .., NUL, or control characters."
+                "Names must not contain /, \\, .., NUL, or control characters.",
             )
             return
 
@@ -819,47 +741,61 @@ class BarskyApp(QMainWindow):
             return
 
         target_dir = os.path.dirname(path)
-        os.makedirs(target_dir, exist_ok=True)
 
-        if os.path.exists(path):
-            QMessageBox.warning(
-                self, "Exists",
-                f"A database named '{name}' already exists in this location."
-            )
-            return
-
-        conn = init_db(path)
-        try:
+        def initialize_database(conn):
             write_database_type(conn, db_type)
             if db_type == DatabaseType.LANGUAGE_SENTENCE:
                 from .schema import ensure_sentence_schema
-                from .senses import ensure_linked_word_phrase_database
 
                 ensure_sentence_schema(conn)
-                try:
-                    ensure_linked_word_phrase_database(
-                        conn, path, db_root, sync=True
-                    )
-                except Exception as exc:
-                    # The word/phrase database is a derived projection.  Its
-                    # failure must not prevent opening the newly created source DB.
-                    print(
-                        f"Word/phrase projection creation failed: {exc}",
-                        file=sys.stderr,
-                    )
-        finally:
-            conn.close()
+
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            create_database_exclusively(
+                path, initialize_database, init_database=init_db
+            )
+        except FileExistsError:
+            QMessageBox.warning(
+                self,
+                "Exists",
+                f"A database named '{name}' already exists in this location.",
+            )
+            return
+        except (OSError, sqlite3.Error) as exc:
+            QMessageBox.warning(
+                self,
+                "Database Creation Failed",
+                f"Could not create database '{name}':\n{path}\n\n{exc}",
+            )
+            return
 
         display = os.path.join(subdir, name)
-
-        self.current_db_path = path
-        self.current_lang = display
-        self.db_btn.setText(f"📂 {name}")
-        self.load_database(silent=False)
+        self.load_database(
+            silent=False,
+            db_path=path,
+            display=display,
+            offer_projection_adoption=False,
+        )
 
     # ------------------------------------------------------------------
     # Database open / close
     # ------------------------------------------------------------------
+    def _reset_review_session(self):
+        """Reset state that belongs to one database review session."""
+        self.current_card = None
+        self._current_card_transition = None
+        self.cards_due = []
+        self.is_current_flipped = False
+        self.review_mode = ""
+        self._paused_review_card = None
+        self._paused_current_card_transition = None
+        self._paused_review_mode = ""
+        self._daily_review_history = []
+        self._daily_queue_snapshot = []
+        self._paused_cards_due = []
+        self._paused_daily_queue = []
+        self._paused_review_history = []
+
     def _clear_database_state(self):
         """Clear all UI and session state tied to the current database."""
         if self.conn:
@@ -868,17 +804,7 @@ class BarskyApp(QMainWindow):
         self.current_db_path = None
         self.current_lang = None
         self._db_type = None
-        self.current_card = None
-        self.cards_due = []
-        self.is_current_flipped = False
-        self.review_mode = ""
-        self._paused_review_card = None
-        self._paused_review_mode = ""
-        self._daily_review_history = []
-        self._daily_queue_snapshot = []
-        self._paused_cards_due = []
-        self._paused_daily_queue = []
-        self._paused_review_history = []
+        self._reset_review_session()
         self.db_btn.setText("📂 Select Database")
 
         for checkbox in (self.random_checkbox, self.all_cards_checkbox):
@@ -891,103 +817,197 @@ class BarskyApp(QMainWindow):
         self.card_ui = None
         self._update_button_visibility()
 
-    def load_database(self, silent=False):
-        """Open the database, ensure metadata, and initialize review state."""
-        if not self.current_db_path:
-            if not silent:
-                QMessageBox.warning(self, "Error", "Load a database first.")
-            return
+    def _randomize_box_five_for_connection(self, conn):
+        """Apply the occasional Box 5 reset while preparing a connection."""
+        c = conn.cursor()
+        c.execute("SELECT id FROM cards WHERE box = 5")
+        mastered_cards = c.fetchall()
+        if mastered_cards and secrets.randbelow(20) == 0:
+            target = secrets.choice(mastered_cards)[0]
+            today_str = datetime.date.today().isoformat()
+            c.execute(
+                "UPDATE cards SET box = 1, next_review = ? WHERE id = ?",
+                (today_str, target),
+            )
+            conn.commit()
 
-        if not os.path.exists(self.current_db_path):
-            failed_path = self.current_db_path
-            self._clear_database_state()
-            if not silent:
-                QMessageBox.warning(
-                    self, "Error", f"Database file not found:\n{failed_path}"
-                )
-            return
+    def _offer_projection_adoption(self, source_conn, source_path, conflict) -> bool:
+        """Offer explicit, backup-first adoption for one safe legacy conflict.
 
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+        Only a markerless canonical W/P projection is eligible.  Declining or
+        failing adoption keeps sentence-database work independent of its
+        derived projection.
+        """
+        if conflict.conflict.get("code") != "word_phrase_projection_marker_missing":
+            return False
+
+        from . import senses
+
+        db_root = get_database_root(self.settings)
+        target_path = senses.default_word_phrase_path_for_sentence(source_path, db_root)
+        reply = QMessageBox.question(
+            self,
+            "Adopt Word/Phrase Projection?",
+            "A legacy word/phrase database is at the canonical projection path but "
+            "does not record which sentence database owns it.\n\n"
+            f"Sentence source:\n{source_path}\n\n"
+            f"Word/phrase target:\n{target_path}\n\n"
+            "Adopting will first create a backup beside the target, then replace its "
+            "derived cards from this sentence database. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
 
         try:
-            self.conn = init_db(self.current_db_path)
+            _path, stats = senses.adopt_canonical_word_phrase_projection(
+                source_conn, source_path, db_root
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Projection Adoption Failed",
+                f"The sentence database remains usable.\n\n{exc}",
+            )
+            return False
 
-            # --- Metadata inference / persistence ---
-            db_type = read_database_type(self.conn)
-            if db_type is None:
-                db_type = infer_database_type(self.current_db_path)
-                write_database_type(self.conn, db_type)
+        QMessageBox.information(
+            self,
+            "Projection Adopted",
+            "The word/phrase projection was adopted and synchronized.\n\n"
+            f"Backup retained at:\n{stats['backup_path']}",
+        )
+        return True
 
-            self._db_type = db_type
+    def _adopt_database(
+        self, conn, path, display, db_type, is_random, all_cards_review
+    ):
+        """Replace the active database after its candidate has fully prepared."""
+        old_conn = self.conn
+        if old_conn is not None:
+            old_conn.close()
 
-            if db_type == DatabaseType.LANGUAGE_SENTENCE:
-                from .schema import ensure_sentence_schema
-                from .senses import ensure_linked_word_phrase_database
-
-                ensure_sentence_schema(self.conn)
-                # Old sentence DBs without a link get one automatically.
-                try:
-                    ensure_linked_word_phrase_database(
-                        self.conn,
-                        self.current_db_path,
-                        get_database_root(self.settings),
-                        sync=True,
-                    )
-                except Exception:
-                    pass
-
-            # --- Restore random review ---
-            c = self.conn.cursor()
-            c.execute("SELECT value FROM settings WHERE key = 'random_review'")
-            res = c.fetchone()
-        except Exception as e:
-            failed_path = self.current_db_path
-            self._clear_database_state()
-            if not silent:
-                QMessageBox.warning(
-                    self, "Error",
-                    f"Failed to open database:\n{failed_path}\n\n{e}"
-                )
-            return
-
-        is_random = True
-        if res:
-            is_random = res[0] == "1"
+        self.conn = conn
+        self.current_db_path = path
+        self.current_lang = display
+        self._db_type = db_type
+        self.db_btn.setText(f"📂 {self._leaf_name(display)}")
+        self._reset_review_session()
 
         self.random_checkbox.blockSignals(True)
         self.random_checkbox.setChecked(is_random)
         self.random_checkbox.setEnabled(True)
         self.random_checkbox.blockSignals(False)
 
-        # All-cards mode is session-only (not persisted) — default off so
-        # normal Start Review stays due-only unless the user opts in.
         if hasattr(self, "all_cards_checkbox"):
             self.all_cards_checkbox.blockSignals(True)
-            self.all_cards_checkbox.setChecked(False)
+            self.all_cards_checkbox.setChecked(all_cards_review)
             self.all_cards_checkbox.setEnabled(True)
             self.all_cards_checkbox.blockSignals(False)
 
-        self.current_card = None
-        self.cards_due = []
-        self.review_mode = ""
-        self._paused_review_card = None
-        self._paused_review_mode = ""
-        self._daily_review_history = []
-        self._daily_queue_snapshot = []
-        self._paused_cards_due = []
-        self._paused_daily_queue = []
-        self._paused_review_history = []
-
-        self.randomize_box_five()
-
+        self.scene.clear()
+        self.card_ui = None
         self._update_button_visibility()
 
+    def load_database(
+        self,
+        silent=False,
+        *,
+        db_path=None,
+        display=None,
+        offer_projection_adoption=True,
+    ):
+        """Prepare a candidate database, then atomically adopt it on success."""
+        candidate_path = db_path or self.current_db_path
+        candidate_display = display or self.current_lang
+        if not candidate_path:
+            if not silent:
+                QMessageBox.warning(self, "Error", "Load a database first.")
+            return
+
+        if not os.path.exists(candidate_path):
+            if not silent:
+                QMessageBox.warning(
+                    self, "Error", f"Database file not found:\n{candidate_path}"
+                )
+            return
+
+        candidate_conn = None
+        projection_conflict = None
+        try:
+            candidate_conn = init_db(candidate_path)
+
+            # --- Metadata inference / persistence ---
+            db_type = read_database_type(candidate_conn)
+            if db_type is None:
+                db_type = infer_database_type(candidate_path)
+                write_database_type(candidate_conn, db_type)
+
+            if db_type == DatabaseType.LANGUAGE_SENTENCE:
+                from .schema import ensure_sentence_schema
+                from .senses import ensure_linked_word_phrase_database
+
+                ensure_sentence_schema(candidate_conn)
+                # Old sentence DBs without a link get one automatically.
+                try:
+                    ensure_linked_word_phrase_database(
+                        candidate_conn,
+                        candidate_path,
+                        get_database_root(self.settings),
+                        sync=True,
+                    )
+                except ProjectionOwnershipConflictError as conflict:
+                    projection_conflict = conflict
+                except Exception:
+                    # Projection failures must not block sentence-database use.
+                    logger.warning(
+                        "Could not synchronize the linked word/phrase projection "
+                        "while loading %s; sentence database remains usable.",
+                        candidate_path,
+                        exc_info=True,
+                    )
+
+            # --- Restore random review ---
+            c = candidate_conn.cursor()
+            c.execute("SELECT value FROM settings WHERE key = 'random_review'")
+            random_review = c.fetchone()
+            c.execute("SELECT value FROM settings WHERE key = 'all_cards_review'")
+            all_cards_review = c.fetchone()
+            self._randomize_box_five_for_connection(candidate_conn)
+        except Exception as exc:
+            if candidate_conn is not None:
+                candidate_conn.close()
+            if not silent:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Failed to open database:\n{candidate_path}\n\n{exc}",
+                )
+            return
+
+        is_random = random_review[0] == "1" if random_review else True
+        is_all_cards_review = (
+            all_cards_review[0] == "1" if all_cards_review else False
+        )
+        self._adopt_database(
+            candidate_conn,
+            candidate_path,
+            candidate_display,
+            db_type,
+            is_random,
+            is_all_cards_review,
+        )
+
+        if projection_conflict is not None and not silent and offer_projection_adoption:
+            self._offer_projection_adoption(
+                candidate_conn, candidate_path, projection_conflict
+            )
+
         if not silent:
-            QMessageBox.information(self, "Success", f"Loaded database: {self.current_lang}")
+            QMessageBox.information(self, "Success", f"Loaded database: {display}")
             if not HAS_WEBENGINE:
-                if "Math" in self.current_lang or "LaTeX" in self.current_lang:
+                if "Math" in display or "LaTeX" in display:
                     QMessageBox.warning(
                         self,
                         "Notice",
@@ -995,22 +1015,11 @@ class BarskyApp(QMainWindow):
                         "pip install PyQt6-WebEngine",
                     )
 
-        self.scene.clear()
         if self.isVisible():
             self.redraw_canvas()
 
     def randomize_box_five(self):
-        c = self.conn.cursor()
-        c.execute("SELECT id FROM cards WHERE box = 5")
-        mastered_cards = c.fetchall()
-        if mastered_cards and random.random() < 0.05:
-            target = random.choice(mastered_cards)[0]
-            today_str = datetime.date.today().isoformat()
-            c.execute(
-                "UPDATE cards SET box = 1, next_review = ? WHERE id = ?",
-                (today_str, target),
-            )
-            self.conn.commit()
+        self._randomize_box_five_for_connection(self.conn)
 
     def on_random_toggled(self, state):
         if not self.conn:
@@ -1024,47 +1033,27 @@ class BarskyApp(QMainWindow):
         self.conn.commit()
 
     def _on_all_cards_toggled(self, state):
-        """Session option only — applies on the next Start Review / Restart.
+        """Persist the review scope for the active database.
 
-        Does not rewrite the active queue mid-session; Restart re-reads it.
+        The active queue is unchanged; Start Review and Restart read the
+        current checkbox state when building a queue.
         """
-        # Intentionally no DB write: keep SRS default (due-only) unless the
-        # user opts in each time they open a database.
-        return
-
-    def _load_review_queue(self, cursor):
-        """Return the card queue for a fresh review session.
-
-        Due-only when *All cards* is unchecked; every card when checked.
-        """
-        all_cards = bool(
-            getattr(self, "all_cards_checkbox", None)
-            and self.all_cards_checkbox.isChecked()
+        if not self.conn:
+            return
+        is_all_cards_review = self.all_cards_checkbox.isChecked()
+        c = self.conn.cursor()
+        c.execute(
+            "UPDATE settings SET value = ? WHERE key = 'all_cards_review'",
+            ("1" if is_all_cards_review else "0",),
         )
-        if all_cards:
-            cursor.execute(
-                "SELECT id, front, back, box FROM cards ORDER BY id"
-            )
-        else:
-            today_str = datetime.date.today().isoformat()
-            cursor.execute(
-                "SELECT id, front, back, box FROM cards "
-                "WHERE next_review <= ?",
-                (today_str,),
-            )
-        queue = list(cursor.fetchall())
-        if self.random_checkbox.isChecked():
-            random.shuffle(queue)
-        else:
-            queue.sort(key=lambda x: x[0])
-        return queue
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Canvas
     # ------------------------------------------------------------------
     def showEvent(self, event):
         super().showEvent(event)
-        if not getattr(self, '_did_initial_canvas', False):
+        if not getattr(self, "_did_initial_canvas", False):
             self._did_initial_canvas = True
             QTimer.singleShot(0, self.redraw_canvas)
 
@@ -1097,9 +1086,7 @@ class BarskyApp(QMainWindow):
         ui_font_size = self.settings.get("font_size", 14)
         # Escape quotes for safe inline CSS
         safe_ui_font = str(ui_font_family).replace("\\", "\\\\").replace("'", "\\'")
-        zone_font_style = (
-            f"font-family: '{safe_ui_font}'; font-size: {ui_font_size}px;"
-        )
+        zone_font_style = f"font-family: '{safe_ui_font}'; font-size: {ui_font_size}px;"
 
         self.incorrect_zone = DropZoneItem(
             margin,
@@ -1154,18 +1141,51 @@ class BarskyApp(QMainWindow):
     # ------------------------------------------------------------------
     # TTS
     # ------------------------------------------------------------------
+    def _stop_tts_playback(self):
+        """Stop TTS playback before removing its source file."""
+        player = getattr(self, "player", None)
+        stop = getattr(player, "stop", None)
+        if stop is not None:
+            stop()
+
     def _cleanup_tts_temp(self):
         """Best-effort unlink of the last generated TTS temp MP3."""
         from .tts import unlink_tts_temp
 
         self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
 
+    def _tts_is_closing(self) -> bool:
+        """Whether TTS callbacks must not update review presentation state."""
+        return bool(
+            getattr(self, "_pending_close", False)
+            or getattr(self, "_close_completion_requested", False)
+            or getattr(self, "_terminal_closing", False)
+        )
+
+    def _on_tts_worker_finished(self, worker) -> None:
+        """Release a completed TTS worker and resume a deferred window close."""
+        if self.tts_worker is worker:
+            self.tts_worker = None
+
+        if getattr(self, "_pending_close_worker", None) is not worker:
+            return
+
+        self._pending_close_worker = None
+        self._pending_close = False
+        if not getattr(self, "_close_completion_requested", False):
+            self._close_completion_requested = True
+            # This schedules the normal close path; no GUI-thread wait.
+            self.close()
+
     def speak_text(self, text, btn):
+        if BarskyApp._tts_is_closing(self):
+            return
         if self.tts_worker is not None and self.tts_worker.isRunning():
             # Avoid stacking workers; ignore while one is already generating.
             return
 
         # Drop the previous temp file before generating a new one.
+        BarskyApp._stop_tts_playback(self)
         self._cleanup_tts_temp()
 
         btn.setEnabled(False)
@@ -1179,9 +1199,9 @@ class BarskyApp(QMainWindow):
 
         def on_audio_ready(file_path):
             if (
-                self.tts_worker is not worker
+                BarskyApp._tts_is_closing(self)
+                or self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
-                or getattr(self, "card_ui", None) is not request_card_ui
             ):
                 from .tts import unlink_tts_temp
 
@@ -1190,23 +1210,24 @@ class BarskyApp(QMainWindow):
             self._tts_temp_path = file_path
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.play()
-            btn.setEnabled(True)
-            btn.setText("🔊 Listen")
+            if getattr(self, "card_ui", None) is request_card_ui:
+                btn.setEnabled(True)
+                btn.setText("🔊 Listen")
 
         def on_error(err):
             if (
-                self.tts_worker is not worker
+                BarskyApp._tts_is_closing(self)
+                or self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
-                or getattr(self, "card_ui", None) is not request_card_ui
             ):
                 return
             QMessageBox.warning(self, "TTS Error", f"Audio Error: {err}")
-            btn.setEnabled(True)
-            btn.setText("🔊 Listen")
+            if getattr(self, "card_ui", None) is request_card_ui:
+                btn.setEnabled(True)
+                btn.setText("🔊 Listen")
 
         def on_thread_finished():
-            if self.tts_worker is worker:
-                self.tts_worker = None
+            BarskyApp._on_tts_worker_finished(self, worker)
 
         worker.audio_ready.connect(on_audio_ready)
         worker.error.connect(on_error)
@@ -1250,13 +1271,21 @@ class BarskyApp(QMainWindow):
             # Pass full (expression, meaning, sense_id) tuples; the dialog
             # uses meanings + sense links for AI reuse.
             dialog = SentenceCardDialog(
-                self, "Edit Sentence Card", front, items, back,
+                self,
+                "Edit Sentence Card",
+                front,
+                items,
+                back,
                 settings=self.settings,
+                settings_file=self.settings_file,
                 conn=self.conn,
             )
         else:
             dialog = SentenceCardDialog(
-                self, "Add Sentence Card", settings=self.settings,
+                self,
+                "Add Sentence Card",
+                settings=self.settings,
+                settings_file=self.settings_file,
                 conn=self.conn,
             )
 
@@ -1273,7 +1302,8 @@ class BarskyApp(QMainWindow):
             dup_id = find_duplicate_sentence_card(self.conn, sentence, items)
             if dup_id is not None:
                 reply = QMessageBox.question(
-                    self, "Duplicate Detected",
+                    self,
+                    "Duplicate Detected",
                     "A card with the same sentence and expressions already exists.\n\n"
                     "Open it for editing instead?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1285,8 +1315,11 @@ class BarskyApp(QMainWindow):
         try:
             if edit_card_id is not None:
                 update_sentence_card(
-                    self.conn, edit_card_id,
-                    front=sentence, back=back, items=items,
+                    self.conn,
+                    edit_card_id,
+                    front=sentence,
+                    back=back,
+                    items=items,
                     verified_surfaces=verified_surfaces,
                 )
                 QMessageBox.information(
@@ -1303,11 +1336,11 @@ class BarskyApp(QMainWindow):
                 )
                 QMessageBox.information(self, "Added", "Card added to Box 1.")
                 self._show_new_card(card_id, sentence, back)
-        except ValueError as e:
+        except (ValueError, sqlite3.Error) as exc:
             # Dialog validation passed, but insert/update still rejected
-            # (e.g. residual surface not re-verified). Show a dialog instead
-            # of an uncaught traceback from the Alt+ shortcut path.
-            QMessageBox.warning(self, "Could not save card", str(e))
+            # (e.g. residual surface not re-verified). Sentence-card helpers
+            # own their transaction rollback.
+            QMessageBox.warning(self, "Could not save card", str(exc))
             return
 
         # Shared catalog → auto-sync linked word/phrase projection.
@@ -1332,7 +1365,11 @@ class BarskyApp(QMainWindow):
             )
         except Exception:
             # Never block sentence save on projection failure.
-            pass
+            logger.warning(
+                "Could not synchronize the linked word/phrase projection after "
+                "a sentence save; the sentence change remains saved.",
+                exc_info=True,
+            )
 
     def _ensure_all_word_phrase_projections(self) -> None:
         """Startup: link + sync W/P for every sentence DB under the root."""
@@ -1355,32 +1392,51 @@ class BarskyApp(QMainWindow):
                 "Add New Knowledge Card",
                 "Enter the front content. Markdown and MathJax are supported:",
             )
-            if front_dialog.exec() != QDialog.DialogCode.Accepted or not front_dialog.text_value:
+            if (
+                front_dialog.exec() != QDialog.DialogCode.Accepted
+                or not front_dialog.text_value
+            ):
                 return
             front = front_dialog.text_value
 
         c = self.conn.cursor()
         if edit_card_id is None:
-            c.execute(
-                "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
-                (front,),
-            )
-            existing_card = c.fetchone()
+            try:
+                c.execute(
+                    "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
+                    (front,),
+                )
+                existing_card = c.fetchone()
+            except sqlite3.Error:
+                _rollback_quietly(self.conn)
+                QMessageBox.warning(
+                    self, "Could not save card", "The card could not be saved."
+                )
+                return
             if existing_card:
                 card_id, ex_front, ex_back, ex_box = existing_card
                 QMessageBox.information(
-                    self, "Already Exists",
+                    self,
+                    "Already Exists",
                     f"'{ex_front}' is already in your database (Box {ex_box}).\n\n"
-                    "Opening Edit window."
+                    "Opening Edit window.",
                 )
                 return self._add_knowledge_card(
-                    edit_card_id=card_id, existing_front=ex_front)
+                    edit_card_id=card_id, existing_front=ex_front
+                )
 
         today_str = datetime.date.today().isoformat()
 
         if edit_card_id is not None:
-            c.execute("SELECT back FROM cards WHERE id=?", (edit_card_id,))
-            row = c.fetchone()
+            try:
+                c.execute("SELECT back FROM cards WHERE id=?", (edit_card_id,))
+                row = c.fetchone()
+            except sqlite3.Error:
+                _rollback_quietly(self.conn)
+                QMessageBox.warning(
+                    self, "Could not save card", "The card could not be saved."
+                )
+                return
             ex_back = row[0] if row else ""
 
             back_dialog = DynamicInputDialog(
@@ -1389,13 +1445,25 @@ class BarskyApp(QMainWindow):
                 "Enter the back content. Markdown and MathJax supported:",
                 ex_back,
             )
-            if back_dialog.exec() == QDialog.DialogCode.Accepted and back_dialog.text_value:
-                c.execute(
-                    "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-                    (front, back_dialog.text_value, today_str, edit_card_id),
+            if (
+                back_dialog.exec() == QDialog.DialogCode.Accepted
+                and back_dialog.text_value
+            ):
+                try:
+                    c.execute(
+                        "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
+                        (front, back_dialog.text_value, today_str, edit_card_id),
+                    )
+                    self.conn.commit()
+                except sqlite3.Error:
+                    _rollback_quietly(self.conn)
+                    QMessageBox.warning(
+                        self, "Could not save card", "The card could not be saved."
+                    )
+                    return
+                QMessageBox.information(
+                    self, "Updated", "Card updated and moved to Box 1."
                 )
-                self.conn.commit()
-                QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
                 self._refresh_current_card(edit_card_id)
         else:
             back_dialog = DynamicInputDialog(
@@ -1403,13 +1471,23 @@ class BarskyApp(QMainWindow):
                 "Add Knowledge Card",
                 "Enter the back content. Markdown and MathJax supported:",
             )
-            if back_dialog.exec() == QDialog.DialogCode.Accepted and back_dialog.text_value:
-                c.execute(
-                    "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
-                    (front, back_dialog.text_value, today_str),
-                )
-                card_id = c.lastrowid
-                self.conn.commit()
+            if (
+                back_dialog.exec() == QDialog.DialogCode.Accepted
+                and back_dialog.text_value
+            ):
+                try:
+                    c.execute(
+                        "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
+                        (front, back_dialog.text_value, today_str),
+                    )
+                    card_id = c.lastrowid
+                    self.conn.commit()
+                except sqlite3.Error:
+                    _rollback_quietly(self.conn)
+                    QMessageBox.warning(
+                        self, "Could not save card", "The card could not be saved."
+                    )
+                    return
                 QMessageBox.information(self, "Added", "Knowledge card added to Box 1.")
                 self._show_new_card(card_id, front, back_dialog.text_value)
 
@@ -1435,11 +1513,20 @@ class BarskyApp(QMainWindow):
         c.execute("SELECT id, front, back, box FROM cards WHERE id=?", (card_id,))
         fresh = c.fetchone()
         if not fresh:
-            # Card was deleted — remove from queue
-            if self.current_card is not None:
-                self.cards_due = [
-                    cf for cf in self.cards_due if cf[0] != card_id
-                ]
+            # Card was deleted — remove from queue and clear stale display.
+            self.cards_due = [cf for cf in self.cards_due if cf[0] != card_id]
+            if self.current_card is not None and self.current_card[0] == card_id:
+                self.current_card = None
+                self.is_current_flipped = False
+                card_ui = getattr(self, "card_ui", None)
+                try:
+                    scene = getattr(self, "scene", None)
+                    if card_ui is not None and scene is not None:
+                        scene.removeItem(card_ui)
+                except RuntimeError:
+                    pass
+                finally:
+                    self.card_ui = None
             return
 
         if self.current_card is not None and self.current_card[0] == card_id:
@@ -1453,9 +1540,7 @@ class BarskyApp(QMainWindow):
         else:
             # Different card — update or remove from cards_due
             was_queued = any(cf[0] == card_id for cf in self.cards_due)
-            self.cards_due = [
-                cf for cf in self.cards_due if cf[0] != card_id
-            ]
+            self.cards_due = [cf for cf in self.cards_due if cf[0] != card_id]
             if was_queued:
                 # Preserve queue membership without replacing the active card.
                 self.cards_due.append(fresh)
@@ -1470,11 +1555,16 @@ class BarskyApp(QMainWindow):
         self.cards_due = _without(self.cards_due)
         if self.current_card is not None and self.current_card[0] == card_id:
             self.current_card = None
-        self._daily_review_history = _without(self._daily_review_history)
+            self._current_card_transition = None
+        self._daily_review_history = [
+            entry for entry in self._daily_review_history if entry.card[0] != card_id
+        ]
         self._daily_queue_snapshot = _without(self._daily_queue_snapshot)
         self._paused_cards_due = _without(self._paused_cards_due)
         self._paused_daily_queue = _without(self._paused_daily_queue)
-        self._paused_review_history = _without(self._paused_review_history)
+        self._paused_review_history = [
+            entry for entry in self._paused_review_history if entry.card[0] != card_id
+        ]
 
     def _delete_card_by_id(self, card_id):
         """Execute DELETE + commit, clean review state, clear matching paused.
@@ -1483,12 +1573,22 @@ class BarskyApp(QMainWindow):
         UI responsibilities.  Returns the integer card_id.
         """
         card_id = int(card_id)
-        self.conn.cursor().execute("DELETE FROM cards WHERE id = ?", (card_id,))
-        self.conn.commit()
+        try:
+            self.conn.cursor().execute("DELETE FROM cards WHERE id = ?", (card_id,))
+            self.conn.commit()
+        except sqlite3.Error:
+            _rollback_quietly(self.conn)
+            QMessageBox.warning(
+                self, "Could not delete card", "The card could not be deleted."
+            )
+            return None
         self._remove_card_from_review_state(card_id)
-        if (self._paused_review_card is not None
-                and int(self._paused_review_card[0]) == card_id):
+        if (
+            self._paused_review_card is not None
+            and int(self._paused_review_card[0]) == card_id
+        ):
             self._paused_review_card = None
+            self._paused_current_card_transition = None
             self._paused_review_mode = ""
         if (
             getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE
@@ -1504,249 +1604,13 @@ class BarskyApp(QMainWindow):
     # Browse
     # ------------------------------------------------------------------
     def browse_cards(self):
-        if not self.conn:
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Browse Cards: {self.current_lang}")
-        dialog.setFont(self.font())
-        dialog.resize(800, 500)
-
-        layout = QVBoxLayout(dialog)
-
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Search:"))
-        filter_input = QLineEdit()
-        filter_input.setPlaceholderText("Type to search; use AND or OR to combine terms")
-        filter_row.addWidget(filter_input)
-        layout.addLayout(filter_row)
-
-        table = QTableWidget()
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(["ID", "Front", "Box", "Next Review"])
-        header = table.horizontalHeader()
-        # ID / Box / Next Review size to content (header + date); Front takes the rest.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setMinimumSectionSize(48)
-        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        layout.addWidget(table)
-
-
-        def refresh_list():
-            table.setRowCount(0)
-            c = self.conn.cursor()
-
-            search_text_local = filter_input.text().strip()
-            logic_local = "AND"
-            if " OR " in search_text_local.upper():
-                logic_local = "OR"
-            elif " AND " in search_text_local.upper():
-                logic_local = "AND"
-
-            if search_text_local:
-                db_now = getattr(self, "_db_type", None)
-                if db_now == DatabaseType.LANGUAGE_SENTENCE:
-                    results = search_sentence_cards(self.conn, search_text_local, logic_local)
-                    for r in results:
-                        row_idx = table.rowCount()
-                        table.insertRow(row_idx)
-                        table.setItem(row_idx, 0, QTableWidgetItem(str(r["id"])))
-                        front_display = r["front"]
-                        if r.get("expressions"):
-                            front_display += " [" + ", ".join(r["expressions"]) + "]"
-                        table.setItem(row_idx, 1, QTableWidgetItem(front_display))
-                        table.setItem(row_idx, 2, QTableWidgetItem(str(r["box"])))
-                        table.setItem(row_idx, 3, QTableWidgetItem(str(r["next_review"])))
-                    return
-                else:
-                    results = search_word_phrase_cards(self.conn, search_text_local, logic_local)
-                    for r in results:
-                        row_idx = table.rowCount()
-                        table.insertRow(row_idx)
-                        table.setItem(row_idx, 0, QTableWidgetItem(str(r["id"])))
-                        table.setItem(row_idx, 1, QTableWidgetItem(str(r["front"])))
-                        table.setItem(row_idx, 2, QTableWidgetItem(str(r["box"])))
-                        table.setItem(row_idx, 3, QTableWidgetItem(str(r["next_review"])))
-                    return
-
-            # No search text: show all
-            c.execute("SELECT id, front, back, box, next_review FROM cards ORDER BY id")
-            for card in c.fetchall():
-                card_id, front, back, box, next_review = card
-                row_idx = table.rowCount()
-                table.insertRow(row_idx)
-                table.setItem(row_idx, 0, QTableWidgetItem(str(card_id)))
-                front_display_all = front
-                db_now = getattr(self, "_db_type", None)
-                if db_now == DatabaseType.LANGUAGE_SENTENCE:
-                    exprs = _fetch_expressions_for_card(self.conn, card_id)
-                    if exprs:
-                        front_display_all += " [" + ", ".join(_expression_labels(exprs)) + "]"
-                table.setItem(row_idx, 1, QTableWidgetItem(front_display_all))
-                table.setItem(row_idx, 2, QTableWidgetItem(str(box)))
-                table.setItem(row_idx, 3, QTableWidgetItem(str(next_review)))
-
-        filter_input.textChanged.connect(refresh_list)
-        refresh_list()
-
-        btn_layout = QHBoxLayout()
-        review_btn = QPushButton("Review Selected")
-        edit_btn = QPushButton("Edit Selected")
-        del_btn = QPushButton("Delete Selected")
-        del_btn.setStyleSheet("background-color: #ffcccc;")
-        review_btn.setToolTip("Review the selected card (Alt+R)")
-        edit_btn.setToolTip("Edit the selected card (Alt+E)")
-        del_btn.setToolTip("Delete the selected card (Alt+D)")
-        btn_layout.addWidget(review_btn)
-        btn_layout.addWidget(edit_btn)
-        btn_layout.addWidget(del_btn)
-        layout.addLayout(btn_layout)
-
-        is_wp_browse = getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
-        if is_wp_browse:
-            # Projection-only: no edit/delete in Browse; Review is the action.
-            edit_btn.setEnabled(False)
-            del_btn.setEnabled(False)
-            edit_btn.setToolTip("Word/phrase dictionary is read-only.")
-            del_btn.setToolTip("Word/phrase dictionary is read-only.")
-            review_btn.setToolTip(
-                "Open the selected dictionary entry for review (Alt+R / double-click)"
-            )
-
-        def on_review():
-            selected = table.selectedItems()
-            if not selected:
-                QMessageBox.information(
-                    dialog, "Nothing Selected", "Select a card to review."
-                )
-                return
-            card_id = int(selected[0].text())
-            dialog.close()
-            self._start_selected_card_review(card_id)
-
-        def on_edit():
-            selected = table.selectedItems()
-            if not selected:
-                return
-            card_id = int(selected[0].text())
-
-            db_type_edit = getattr(self, "_db_type", None)
-            if db_type_edit == DatabaseType.LANGUAGE_SENTENCE:
-                dialog.close()
-                self._add_sentence_card(edit_card_id=card_id)
-                return
-            if db_type_edit == DatabaseType.LANGUAGE_WORD_PHRASE:
-                QMessageBox.information(
-                    dialog,
-                    "Read-only Word/Phrase Card",
-                    "This dictionary is derived from the shared sense catalog.\n\n"
-                    "Edit the expression/sense via sentence cards; the "
-                    "dictionary updates automatically. Manual edit is disabled.",
-                )
-                return
-
-            c = self.conn.cursor()
-            c.execute("SELECT front, back FROM cards WHERE id=?", (card_id,))
-            card = c.fetchone()
-            if not card:
-                return
-
-            new_front_dialog = DynamicInputDialog(dialog, "Edit Word", "Front:", card[0])
-            if new_front_dialog.exec() != QDialog.DialogCode.Accepted or not new_front_dialog.text_value:
-                return
-            new_front = new_front_dialog.text_value
-
-            ml_dialog = DynamicInputDialog(
-                dialog,
-                "Edit Translation",
-                "Enter the translation, meanings, or sample sentences. "
-                "Markdown and MathJax are supported during review:",
-                card[1],
-            )
-            if ml_dialog.exec() == QDialog.DialogCode.Accepted and ml_dialog.text_value:
-                today_str = datetime.date.today().isoformat()
-                c.execute(
-                    "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-                    (new_front, ml_dialog.text_value, today_str, card_id),
-                )
-                self.conn.commit()
-                refresh_list()
-                QMessageBox.information(
-                    dialog, "Updated",
-                    "Card has been updated and moved back to Box 1 for review today.",
-                )
-
-                self._refresh_current_card(card_id)
-
-        def on_delete():
-            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
-                QMessageBox.information(
-                    dialog,
-                    "Read-only Word/Phrase Card",
-                    "This dictionary is derived from the shared sense catalog.\n\n"
-                    "Remove senses via sentence cards; the dictionary updates "
-                    "automatically. Manual delete is disabled.",
-                )
-                return
-            selected = table.selectedItems()
-            if not selected:
-                return
-            card_id = selected[0].text()
-            reply = QMessageBox.question(
-                dialog,
-                "Confirm",
-                "Delete this card?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                deleted_current = (
-                    self.current_card is not None
-                    and str(self.current_card[0]) == str(card_id)
-                )
-                self._delete_card_by_id(card_id)
-                refresh_list()
-
-                if deleted_current:
-                    self.show_next_card()
-
-        def on_row_activate(_item=None):
-            # W/P is read-only: double-click reviews. Others edit as before.
-            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
-                on_review()
-            else:
-                on_edit()
-
-        review_btn.clicked.connect(on_review)
-        edit_btn.clicked.connect(on_edit)
-        del_btn.clicked.connect(on_delete)
-        table.itemDoubleClicked.connect(on_row_activate)
-
-        # Dialog-local Alt shortcuts (safe while typing in Search).
-        def add_dialog_shortcut(key: str, slot):
-            sc = QShortcut(QKeySequence(key), dialog)
-            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            sc.activated.connect(slot)
-            return sc
-
-        def on_edit_key():
-            if not edit_btn.isEnabled():
-                return
-            on_edit()
-
-        def on_delete_key():
-            if not del_btn.isEnabled():
-                return
-            on_delete()
-
-        add_dialog_shortcut("Alt+R", on_review)
-        add_dialog_shortcut("Alt+E", on_edit_key)
-        add_dialog_shortcut("Alt+D", on_delete_key)
-
-        dialog.exec()
+        """Open the focused browse/search dialog for the current database."""
+        if self.conn is not None:
+            dialog = BrowseCardsDialog(self)
+            # Keep font assignment explicit at the integration boundary; it
+            # ensures custom dialog subclasses retain the window UI font.
+            dialog.setFont(self.font())
+            dialog.exec()
 
     def _start_selected_card_review(self, card_id):
         """Open a one-card daily review session for *card_id* from Browse.
@@ -1768,6 +1632,7 @@ class BarskyApp(QMainWindow):
 
         # Explicit browse review starts a fresh one-card session.
         self._paused_review_card = None
+        self._paused_current_card_transition = None
         self._paused_review_mode = ""
         self._paused_cards_due = []
         self._paused_daily_queue = []
@@ -1782,595 +1647,18 @@ class BarskyApp(QMainWindow):
         self._daily_queue_snapshot = [card]
         self._daily_review_history = []
         self.current_card = None
-        self.show_next_card()
-
-    # ------------------------------------------------------------------
-    # Button visibility
-    # ------------------------------------------------------------------
-    def _update_button_visibility(self):
-        """Review-control state machine: idle vs active.
-
-        IDLE   (no active review):
-          - primary button → "Start Daily Review" or "Resume Daily Review"
-          - Restart / Previous / Close → disabled
-
-        ACTIVE (daily review in progress):
-          - primary button → "Next"
-          - Restart / Close → enabled
-          - Previous → enabled once the session path has a prior card
-            (after Next or a grade — reverse of Next)
-        """
-        has_db = self.conn is not None
-        has_card = self.current_card is not None
-        is_active = self.review_mode == "daily"
-        has_paused = self._paused_review_mode == "daily" and (
-            self._paused_review_card is not None
-            or bool(self._paused_review_history)
-            or bool(self._paused_cards_due)
-            or bool(self._paused_daily_queue)
-        )
-        has_history = bool(self._daily_review_history)
-        is_wp = (
-            has_db
-            and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
-        )
-
-        # W/P is a derived projection — no manual Add/Delete Entry.
-        if hasattr(self, "add_entry_btn"):
-            self.add_entry_btn.setVisible(has_db and not is_wp)
-            self.add_entry_btn.setEnabled(has_db and not is_wp)
-        if hasattr(self, "delete_entry_btn"):
-            self.delete_entry_btn.setVisible(has_db and not is_wp)
-            self.delete_entry_btn.setEnabled(has_db and has_card and not is_wp)
-        if hasattr(self, "browse_btn"):
-            self.browse_btn.setEnabled(has_db)
-
-        if not has_db:
-            self.start_btn.setEnabled(False)
-            self.restart_review_btn.setEnabled(False)
-            self.previous_review_btn.setEnabled(False)
-            self.close_review_btn.setEnabled(False)
-            return
-
-        if is_active:
-            # ── ACTIVE state ──
-            self.start_btn.setText(" Next")
-            self.start_btn.setIcon(self._icon("go-next"))
-            self.restart_review_btn.setEnabled(True)
-            # Reverse of Next: enable only when there is a prior step.
-            self.previous_review_btn.setEnabled(has_history)
-            self.close_review_btn.setEnabled(True)
-        else:
-            # ── IDLE state ──
-            if has_paused:
-                self.start_btn.setText(" Resume Daily Review")
-            else:
-                self.start_btn.setText(" Start Daily Review")
-            self.start_btn.setIcon(self._icon("media-playback-start"))
-            self.start_btn.setEnabled(True)
-            self.restart_review_btn.setEnabled(False)
-            self.previous_review_btn.setEnabled(False)
-            self.close_review_btn.setEnabled(False)
-
-    # ------------------------------------------------------------------
-    # Review Flow
-    # ------------------------------------------------------------------
-    def _on_primary_button_clicked(self):
-        """Dispatch primary button based on current state.
-
-        - IDLE  → start (or resume) daily review.
-        - ACTIVE → advance to next card in the daily queue.
-        """
-        if self.review_mode == "daily":
-            self._advance_daily_queue()
-        else:
-            self.start_review()
-
-    def _advance_daily_queue(self):
-        """Skip the current card and advance to the next in the daily queue.
-
-        The current (ungraded) card is returned to the end of the queue
-        so it will be reviewed later in this session.  It is also pushed
-        onto the session path so Previous is the reverse of Next.
-        """
-        if not self.current_card or self.review_mode != "daily":
-            return
-
-        # Session path: Next leaves the current card behind.
-        self._daily_review_history.append(self.current_card)
-        # Return ungraded card to end of queue.
-        self.cards_due.append(self.current_card)
-        self._update_button_visibility()
-        self.show_next_card()
-
-    def _previous_daily_card(self):
-        """Step back one card in this daily session path (reverse of Next).
-
-        Works after Next (skip) or after a grade.  The current card returns
-        to the front of the queue; the prior path entry is restored.
-        If there is no prior step, this is a no-op.
-        """
-        if self.review_mode != "daily" or not self._daily_review_history:
-            return
-
-        # Skip deleted/missing history entries instead of showing a ghost card.
-        prev_card = None
-        while self._daily_review_history:
-            candidate = self._daily_review_history.pop()
-            prev_id = candidate[0]
-            if self.conn is not None:
-                c = self.conn.cursor()
-                c.execute(
-                    "SELECT id, front, back, box FROM cards WHERE id = ?",
-                    (prev_id,),
-                )
-                fresh = c.fetchone()
-                if fresh is None:
-                    continue
-                prev_card = fresh
-            else:
-                prev_card = candidate
-            break
-
-        if prev_card is None:
-            self._update_button_visibility()
-            return
-
-        # Push current card to front of queue only after success.
-        if self.current_card is not None:
-            self.cards_due.insert(0, self.current_card)
-
-        # Next-skip puts the prior card at the end of the queue; remove it
-        # so we do not show a duplicate after restoring it as current.
-        prev_id = prev_card[0]
-        self.cards_due = [c for c in self.cards_due if c[0] != prev_id]
-
-        if self.card_ui:
-            self.scene.removeItem(self.card_ui)
-            self.card_ui = None
-
-        self.current_card = prev_card
-        self.is_current_flipped = False
-        self.draw_card_ui()
-        self._update_button_visibility()
-
-    def _restart_daily_review(self):
-        """Restart the current daily session from the beginning.
-
-        Re-reads the queue with the current *All cards* / Shuffle options
-        (so toggling All cards then Restart picks up the new mode).
-        Clears review history. Only has effect during an active daily review.
-        """
-        if self.review_mode != "daily":
-            return
-
-        if self.card_ui:
-            self.scene.removeItem(self.card_ui)
-            self.card_ui = None
-
-        if self.conn is not None:
-            c = self.conn.cursor()
-            self.cards_due = self._load_review_queue(c)
-            self._daily_queue_snapshot = list(self.cards_due)
-        else:
-            self.cards_due = list(self._daily_queue_snapshot)
-
-        self._daily_review_history = []
-        self.current_card = None
-
-        self.show_next_card()
-
-    def close_review(self):
-        """Pause the active daily review and return to idle.
-
-        The current card, remaining queue, original queue snapshot, and
-        review history are all preserved so the session can be resumed
-        exactly where it left off.  Closing does not modify the database.
-        """
-        if self.review_mode != "daily":
-            return
-
-        # Queue may already be empty (finished session still active so
-        # Previous can restore the last graded card). Pause whatever remains.
-        self._paused_review_card = self.current_card
-        self._paused_review_mode = self.review_mode
-        self._paused_cards_due = list(self.cards_due)
-        self._paused_daily_queue = list(self._daily_queue_snapshot)
-        self._paused_review_history = list(self._daily_review_history)
-
-        if self.card_ui:
-            self.scene.removeItem(self.card_ui)
-            self.card_ui = None
-
-        self.current_card = None
-        self.review_mode = ""
-        self._daily_review_history = []
-        self._daily_queue_snapshot = []
-
-        self._update_button_visibility()
-
-    def _resume_paused_card(self, cursor):
-        """If a paused card exists, re-fetch it from DB and insert at
-        front of cards_due, de-duplicating.  Clears paused state.
-        If the paused card was deleted from DB, clears state silently.
-        """
-        paused = self._paused_review_card
-        self._paused_review_card = None
-        self._paused_review_mode = ""
-
-        if paused is None:
-            return
-
-        cursor.execute(
-            "SELECT id, front, back, box FROM cards WHERE id = ?",
-            (paused[0],),
-        )
-        fresh = cursor.fetchone()
-        if fresh is None:
-            return  # card deleted — skip silently
-
-        # De-dup: remove from cards_due if present
-        paused_id = fresh[0]
-        self.cards_due = [c for c in self.cards_due if c[0] != paused_id]
-        # Insert at front
-        self.cards_due.insert(0, fresh)
-
-    def delete_current_card(self):
-        if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
-            QMessageBox.information(
-                self,
-                "Read-only Word/Phrase Database",
-                "Word/phrase cards are a projection of the shared sense catalog.\n\n"
-                "Delete or change senses via sentence cards; this dictionary "
-                "updates automatically. Manual delete is disabled.",
-            )
-            return
-
-        if not self.current_card:
-            QMessageBox.information(self, "Nothing to Delete", "No card is currently displayed.")
-            return
-
-        card_id, front, back, box = self.current_card
-        preview = front[:80] + ("..." if len(front) > 80 else "")
-        msg = (
-            f"You are about to <b>permanently delete</b> the current card:\n\n"
-            f"<b>ID:</b> {card_id} | <b>Box:</b> {box}\n"
-            f"<b>Front:</b> {preview}\n\n"
-            f"This action <span style='color:red;'>cannot be undone</span>.\n"
-            f"Are you sure you want to delete it?"
-        )
-        reply = QMessageBox.question(
-            self,
-            "⚠ Permanently Delete Card",
-            msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        self._delete_card_by_id(card_id)
-
-        QMessageBox.information(self, "Deleted", f"Card #{card_id} has been permanently deleted.")
-        self.show_next_card()
-
-    def start_review(self):
-        """Start (or resume) the daily review of due cards.
-
-        On first start, queries all due cards and saves a snapshot for
-        Restart.  On resume after close, restores the preserved queue,
-        snapshot, and history so the session continues from where it was
-        paused.
-        """
-        if not self.conn:
-            return
-
-        self.review_mode = "daily"
-
-        if self.current_card is not None:
-            if self.card_ui:
-                self.scene.removeItem(self.card_ui)
-                self.card_ui = None
-            self.current_card = None
-
-        c = self.conn.cursor()
-
-        # Distinguish first-start from resume-after-close.
-        # A finished queue may pause with no current card but with history /
-        # snapshot still worth restoring for Previous / Restart.
-        resume_daily = self._paused_review_mode == "daily" and (
-            self._paused_review_card is not None
-            or bool(self._paused_review_history)
-            or bool(self._paused_cards_due)
-            or bool(self._paused_daily_queue)
-        )
-
-        if resume_daily:
-            # Restore deep session state preserved by close_review() before
-            # re-inserting the paused card at the front of the queue.
-            self.cards_due = list(self._paused_cards_due)
-            self._daily_queue_snapshot = list(self._paused_daily_queue)
-            self._daily_review_history = list(self._paused_review_history)
-            self._paused_cards_due = []
-            self._paused_daily_queue = []
-            self._paused_review_history = []
-            # Clear mode flag; _resume_paused_card clears the card pointer.
-            self._paused_review_mode = ""
-        else:
-            # ── First start: due-only, or all cards when opted in ──
-            self.cards_due = self._load_review_queue(c)
-
-            self._daily_review_history = []
-            # First start: snapshot the complete queue for Restart.
-            self._daily_queue_snapshot = list(self.cards_due)
-
-        # Resume paused card (inserts at front, de-duplicates).
-        self._resume_paused_card(c)
-
-        if not self.cards_due:
-            # Finished-but-paused session: restore active shell so Previous
-            # can still walk graded history. Do not treat as "nothing due".
-            if resume_daily and (
-                self._daily_review_history or self._daily_queue_snapshot
-            ):
-                self.current_card = None
-                self._update_button_visibility()
-                return
-            all_mode = bool(
-                getattr(self, "all_cards_checkbox", None)
-                and self.all_cards_checkbox.isChecked()
-            )
-            empty_msg = (
-                "No cards in this database."
-                if all_mode
-                else "No cards due for review today!"
-            )
-            QMessageBox.information(self, "Done", empty_msg)
-            self.review_mode = ""
-            self._daily_queue_snapshot = []
-            self._daily_review_history = []
-            self._update_button_visibility()
-            return
-
-        self.show_next_card()
-
-
-    def restart_current_review(self):
-        """Restart the current daily review session (called from Restart button)."""
-        if not self.conn:
-            return
-        self._restart_daily_review()
-
-    def show_next_card(self):
-        if self.card_ui:
-            self.scene.removeItem(self.card_ui)
-            self.card_ui = None
-
-        while self.cards_due:
-            stale_card = self.cards_due.pop(0)
-            card_id = stale_card[0]
-
-            c = self.conn.cursor()
-            c.execute("SELECT id, front, back, box FROM cards WHERE id = ?", (card_id,))
-            fresh_card = c.fetchone()
-
-            if fresh_card:
-                self.current_card = fresh_card
-                self.is_current_flipped = False
-                self.draw_card_ui()
-                return
-
-        # Queue exhausted — no more ungraded due cards.
-        # Keep daily mode + graded history so Previous can still restore the
-        # last graded card (clearing history here made Previous a permanent
-        # no-op after the final grade). Restart / Close still work.
-        # If there is nothing to go back to either, fully end the session.
-        if self._daily_review_history:
-            QMessageBox.information(self, "Done", "You have finished your reviews.")
-            self.current_card = None
-            self._update_button_visibility()
-            return
-
-        QMessageBox.information(self, "Done", "You have finished your reviews.")
-        self.current_card = None
-        self.review_mode = ""
-        self._daily_review_history = []
-        self._daily_queue_snapshot = []
-        self._update_button_visibility()
-
-    def draw_card_ui(self):
-        if not self.current_card:
-            return
-
-        card_id, front, back, box = self.current_card
-
-        zone_y = getattr(self, "_zone_y", self.scene.height() - 100)
-
-        w = max(400, self.scene.width())
-        h = max(400, self.scene.height())
-
-        cw = int(w * 0.90)
-        ch = int(h * 0.75)
-
-        available = zone_y - 20
-        if ch > available:
-            ch = max(200, available)
-
-        cx = w / 2
-        cy = available / 2
-
-        self.card_ui = FlashCardItem(self, cx, cy, cw, ch)
-
-        metadata_md = f"**Box {box}** | ID: `{card_id}`"
-
-        if self.is_current_flipped:
-            spoken_front = markdown_to_plain_text(front)
-            spoken_back = markdown_to_plain_text(back)
-            spoken_text = f"{spoken_front}. {spoken_back}".strip()
-
-            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
-                display_md = self._build_sentence_card_display(
-                    card_id, front, back, flipped=True, metadata=metadata_md
-                )
-            elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
-                display_md = self._build_word_phrase_card_display(
-                    front, back, flipped=True, metadata=metadata_md
-                )
-            else:
-                display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
-
-            self.card_ui.set_text(display_md, True, spoken_text)
-        else:
-            spoken_front = markdown_to_plain_text(front)
-
-            if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
-                display_md = self._build_sentence_card_display(
-                    card_id, front, back, flipped=False, metadata=metadata_md
-                )
-            elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
-                display_md = self._build_word_phrase_card_display(
-                    front, back, flipped=False, metadata=metadata_md
-                )
-            else:
-                display_md = f"{metadata_md}\n\n{front}"
-
-            self.card_ui.set_text(display_md, False, spoken_front)
-
-        self.scene.addItem(self.card_ui)
-        self._update_button_visibility()
-
-    def _build_sentence_card_display(self, card_id, sentence, back, flipped, metadata):
-        """Build display content for a sentence-based card.
-
-        Front: sentence with matched surface forms bolded in place
-        (e.g. lemma ``insist on`` → bold ``insists on``). No separate
-        Unfamiliar list — the mark is the list.
-
-        Back: same highlighted sentence, then each expression with its
-        contextual meaning. Items are ordered by first appearance in the
-        sentence. Multiple items are numbered and separated as distinct
-        blocks so Markdown keeps them on separate lines.
-        """
-        items = _fetch_expressions_for_card(self.conn, card_id)
-        ordered = _sort_items_by_sentence_order(sentence, items)
-        highlighted = _highlight_sentence_for_items(sentence, ordered)
-
-        if flipped:
-            lines = [metadata, "", highlighted, "", "---", ""]
-            meaning_lines = _format_sentence_meaning_lines(ordered)
-            # Blank line between entries so Markdown does not collapse them.
-            lines.append("\n\n".join(meaning_lines))
-            # cards.back is a derived cache of the same expression+meaning
-            # pairs — do not append it again under a second separator.
-            return "\n".join(lines)
-
-        # Front: focus on the sentence; bold only the learning targets.
-        return f"{metadata}\n\n{highlighted}"
-
-    def _build_word_phrase_card_display(self, front, back, flipped, metadata):
-        """Build display content for a word/phrase dictionary card.
-
-        Front: bold expression only (``**insist on**``).
-        Back: bold expression, then sense list with indented examples
-        (examples already embed bold surface forms from derive).
-        """
-        expr = (front or "").strip()
-        bold_front = f"**{expr}**" if expr else ""
-        if not flipped:
-            return f"{metadata}\n\n{bold_front}"
-        body = (back or "").strip()
-        if body:
-            return f"{metadata}\n\n{bold_front}\n\n---\n\n{body}"
-        return f"{metadata}\n\n{bold_front}"
-
-    def flip_card(self):
-        if not self.current_card:
-            return
-
-        self.is_current_flipped = True
-        card_id, front, back, box = self.current_card
-
-        metadata_md = f"**Box {box}** | ID: `{card_id}`"
-
-        if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
-            display_md = self._build_sentence_card_display(
-                card_id, front, back, flipped=True, metadata=metadata_md
-            )
-        elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
-            display_md = self._build_word_phrase_card_display(
-                front, back, flipped=True, metadata=metadata_md
-            )
-        else:
-            display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
-
-        spoken_front = markdown_to_plain_text(front)
-        spoken_back = markdown_to_plain_text(back)
-        spoken_text = f"{spoken_front}. {spoken_back}".strip()
-
-        self.card_ui.set_text(display_md, True, spoken_text)
-
-    def check_card_drop(self, card_item):
-        if not self.incorrect_zone or not self.correct_zone:
-            return
-        card_rect = card_item.sceneBoundingRect()
-        inc_rect = self.incorrect_zone.sceneBoundingRect()
-        cor_rect = self.correct_zone.sceneBoundingRect()
-
-        if card_rect.intersects(inc_rect):
-            QTimer.singleShot(0, lambda: self.process_answer(correct=False))
-        elif card_rect.intersects(cor_rect):
-            QTimer.singleShot(0, lambda: self.process_answer(correct=True))
-        else:
-            card_item.setPos(
-                self.scene.width() / 2, (self.scene.height() - 100) / 2
-            )
-
-    def process_answer(self, correct):
-        if not self.current_card:
-            return
-        # Drop zones and other paths must not grade an unrevealed card.
-        if not self.is_current_flipped:
-            return
-
-        card_id, front, back, _stale_box = self.current_card
-        today = datetime.date.today()
-
-        c = self.conn.cursor()
-        # Always grade from the latest DB box so Previous/re-grade is correct.
-        c.execute("SELECT box FROM cards WHERE id = ?", (card_id,))
-        row = c.fetchone()
-        if row is None:
-            self.show_next_card()
-            return
-        current_box = int(row[0])
-
-        new_box = min(current_box + 1, 5) if correct else (3 if current_box >= 3 else 1)
-        intervals = {1: 1, 2: 3, 3: 7, 4: 30, 5: 365}
-        next_review_str = (
-            today + datetime.timedelta(days=intervals[new_box])
-        ).isoformat()
-
-        c.execute(
-            "UPDATE cards SET box = ?, next_review = ? WHERE id = ?",
-            (new_box, next_review_str, card_id),
-        )
-        self.conn.commit()
-
-        # Session path: grade also leaves the current card behind (like Next).
-        if self.review_mode == "daily":
-            self._daily_review_history.append((card_id, front, back, new_box))
-            # Reflect Previous availability immediately (before next card draw).
-            self._update_button_visibility()
-
+        self._current_card_transition = None
         self.show_next_card()
 
     # ------------------------------------------------------------------
     # Settings Dialog
     # ------------------------------------------------------------------
     def open_settings_window(self):
-        dialog = SettingsDialog(
-            self.settings, self, current_size=(self.width(), self.height())
-        )
+        dialog_kwargs = {"current_size": (self.width(), self.height())}
+        settings_file = getattr(self, "settings_file", None)
+        if settings_file is not None:
+            dialog_kwargs["settings_file"] = settings_file
+        dialog = SettingsDialog(self.settings, self, **dialog_kwargs)
         # Keep the background voice-list thread alive even if the modal dialog
         # is closed before the request completes, matching the previous
         # MainWindow-owned worker lifetime.
@@ -2380,9 +1668,7 @@ class BarskyApp(QMainWindow):
             # (or existing) directory. Structure creation already ran inside
             # the dialog, but re-run here so later create/scan paths are ready.
             try:
-                ensure_database_root_structure(
-                    get_database_root(self.settings)
-                )
+                ensure_database_root_structure(get_database_root(self.settings))
             except OSError as exc:
                 QMessageBox.warning(
                     self,

@@ -2,6 +2,39 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [2.2.0] — 2026-07-22
+
+### Changes
+
+- Remember the **All cards** review selection separately for each database,
+  matching the existing **Shuffle** behavior.
+- Add natural TTS pauses between card fields, each sentence-card
+  expression/meaning entry, and each word/phrase definition/example when the
+  content lacks terminal punctuation.
+
+### Security and Reliability
+
+- Made best-effort SQLite rollback, projection discovery, and optional
+  WebEngine styling failures diagnosable through standard logging without
+  blocking the original user operation.
+- Switched the Box 5 review lottery to `secrets`, renamed the Markdown math
+  placeholder sentinel, and preserved collision-safe rendering behavior.
+- Replaced development-branch subprocess detection with direct `.git/HEAD`
+  metadata parsing that supports normal and linked worktrees.
+- Rendered review-card content with Qt's proxy-safe text widget, preventing
+  blank cards when the optional WebEngine package is installed.
+- Preserved safe Markdown bold formatting for unfamiliar terms in the
+  proxy-safe review renderer.
+
+### Compatibility
+
+- Deprecated private form-helper aliases from `kgb_srs.forms`; dialogs and
+  first-party tests now use `kgb_srs.form_helpers`, while legacy imports warn
+  and remain available through 2.x.
+- Restored `tests/test_regression.py` as a deprecated direct-only pytest entry
+  point for the focused regression modules. Normal suite discovery excludes it
+  to prevent duplicate collection.
+
 ## [2.1.0] — 2026-07-22
 
 ### Changes

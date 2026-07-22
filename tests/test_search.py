@@ -1,8 +1,11 @@
 """Tests for kgb_srs.search — database search across card types."""
 
+import gc
 import sqlite3
+import weakref
 import pytest
 
+from kgb_srs import search
 from kgb_srs.search import (
     search_sentence_cards,
     search_word_phrase_cards,
@@ -15,8 +18,68 @@ from kgb_srs.schema import (
 
 
 # ---------------------------------------------------------------------------
+# Search-function registration
+# ---------------------------------------------------------------------------
+
+
+class TestSearchFunctionRegistration:
+    def test_weakrefable_connection_is_registered_once_and_not_retained(self):
+        class TrackingConnection(sqlite3.Connection):
+            registrations = 0
+
+            def create_function(self, *args, **kwargs):
+                type(self).registrations += 1
+                return super().create_function(*args, **kwargs)
+
+        search._REGISTERED_CONNS.clear()
+        conn = sqlite3.connect(":memory:", factory=TrackingConnection)
+        search._register_search_functions(conn)
+        search._register_search_functions(conn)
+
+        assert TrackingConnection.registrations == 1
+        ref = weakref.ref(conn)
+        conn.close()
+        del conn
+        gc.collect()
+        assert ref() is None
+        assert not search._REGISTERED_CONNS
+
+    def test_standard_connection_is_not_retained_and_search_function_works(self):
+        search._REGISTERED_CONNS.clear()
+        conn = sqlite3.connect(":memory:")
+        try:
+            search._register_search_functions(conn)
+            search._register_search_functions(conn)
+            assert not search._REGISTERED_CONNS
+            assert conn.execute(
+                "SELECT kgb_contains('Caf\u00e9', 'cafe')"
+            ).fetchone() == (1,)
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Search SQL builder
+# ---------------------------------------------------------------------------
+
+
+class TestSearchSqlBuilder:
+    def test_requires_nonempty_groups(self):
+        def condition_builder(_term, _field_filter):
+            return "", []
+
+        with pytest.raises(ValueError, match="at least one term"):
+            search._build_search_sql(
+                [],
+                "SELECT id FROM cards",
+                condition_builder,
+            )
+
+
+# ---------------------------------------------------------------------------
 # parse_search_tokens
 # ---------------------------------------------------------------------------
+
 
 class TestParseSearchTokens:
     def test_simple_and(self):
@@ -66,6 +129,7 @@ class TestParseSearchTokens:
 # Mixed search semantics — OR groups of AND operands
 # ============================================================================
 
+
 class TestMixedSearchSemantics:
     """Tests for mixed AND/OR search with sentence cards."""
 
@@ -75,6 +139,7 @@ class TestMixedSearchSemantics:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         # Card 1: alpha + nope together
         c.execute(
@@ -136,6 +201,7 @@ class TestMixedSearchSemantics:
 # ---------------------------------------------------------------------------
 # search_sentence_cards — with DB
 # ---------------------------------------------------------------------------
+
 
 class TestSearchSentenceCards:
     @pytest.fixture
@@ -215,6 +281,7 @@ class TestSearchSentenceCards:
 # ---------------------------------------------------------------------------
 # search_word_phrase_cards — with DB
 # ---------------------------------------------------------------------------
+
 
 class TestSearchWordPhraseCards:
     @pytest.fixture

@@ -2,7 +2,11 @@
 
 import os
 import json
+import logging
 import tempfile
+
+
+logger = logging.getLogger(__name__)
 
 # --- Paths ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -10,6 +14,12 @@ PACKAGE_DIR = SCRIPT_DIR  # kgb_srs package dir
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)  # parent: kgb_learning_system
 DIR_DB = os.path.join(PROJECT_DIR, "db")
 SETTINGS_FILE = os.path.join(PROJECT_DIR, "barsky_settings.json")
+
+
+def normalize_settings_path(path) -> str:
+    """Return an absolute, user-expanded path for a settings file."""
+    return os.path.abspath(os.path.expanduser(os.fspath(path)))
+
 
 # Canonical relative layout under the database root.
 # Language-based uses two subtype directories; Knowledge-based is flat.
@@ -53,24 +63,28 @@ DEFAULT_SETTINGS = {
     "explanation_language": "Chinese",
 }
 
-_POSITIVE_INT_SETTINGS = frozenset({
-    "width",
-    "height",
-    "sentence_dialog_width",
-    "sentence_dialog_height",
-    "font_size",
-    "content_font_size",
-})
-_STRING_SETTINGS = frozenset({
-    "database_root",
-    "default_database",
-    "font_family",
-    "content_font_family",
-    "tts_voice",
-    "tts_language",
-    "explanation_language",
-    "ai_active_provider",
-})
+_POSITIVE_INT_SETTINGS = frozenset(
+    {
+        "width",
+        "height",
+        "sentence_dialog_width",
+        "sentence_dialog_height",
+        "font_size",
+        "content_font_size",
+    }
+)
+_STRING_SETTINGS = frozenset(
+    {
+        "database_root",
+        "default_database",
+        "font_family",
+        "content_font_family",
+        "tts_voice",
+        "tts_language",
+        "explanation_language",
+        "ai_active_provider",
+    }
+)
 
 
 def get_database_root(settings=None) -> str:
@@ -189,8 +203,13 @@ def normalize_default_database(value: str, root: str) -> str:
     return rel or ""
 
 
-def load_settings():
-    """Load settings from JSON file, merging with defaults."""
+def load_settings(settings_file=None):
+    """Load settings from JSON file, merging with defaults.
+
+    ``settings_file`` permits a launcher-selected config while preserving the
+    project-root :data:`SETTINGS_FILE` as the default for existing callers.
+    """
+    settings_file = normalize_settings_path(settings_file or SETTINGS_FILE)
     settings = dict(DEFAULT_SETTINGS)
     # Deep-copy nested defaults so callers cannot mutate the module constant.
     settings["ai_providers"] = {
@@ -198,9 +217,9 @@ def load_settings():
         for name, entry in DEFAULT_SETTINGS.get("ai_providers", {}).items()
     }
     loaded: dict = {}
-    if os.path.isfile(SETTINGS_FILE):
+    if os.path.isfile(settings_file):
         try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            with open(settings_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             if isinstance(raw, dict):
                 loaded = raw
@@ -220,15 +239,16 @@ def load_settings():
                         # Preserve extension keys, but never let an invalid
                         # value replace a known default setting.
                         settings[key] = value
-        except Exception as e:
-            print(f"Error loading settings: {e}")
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Could not load settings from %s; using defaults: %s",
+                settings_file,
+                exc,
+            )
     # With no usable profile mapping, drop the default bag so
     # ensure_ai_provider_profiles migrates legacy flat keys. Otherwise an
     # empty Default profile would clobber a real ai_api_key.
-    if (
-        "ai_providers" not in loaded
-        or not isinstance(loaded.get("ai_providers"), dict)
-    ):
+    if "ai_providers" not in loaded or not isinstance(loaded.get("ai_providers"), dict):
         settings.pop("ai_providers", None)
         if "ai_active_provider" not in loaded:
             settings.pop("ai_active_provider", None)
@@ -239,18 +259,20 @@ def load_settings():
     return settings
 
 
-def save_settings(settings):
+def save_settings(settings, settings_file=None):
     """Atomically save settings with owner-only permissions (API key safety).
 
     AI config is stored only under ``ai_providers`` / ``ai_active_provider``.
     Legacy flat ``ai_*`` keys are migrated into profiles, then stripped.
+    ``settings_file`` permits a launcher-selected config file.
     """
     from .ai_provider import ensure_ai_provider_profiles
 
+    settings_file = normalize_settings_path(settings_file or SETTINGS_FILE)
     ensure_ai_provider_profiles(settings)
     temp_path = None
     try:
-        directory = os.path.dirname(SETTINGS_FILE)
+        directory = os.path.dirname(settings_file)
         os.makedirs(directory, exist_ok=True)
         fd, temp_path = tempfile.mkstemp(prefix=".barsky_settings.", dir=directory)
         os.fchmod(fd, 0o600)
@@ -258,9 +280,9 @@ def save_settings(settings):
             json.dump(settings, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(temp_path, SETTINGS_FILE)
+        os.replace(temp_path, settings_file)
         temp_path = None
-        os.chmod(SETTINGS_FILE, 0o600)
+        os.chmod(settings_file, 0o600)
     except Exception as e:
         raise OSError(f"Could not save settings: {e}") from e
     finally:

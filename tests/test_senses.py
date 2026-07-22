@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 
@@ -61,9 +62,10 @@ class TestSenseInventory:
 
         assert get_sentence_card(transaction_conn, card_id) is not None
         assert get_sense(transaction_conn, sense_id) is not None
-        assert find_sense_by_meaning(
-            transaction_conn, "known", "known meaning"
-        ) is not None
+        assert (
+            find_sense_by_meaning(transaction_conn, "known", "known meaning")
+            is not None
+        )
         assert list_senses_for_expression(transaction_conn, "known")
         assert list_all_senses(transaction_conn)
         assert group_senses_by_expression(transaction_conn)
@@ -75,9 +77,12 @@ class TestSenseInventory:
         transaction_conn.close()
 
         with sqlite3.connect(path) as verify_conn:
-            assert verify_conn.execute(
-                "SELECT value FROM settings WHERE key='outer_write'"
-            ).fetchone() is None
+            assert (
+                verify_conn.execute(
+                    "SELECT value FROM settings WHERE key='outer_write'"
+                ).fetchone()
+                is None
+            )
 
     def test_fetch_expressions_for_card_does_not_commit_outer_transaction(
         self, tmp_path
@@ -107,9 +112,12 @@ class TestSenseInventory:
         transaction_conn.close()
 
         with sqlite3.connect(path) as verify_conn:
-            assert verify_conn.execute(
-                "SELECT value FROM settings WHERE key='outer_write'"
-            ).fetchone() is None
+            assert (
+                verify_conn.execute(
+                    "SELECT value FROM settings WHERE key='outer_write'"
+                ).fetchone()
+                is None
+            )
 
     def test_create_and_reuse_exact_meaning(self, conn):
         s1 = create_or_get_sense(conn, "insist on", "to demand firmly")
@@ -176,21 +184,52 @@ class TestSenseInventory:
         assert len(senses) == 1
         assert senses[0].meaning == "a greeting"
 
+    def test_backfill_relinks_mismatched_existing_sense_id(self, conn):
+        wrong = create_or_get_sense(conn, "bank", "side of a river")
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES ('I went to the bank.', '', 1, date('now'))"
+        )
+        card_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO unfamiliar_items "
+            "(card_id, expression, meaning, sense_id) VALUES (?, ?, ?, ?)",
+            (card_id, "Bank", "financial institution", wrong.id),
+        )
+        conn.commit()
+
+        assert backfill_senses_from_items(conn) == 1
+
+        linked_sense_id = conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (card_id,),
+        ).fetchone()[0]
+        correct = find_sense_by_meaning(conn, "bank", "financial institution")
+        assert correct is not None
+        assert linked_sense_id == correct.id
+        assert linked_sense_id != wrong.id
+
+        entries = derive_word_phrase_entries(conn)
+        assert len(entries) == 1
+        _front, back, senses = entries[0]
+        assert [sense.id for sense in senses] == [correct.id]
+        assert "financial institution" in back
+        assert "side of a river" not in back
+
     def test_backfill_without_commit_rolls_back_outer_transaction(self, tmp_path):
         path = tmp_path / "backfill_transaction.db"
         transaction_conn = init_db(str(path))
         ensure_sentence_schema(transaction_conn)
 
-        insert_sentence_card(
-            transaction_conn, "known", [("known", "known meaning")]
-        )
+        insert_sentence_card(transaction_conn, "known", [("known", "known meaning")])
         transaction_conn.execute(
             "INSERT INTO cards (front, back, box, next_review) "
             "VALUES ('new legacy', '', 1, date('now'))"
         )
-        new_card_id = transaction_conn.execute(
-            "SELECT last_insert_rowid()"
-        ).fetchone()[0]
+        new_card_id = transaction_conn.execute("SELECT last_insert_rowid()").fetchone()[
+            0
+        ]
         transaction_conn.execute(
             "INSERT INTO unfamiliar_items (card_id, expression, meaning) "
             "VALUES (?, 'new', 'new meaning')",
@@ -202,25 +241,37 @@ class TestSenseInventory:
             "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
         )
         assert backfill_senses_from_items(transaction_conn, commit=False) == 1
-        assert transaction_conn.execute(
-            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
-            (new_card_id,),
-        ).fetchone()[0] is not None
+        assert (
+            transaction_conn.execute(
+                "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+                (new_card_id,),
+            ).fetchone()[0]
+            is not None
+        )
 
         transaction_conn.rollback()
         transaction_conn.close()
 
         with sqlite3.connect(path) as verify_conn:
-            assert verify_conn.execute(
-                "SELECT value FROM settings WHERE key='outer_write'"
-            ).fetchone() is None
-            assert verify_conn.execute(
-                "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
-                (new_card_id,),
-            ).fetchone()[0] is None
-            assert verify_conn.execute(
-                "SELECT id FROM expression_senses WHERE expression='new'"
-            ).fetchone() is None
+            assert (
+                verify_conn.execute(
+                    "SELECT value FROM settings WHERE key='outer_write'"
+                ).fetchone()
+                is None
+            )
+            assert (
+                verify_conn.execute(
+                    "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+                    (new_card_id,),
+                ).fetchone()[0]
+                is None
+            )
+            assert (
+                verify_conn.execute(
+                    "SELECT id FROM expression_senses WHERE expression='new'"
+                ).fetchone()
+                is None
+            )
 
 
 class TestSentenceCardSenseAtomicity:
@@ -252,13 +303,17 @@ class TestSentenceCardSenseAtomicity:
         transaction_conn.close()
 
         with sqlite3.connect(path) as verify_conn:
-            assert verify_conn.execute(
-                "SELECT value FROM settings WHERE key='outer_write'"
-            ).fetchone() is None
+            assert (
+                verify_conn.execute(
+                    "SELECT value FROM settings WHERE key='outer_write'"
+                ).fetchone()
+                is None
+            )
             assert verify_conn.execute("SELECT id FROM cards").fetchone() is None
-            assert verify_conn.execute(
-                "SELECT id FROM unfamiliar_items"
-            ).fetchone() is None
+            assert (
+                verify_conn.execute("SELECT id FROM unfamiliar_items").fetchone()
+                is None
+            )
 
     def test_update_failure_rolls_back_outer_transaction(self, tmp_path):
         path = tmp_path / "update_sentence_transaction.db"
@@ -281,9 +336,7 @@ class TestSentenceCardSenseAtomicity:
         transaction_conn.execute(
             "INSERT INTO settings (key, value) VALUES ('outer_write', 'value')"
         )
-        with pytest.raises(
-            sqlite3.IntegrityError, match="second replacement rejected"
-        ):
+        with pytest.raises(sqlite3.IntegrityError, match="second replacement rejected"):
             update_sentence_card(
                 transaction_conn,
                 card_id,
@@ -294,9 +347,12 @@ class TestSentenceCardSenseAtomicity:
         transaction_conn.close()
 
         with sqlite3.connect(path) as verify_conn:
-            assert verify_conn.execute(
-                "SELECT value FROM settings WHERE key='outer_write'"
-            ).fetchone() is None
+            assert (
+                verify_conn.execute(
+                    "SELECT value FROM settings WHERE key='outer_write'"
+                ).fetchone()
+                is None
+            )
             assert verify_conn.execute(
                 "SELECT front, back FROM cards WHERE id=?", (card_id,)
             ).fetchone() == ("known", "")
@@ -338,17 +394,26 @@ class TestSentenceCardSenseAtomicity:
                 [("first", "first meaning"), ("second", "second meaning")],
             )
 
-        assert conn.execute(
-            "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
-        ).fetchall() == before_cards
-        assert conn.execute(
-            "SELECT id, card_id, expression, meaning, sense_id, surface_form "
-            "FROM unfamiliar_items ORDER BY id"
-        ).fetchall() == before_items
-        assert conn.execute(
-            "SELECT id, expression, meaning, expression_norm, meaning_norm "
-            "FROM expression_senses ORDER BY id"
-        ).fetchall() == before_senses
+        assert (
+            conn.execute(
+                "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+            ).fetchall()
+            == before_cards
+        )
+        assert (
+            conn.execute(
+                "SELECT id, card_id, expression, meaning, sense_id, surface_form "
+                "FROM unfamiliar_items ORDER BY id"
+            ).fetchall()
+            == before_items
+        )
+        assert (
+            conn.execute(
+                "SELECT id, expression, meaning, expression_norm, meaning_norm "
+                "FROM expression_senses ORDER BY id"
+            ).fetchall()
+            == before_senses
+        )
 
     def test_update_rolls_back_senses_when_second_child_insert_fails(self, conn):
         card_id = insert_sentence_card(
@@ -387,9 +452,7 @@ class TestSentenceCardSenseAtomicity:
         )
         conn.commit()
 
-        with pytest.raises(
-            sqlite3.IntegrityError, match="second replacement rejected"
-        ):
+        with pytest.raises(sqlite3.IntegrityError, match="second replacement rejected"):
             update_sentence_card(
                 conn,
                 card_id,
@@ -398,19 +461,28 @@ class TestSentenceCardSenseAtomicity:
                 items=[("first", "first meaning"), ("second", "second meaning")],
             )
 
-        assert conn.execute(
-            "SELECT id, front, back, box, next_review FROM cards WHERE id=?",
-            (card_id,),
-        ).fetchone() == before_card
-        assert conn.execute(
-            "SELECT id, card_id, expression, meaning, sense_id, surface_form "
-            "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
-            (card_id,),
-        ).fetchall() == before_items
-        assert conn.execute(
-            "SELECT id, expression, meaning, expression_norm, meaning_norm "
-            "FROM expression_senses ORDER BY id"
-        ).fetchall() == before_senses
+        assert (
+            conn.execute(
+                "SELECT id, front, back, box, next_review FROM cards WHERE id=?",
+                (card_id,),
+            ).fetchone()
+            == before_card
+        )
+        assert (
+            conn.execute(
+                "SELECT id, card_id, expression, meaning, sense_id, surface_form "
+                "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
+                (card_id,),
+            ).fetchall()
+            == before_items
+        )
+        assert (
+            conn.execute(
+                "SELECT id, expression, meaning, expression_norm, meaning_norm "
+                "FROM expression_senses ORDER BY id"
+            ).fetchall()
+            == before_senses
+        )
 
     def test_update_rolls_back_when_orphan_cleanup_fails(self, conn, monkeypatch):
         card_id = insert_sentence_card(
@@ -449,30 +521,41 @@ class TestSentenceCardSenseAtomicity:
                 items=[("replacement", "replacement meaning")],
             )
 
-        assert conn.execute(
-            "SELECT id, front, back, box, next_review FROM cards WHERE id=?",
-            (card_id,),
-        ).fetchone() == before_card
-        assert conn.execute(
-            "SELECT id, card_id, expression, meaning, sense_id, surface_form "
-            "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
-            (card_id,),
-        ).fetchall() == before_items
-        assert conn.execute(
-            "SELECT id, expression, meaning, expression_norm, meaning_norm "
-            "FROM expression_senses ORDER BY id"
-        ).fetchall() == before_senses
+        assert (
+            conn.execute(
+                "SELECT id, front, back, box, next_review FROM cards WHERE id=?",
+                (card_id,),
+            ).fetchone()
+            == before_card
+        )
+        assert (
+            conn.execute(
+                "SELECT id, card_id, expression, meaning, sense_id, surface_form "
+                "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
+                (card_id,),
+            ).fetchall()
+            == before_items
+        )
+        assert (
+            conn.execute(
+                "SELECT id, expression, meaning, expression_norm, meaning_norm "
+                "FROM expression_senses ORDER BY id"
+            ).fetchall()
+            == before_senses
+        )
 
 
 class TestSenseAssignmentParser:
     @pytest.mark.parametrize("sense_id", [1, 3])
     def test_reuse_json_integer_id_accepted(self, sense_id):
-        raw = json.dumps({
-            "expression": "bank",
-            "action": "reuse",
-            "sense_id": sense_id,
-            "meaning": "",
-        })
+        raw = json.dumps(
+            {
+                "expression": "bank",
+                "action": "reuse",
+                "sense_id": sense_id,
+                "meaning": "",
+            }
+        )
         a = parse_sense_assignment(raw, "bank", [1, 3, 5])
         assert a.action == "reuse"
         assert a.sense_id == sense_id
@@ -488,43 +571,46 @@ class TestSenseAssignmentParser:
         assert a.meaning == "side of a river"
 
     def test_reuse_unknown_id_rejected(self):
-        raw = (
-            '{"expression": "bank", "action": "reuse", '
-            '"sense_id": 99, "meaning": ""}'
-        )
+        raw = '{"expression": "bank", "action": "reuse", "sense_id": 99, "meaning": ""}'
         with pytest.raises(AIValidationError):
             parse_sense_assignment(raw, "bank", [1, 3])
 
     @pytest.mark.parametrize("sense_id", [True, False, 1.0, 1.5])
     def test_reuse_boolean_or_float_id_rejected(self, sense_id):
-        raw = json.dumps({
-            "expression": "bank",
-            "action": "reuse",
-            "sense_id": sense_id,
-            "meaning": "",
-        })
+        raw = json.dumps(
+            {
+                "expression": "bank",
+                "action": "reuse",
+                "sense_id": sense_id,
+                "meaning": "",
+            }
+        )
         with pytest.raises(AIValidationError, match="sense_id"):
             parse_sense_assignment(raw, "bank", [1, 3])
 
     @pytest.mark.parametrize("sense_id", ["1", " 3 "])
     def test_reuse_string_id_rejected(self, sense_id):
-        raw = json.dumps({
-            "expression": "bank",
-            "action": "reuse",
-            "sense_id": sense_id,
-            "meaning": "",
-        })
+        raw = json.dumps(
+            {
+                "expression": "bank",
+                "action": "reuse",
+                "sense_id": sense_id,
+                "meaning": "",
+            }
+        )
         with pytest.raises(AIValidationError, match="sense_id"):
             parse_sense_assignment(raw, "bank", [1, 3])
 
     @pytest.mark.parametrize("sense_id", [True, False, 1.0, 1.5])
     def test_create_ignores_boolean_or_float_preferred_id(self, sense_id):
-        raw = json.dumps({
-            "expression": "bank",
-            "action": "create",
-            "sense_id": sense_id,
-            "meaning": "side of a river",
-        })
+        raw = json.dumps(
+            {
+                "expression": "bank",
+                "action": "create",
+                "sense_id": sense_id,
+                "meaning": "side of a river",
+            }
+        )
         assignment = parse_sense_assignment(raw, "bank", [1, 3])
         assert assignment.sense_id is None
 
@@ -562,9 +648,7 @@ class TestSenseAssignmentParser:
         self, conn, preferred_sense_id
     ):
         existing = create_or_get_sense(conn, "world", "old meaning")
-        card_id = insert_sentence_card(
-            conn, "World", [("world", "initial meaning")]
-        )
+        card_id = insert_sentence_card(conn, "World", [("world", "initial meaning")])
 
         update_sentence_card(
             conn,
@@ -630,11 +714,10 @@ class TestDeriveWordPhrase:
         # insist on has one sense despite two sentences
         assert len(by_expr["insist on"][2]) == 1
 
-        # Back layout: meaning, then indented example with bold surface form.
+        # Back layout: meaning, then indented italic example with bold surface form.
         insist_back = by_expr["insist on"][1]
         assert "to demand firmly" in insist_back
-        assert "\u2003\u2003He **insists on** speaking himself." in insist_back
-        assert "*" not in insist_back.replace("**", "")  # no italic-only wrapping
+        assert "    > *He **insists on** speaking himself.*" in insist_back
 
         target_path = tmp_path / "derived_barsky.db"
         target = init_db(str(target_path))
@@ -670,7 +753,7 @@ class TestDeriveWordPhrase:
             {1: ["He insists on speaking himself."]},
         )
         assert back.startswith("1. to demand firmly")
-        assert "\n\n\u2003\u2003He **insists on** speaking himself." in back
+        assert "\n\n    > *He **insists on** speaking himself.*" in back
 
 
 class TestLinkedWordPhraseSync:
@@ -702,9 +785,7 @@ class TestLinkedWordPhraseSync:
         assert stats["expressions"] == 1
         target = init_db(str(target_path))
         try:
-            assert target.execute("SELECT front FROM cards").fetchall() == [
-                ("bank",)
-            ]
+            assert target.execute("SELECT front FROM cards").fetchall() == [("bank",)]
         finally:
             target.close()
 
@@ -727,8 +808,7 @@ class TestLinkedWordPhraseSync:
         try:
             write_database_type(knowledge, DatabaseType.KNOWLEDGE)
             knowledge.execute(
-                "INSERT INTO cards (front, back, box, next_review) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
                 ("history", "must survive", 3, "2030-01-01"),
             )
             knowledge.commit()
@@ -825,8 +905,7 @@ class TestLinkedWordPhraseSync:
         try:
             write_database_type(knowledge, DatabaseType.KNOWLEDGE)
             knowledge.execute(
-                "INSERT INTO cards (front, back, box, next_review) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
                 ("distinctive knowledge card", "must survive", 3, "2030-01-01"),
             )
             knowledge.commit()
@@ -848,9 +927,9 @@ class TestLinkedWordPhraseSync:
         knowledge = init_db(str(knowledge_path))
         try:
             assert read_database_type(knowledge) == DatabaseType.KNOWLEDGE
-            assert knowledge.execute(
-                "SELECT front, back FROM cards"
-            ).fetchall() == [("distinctive knowledge card", "must survive")]
+            assert knowledge.execute("SELECT front, back FROM cards").fetchall() == [
+                ("distinctive knowledge card", "must survive")
+            ]
         finally:
             knowledge.close()
 
@@ -882,9 +961,12 @@ class TestLinkedWordPhraseSync:
         expected = default_word_phrase_path_for_sentence(
             str(sentence_path), str(db_root)
         )
-        os.makedirs(os.path.dirname(expected), exist_ok=True)
-        target = init_db(expected)
-        target.close()
+        # Establish ownership before exercising a saved symlink alias. A
+        # markerless canonical target must now be explicitly adopted instead.
+        owned_path, _ = ensure_linked_word_phrase_database(
+            conn, str(sentence_path), str(db_root), sync=False
+        )
+        assert owned_path == expected
         link_path = tmp_path / "canonical-projection-link.db"
         try:
             os.symlink(expected, link_path)
@@ -901,9 +983,7 @@ class TestLinkedWordPhraseSync:
         assert stats is not None
         target = init_db(expected)
         try:
-            assert target.execute("SELECT front FROM cards").fetchall() == [
-                ("bank",)
-            ]
+            assert target.execute("SELECT front FROM cards").fetchall() == [("bank",)]
         finally:
             target.close()
 
@@ -923,9 +1003,7 @@ class TestLinkedWordPhraseSync:
 
         db_root = tmp_path / "db"
         ensure_database_root_structure(str(db_root))
-        sent_path = (
-            db_root / DB_DIR_LANGUAGE_SENTENCE / "Legacy_barsky.db"
-        )
+        sent_path = db_root / DB_DIR_LANGUAGE_SENTENCE / "Legacy_barsky.db"
         conn = init_db(str(sent_path))
         try:
             write_database_type(conn, DatabaseType.LANGUAGE_SENTENCE)
@@ -952,6 +1030,31 @@ class TestLinkedWordPhraseSync:
         finally:
             reopened.close()
 
+    def test_startup_backfill_logs_unopenable_database_and_keeps_scanning(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from kgb_srs import schema, senses
+
+        db_root = tmp_path / "db"
+        db_root.mkdir()
+        broken_path = db_root / "broken_barsky.db"
+        monkeypatch.setattr(
+            schema, "find_databases", lambda _root: [("Broken", str(broken_path))]
+        )
+        monkeypatch.setattr(
+            schema,
+            "init_db",
+            lambda _path: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is unavailable")
+            ),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="kgb_srs.senses"):
+            assert senses.ensure_all_sentence_databases_linked(str(db_root)) == []
+
+        assert str(broken_path) in caplog.text
+        assert "database is unavailable" in caplog.text
+
     def test_sync_without_link_returns_none(self, conn):
         from kgb_srs.senses import sync_linked_word_phrase_database
 
@@ -973,8 +1076,7 @@ class TestUpsertPreservesSrs:
         future = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO cards (front, back, box, next_review) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
             ("bank", "old meaning", 4, future),
         )
         conn.commit()
@@ -1003,8 +1105,7 @@ class TestUpsertPreservesSrs:
         future = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO cards (front, back, box, next_review) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
             ("École", "old meaning", 4, future),
         )
         conn.commit()
@@ -1032,12 +1133,398 @@ class TestUpsertPreservesSrs:
         card_id, action = upsert_word_phrase_card(conn, "river", "stream of water")
         assert action == "inserted"
         cur = conn.cursor()
-        cur.execute(
-            "SELECT box, next_review FROM cards WHERE id=?", (card_id,)
-        )
+        cur.execute("SELECT box, next_review FROM cards WHERE id=?", (card_id,))
         box, next_review = cur.fetchone()
         assert box == 1
         assert next_review == today
+
+
+# ---------------------------------------------------------------------------
+# Projection safety and normalized W/P duplicate conflicts
+# ---------------------------------------------------------------------------
+
+
+class TestProjectionSafety:
+    def test_nested_sentence_paths_use_distinct_mirrored_targets_and_do_not_prune(
+        self, tmp_path
+    ):
+        from kgb_srs.senses import ensure_linked_word_phrase_database
+
+        db_root = tmp_path / "db"
+        sentence_root = db_root / "Language-based" / "Sentence-based"
+        english_path = sentence_root / "English" / "A1_barsky.db"
+        french_path = sentence_root / "French" / "A1_barsky.db"
+        english_path.parent.mkdir(parents=True)
+        french_path.parent.mkdir(parents=True)
+        english = init_db(str(english_path))
+        french = init_db(str(french_path))
+        try:
+            ensure_sentence_schema(english)
+            ensure_sentence_schema(french)
+            insert_sentence_card(
+                english, "The English bank.", [("bank", "financial institution")]
+            )
+            insert_sentence_card(french, "La rivière.", [("rivière", "river")])
+
+            english_target, _ = ensure_linked_word_phrase_database(
+                english, str(english_path), str(db_root)
+            )
+            french_target, _ = ensure_linked_word_phrase_database(
+                french, str(french_path), str(db_root)
+            )
+        finally:
+            english.close()
+            french.close()
+
+        assert english_target == str(
+            db_root
+            / "Language-based"
+            / "Word-Phrase-based"
+            / "English"
+            / "A1_barsky.db"
+        )
+        assert french_target == str(
+            db_root / "Language-based" / "Word-Phrase-based" / "French" / "A1_barsky.db"
+        )
+        assert english_target != french_target
+        english_target_conn = init_db(english_target)
+        french_target_conn = init_db(french_target)
+        try:
+            assert english_target_conn.execute(
+                "SELECT front FROM cards"
+            ).fetchall() == [("bank",)]
+            assert french_target_conn.execute("SELECT front FROM cards").fetchall() == [
+                ("rivière",)
+            ]
+        finally:
+            english_target_conn.close()
+            french_target_conn.close()
+
+    def test_canonical_symlink_escape_does_not_mutate_source_or_external_target(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+            sync_linked_word_phrase_database,
+        )
+
+        db_root = tmp_path / "db"
+        sentence_path = (
+            db_root / "Language-based" / "Sentence-based" / "English" / "A1_barsky.db"
+        )
+        sentence_path.parent.mkdir(parents=True)
+        external = tmp_path / "external"
+        external.mkdir()
+        marker = external / "must-not-change.txt"
+        marker.write_text("unchanged", encoding="utf-8")
+        word_phrase_root = db_root / "Language-based" / "Word-Phrase-based"
+        word_phrase_root.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(external, word_phrase_root)
+        except (AttributeError, NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        old_link = str(tmp_path / "existing-link.db")
+        set_linked_word_phrase_db(conn, old_link)
+        settings_before = conn.execute(
+            "SELECT key, value FROM settings ORDER BY key"
+        ).fetchall()
+        external_before = sorted(
+            (path.name, path.read_bytes()) for path in external.iterdir()
+        )
+
+        with pytest.raises(ProjectionPathSafetyError) as ensure_error:
+            ensure_linked_word_phrase_database(
+                conn, str(sentence_path), str(db_root), sync=True
+            )
+        assert (
+            ensure_error.value.conflict["code"]
+            == "sentence_projection_target_escapes_root"
+        )
+        with pytest.raises(ProjectionPathSafetyError):
+            sync_linked_word_phrase_database(
+                conn, sentence_db_path=str(sentence_path), db_root=str(db_root)
+            )
+
+        assert get_linked_word_phrase_db(conn) == os.path.abspath(old_link)
+        assert (
+            conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
+            == settings_before
+        )
+        assert (
+            sorted((path.name, path.read_bytes()) for path in external.iterdir())
+            == external_before
+        )
+
+    def test_canonical_target_symlink_to_database_inside_root_is_rejected(
+        self, tmp_path
+    ):
+        """A canonical filename must not redirect projection writes to a victim."""
+        from kgb_srs.catalog import DatabaseType, write_database_type
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            ensure_linked_word_phrase_database,
+        )
+
+        db_root = tmp_path / "db"
+        source_path = (
+            db_root / "Language-based" / "Sentence-based" / "English_barsky.db"
+        )
+        source_path.parent.mkdir(parents=True)
+        source = init_db(str(source_path))
+        victim_path = db_root / "Knowledge-based" / "Victim_barsky.db"
+        victim_path.parent.mkdir(parents=True)
+        victim = init_db(str(victim_path))
+        try:
+            ensure_sentence_schema(source)
+            insert_sentence_card(source, "I went home.", [("went", "past of go")])
+            write_database_type(victim, DatabaseType.KNOWLEDGE)
+            victim.execute(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+                ("victim", "must survive", 4, "2030-01-01"),
+            )
+            victim.commit()
+        finally:
+            source.close()
+            victim.close()
+
+        canonical_path = (
+            db_root / "Language-based" / "Word-Phrase-based" / "English_barsky.db"
+        )
+        canonical_path.parent.mkdir(parents=True)
+        try:
+            os.symlink(victim_path, canonical_path)
+        except (AttributeError, NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        source_before = source_path.read_bytes()
+        victim_before = victim_path.read_bytes()
+        source = sqlite3.connect(str(source_path))
+        try:
+            with pytest.raises(ProjectionPathSafetyError) as error:
+                ensure_linked_word_phrase_database(
+                    source, str(source_path), str(db_root), sync=True
+                )
+            assert (
+                error.value.conflict["code"]
+                == "sentence_projection_target_not_canonical"
+            )
+        finally:
+            source.close()
+
+        assert source_path.read_bytes() == source_before
+        assert victim_path.read_bytes() == victim_before
+
+    def test_populated_legacy_flat_target_is_not_relinked_for_nested_source(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            default_word_phrase_path_for_sentence,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+            sync_linked_word_phrase_database,
+        )
+
+        db_root = tmp_path / "db"
+        sentence_path = (
+            db_root / "Language-based" / "Sentence-based" / "English" / "A1_barsky.db"
+        )
+        sentence_path.parent.mkdir(parents=True)
+        legacy_path = db_root / "Language-based" / "Word-Phrase-based" / "A1_barsky.db"
+        legacy_path.parent.mkdir(parents=True)
+        legacy = init_db(str(legacy_path))
+        try:
+            legacy.execute(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+                ("legacy", "must survive", 4, "2030-01-01"),
+            )
+            legacy.commit()
+        finally:
+            legacy.close()
+        legacy_bytes = legacy_path.read_bytes()
+        set_linked_word_phrase_db(conn, str(legacy_path))
+
+        with pytest.raises(ProjectionPathSafetyError) as error:
+            ensure_linked_word_phrase_database(
+                conn, str(sentence_path), str(db_root), sync=True
+            )
+
+        mirrored_path = default_word_phrase_path_for_sentence(
+            str(sentence_path), str(db_root)
+        )
+        assert error.value.conflict["code"] == "legacy_word_phrase_projection_conflict"
+        assert get_linked_word_phrase_db(conn) == os.path.abspath(str(legacy_path))
+        assert legacy_path.read_bytes() == legacy_bytes
+        assert not os.path.exists(mirrored_path)
+        with pytest.raises(ProjectionPathSafetyError):
+            sync_linked_word_phrase_database(
+                conn, sentence_db_path=str(sentence_path), db_root=str(db_root)
+            )
+
+    def test_empty_legacy_flat_target_is_replaced_by_nested_mirror(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            default_word_phrase_path_for_sentence,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+        )
+
+        db_root = tmp_path / "db"
+        sentence_path = (
+            db_root / "Language-based" / "Sentence-based" / "English" / "A1_barsky.db"
+        )
+        sentence_path.parent.mkdir(parents=True)
+        legacy_path = db_root / "Language-based" / "Word-Phrase-based" / "A1_barsky.db"
+        legacy_path.parent.mkdir(parents=True)
+        legacy = init_db(str(legacy_path))
+        legacy.close()
+        set_linked_word_phrase_db(conn, str(legacy_path))
+
+        target_path, stats = ensure_linked_word_phrase_database(
+            conn, str(sentence_path), str(db_root), sync=True
+        )
+
+        expected = default_word_phrase_path_for_sentence(
+            str(sentence_path), str(db_root)
+        )
+        assert target_path == expected
+        assert stats is not None
+        assert get_linked_word_phrase_db(conn) == expected
+        assert os.path.isfile(expected)
+
+    def test_source_outside_sentence_root_is_rejected_before_link_mutation(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+        )
+
+        old_link = str(tmp_path / "existing-link.db")
+        set_linked_word_phrase_db(conn, old_link)
+        outside_source = tmp_path / "outside" / "A1_barsky.db"
+
+        with pytest.raises(ProjectionPathSafetyError) as error:
+            ensure_linked_word_phrase_database(
+                conn, str(outside_source), str(tmp_path / "db"), sync=True
+            )
+
+        assert error.value.conflict["code"] == "sentence_projection_source_outside_root"
+        assert get_linked_word_phrase_db(conn) == os.path.abspath(old_link)
+
+
+class TestWordPhraseDuplicateSafety:
+    def test_duplicate_scanner_groups_unicode_nfc_nfd_and_casefold(self, conn):
+        from kgb_srs.senses import find_normalized_word_phrase_duplicates
+
+        conn.executemany(
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, '2030-01-01')",
+            [
+                ("École", "one"),
+                ("e\u0301COLE", "two"),
+                ("BANK", "three"),
+                ("bank", "four"),
+            ],
+        )
+        conn.commit()
+
+        groups = find_normalized_word_phrase_duplicates(conn)
+
+        assert [(group.normalized_front, group.fronts) for group in groups] == [
+            ("bank", ("BANK", "bank")),
+            ("école", ("École", "e\u0301COLE")),
+        ]
+        assert [group.card_ids for group in groups] == [(3, 4), (1, 2)]
+
+    def test_upsert_duplicate_conflict_does_not_mutate_cards(self, conn):
+        from kgb_srs.senses import (
+            WordPhraseDuplicateConflictError,
+            upsert_word_phrase_card,
+        )
+
+        conn.executemany(
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+            [
+                ("École", "first", 2, "2030-01-01"),
+                ("e\u0301cole", "second", 5, "2031-01-01"),
+            ],
+        )
+        conn.commit()
+        before = conn.execute(
+            "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+        ).fetchall()
+
+        with pytest.raises(WordPhraseDuplicateConflictError) as error:
+            upsert_word_phrase_card(conn, "ÉCOLE", "new projection")
+
+        assert error.value.conflict["normalized_front"] == "école"
+        assert (
+            conn.execute(
+                "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+            ).fetchall()
+            == before
+        )
+
+    def test_derive_conflict_preserves_duplicates_and_projects_other_entries(
+        self, conn, tmp_path
+    ):
+        insert_sentence_card(
+            conn, "The bank is open.", [("bank", "financial institution")]
+        )
+        insert_sentence_card(conn, "A river runs here.", [("river", "watercourse")])
+        target = init_db(str(tmp_path / "word_phrase_barsky.db"))
+        try:
+            target.executemany(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+                [
+                    ("BANK", "first history", 2, "2030-01-01"),
+                    ("bank", "second history", 5, "2031-01-01"),
+                ],
+            )
+            target.commit()
+            before_duplicates = target.execute(
+                "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+            ).fetchall()
+
+            stats = derive_word_phrase_database(conn, target)
+
+            assert stats["inserted"] == 1
+            assert stats["updated"] == 0
+            assert stats["pruned"] == 0
+            assert stats["conflicts"] == [
+                {
+                    "code": "normalized_word_phrase_front_duplicates",
+                    "normalized_front": "bank",
+                    "cards": [
+                        {"id": before_duplicates[0][0], "front": "BANK"},
+                        {"id": before_duplicates[1][0], "front": "bank"},
+                    ],
+                }
+            ]
+            assert (
+                target.execute(
+                    "SELECT id, front, back, box, next_review FROM cards WHERE id IN (?, ?) ORDER BY id",
+                    (before_duplicates[0][0], before_duplicates[1][0]),
+                ).fetchall()
+                == before_duplicates
+            )
+            assert (
+                target.execute(
+                    "SELECT front, back FROM cards WHERE front='river'"
+                ).fetchone()[0]
+                == "river"
+            )
+        finally:
+            target.close()
 
 
 class TestOrphanSensePurge:
@@ -1047,9 +1534,7 @@ class TestOrphanSensePurge:
         from kgb_srs.schema import update_sentence_card
         from kgb_srs.senses import get_sense, derive_word_phrase_entries
 
-        cid = insert_sentence_card(
-            conn, "Hello world", [("world", "the earth")]
-        )
+        cid = insert_sentence_card(conn, "Hello world", [("world", "the earth")])
         old_sid = conn.execute(
             "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
             (cid,),
@@ -1078,17 +1563,13 @@ class TestOrphanSensePurge:
         from kgb_srs.schema import update_sentence_card
         from kgb_srs.senses import get_sense
 
-        cid1 = insert_sentence_card(
-            conn, "Hello world", [("world", "the earth")]
-        )
+        cid1 = insert_sentence_card(conn, "Hello world", [("world", "the earth")])
         sid = conn.execute(
             "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
             (cid1,),
         ).fetchone()[0]
         # Second card still uses the same sense meaning.
-        insert_sentence_card(
-            conn, "World peace", [("World", "the earth")]
-        )
+        insert_sentence_card(conn, "World peace", [("World", "the earth")])
         update_sentence_card(
             conn,
             cid1,
@@ -1133,14 +1614,10 @@ class TestCreateOrGetSenseSavepoint:
         find_then_existing._calls = 0
         senses_mod.find_sense_by_meaning = find_then_existing
         try:
-            recovered = create_or_get_sense(
-                conn, "bank", "river side", commit=False
-            )
+            recovered = create_or_get_sense(conn, "bank", "river side", commit=False)
         finally:
             senses_mod.find_sense_by_meaning = original_find
 
         assert recovered.id == first.id
-        still = conn.execute(
-            "SELECT id FROM cards WHERE id=?", (outer_id,)
-        ).fetchone()
+        still = conn.execute("SELECT id FROM cards WHERE id=?", (outer_id,)).fetchone()
         assert still is not None, "outer transaction row must survive conflict"

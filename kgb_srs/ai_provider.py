@@ -8,8 +8,9 @@ Non-secret defaults come from a template; API keys are never committed.
 
 import json
 import time
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 
@@ -79,9 +80,7 @@ def ensure_ai_provider_profiles(settings: dict) -> dict:
             providers[label] = _normalize_provider_entry(entry)
 
     if not providers:
-        providers[DEFAULT_AI_PROVIDER_NAME] = _legacy_flat_entry_from_settings(
-            settings
-        )
+        providers[DEFAULT_AI_PROVIDER_NAME] = _legacy_flat_entry_from_settings(settings)
 
     active = str(settings.get("ai_active_provider") or "").strip()
     if active not in providers:
@@ -147,7 +146,10 @@ def upsert_ai_provider(
             "timeout": timeout,
         }
     )
-    if make_active or settings.get("ai_active_provider") not in settings["ai_providers"]:
+    if (
+        make_active
+        or settings.get("ai_active_provider") not in settings["ai_providers"]
+    ):
         settings["ai_active_provider"] = label
     ensure_ai_provider_profiles(settings)
     return label
@@ -194,6 +196,7 @@ class AIProviderConfig:
     API key is always blank by default — users supply it in their
     personal barsky_settings.json (which is git-ignored).
     """
+
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
     api_key: str = ""
@@ -226,6 +229,7 @@ class AIProviderConfig:
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
+
 
 class AIMissingConfigError(Exception):
     """AI provider is not configured (missing API key, etc.)."""
@@ -305,9 +309,7 @@ def build_sense_assignment_prompt(
     *prior_senses* is a list of (sense_id, meaning_text).
     """
     if prior_senses:
-        lines = [
-            f"  - id={sid}: {meaning}" for sid, meaning in prior_senses
-        ]
+        lines = [f"  - id={sid}: {meaning}" for sid, meaning in prior_senses]
         prior_block = "\n".join(lines)
     else:
         prior_block = "  (none)"
@@ -391,6 +393,27 @@ def build_membership_prompt(sentence: str, missing_items: list[str]) -> str:
 # HTTP helper (stdlib only — no extra dependency)
 # ---------------------------------------------------------------------------
 
+_ALLOWED_HTTP_SCHEMES = frozenset({"http", "https"})
+
+
+def _validate_http_url(url: str) -> None:
+    """Require an absolute HTTP(S) URL for AI provider requests."""
+    if not isinstance(url, str):
+        raise ValueError("AI provider URL must use an absolute http or https URL")
+
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.casefold() not in _ALLOWED_HTTP_SCHEMES or not parsed.netloc:
+        raise ValueError("AI provider URL must use an absolute http or https URL")
+
+
+class _HTTPOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects that leave the HTTP(S) transport boundary."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def http_request(
     url: str,
     headers: dict,
@@ -400,14 +423,20 @@ def http_request(
     method: str = "GET",
 ) -> str:
     """Synchronous HTTP request via stdlib urllib (GET or POST)."""
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    _validate_http_url(url)
+    # The initial URL and every redirect are constrained to HTTP(S) above.
+    req = urllib.request.Request(  # noqa: S310
+        url, data=body, headers=headers, method=method
+    )
+    opener = urllib.request.build_opener(_HTTPOnlyRedirectHandler())
+    with opener.open(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
 # AI Client
 # ---------------------------------------------------------------------------
+
 
 class AIClient:
     """OpenAI-compatible chat completions client.
@@ -443,7 +472,10 @@ class AIClient:
         body = {
             "model": self.config.model,
             "messages": [
-                {"role": "system", "content": "You are a helpful language learning assistant. Respond with valid JSON only."},
+                {
+                    "role": "system",
+                    "content": "You are a helpful language learning assistant. Respond with valid JSON only.",
+                },
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.3,
@@ -491,13 +523,16 @@ class AIClient:
             raise ValueError("API response first choice message has no 'content'")
         content = message["content"]
         if not isinstance(content, str):
-            raise ValueError("API response first choice message 'content' must be a string")
+            raise ValueError(
+                "API response first choice message 'content' must be a string"
+            )
         return content
 
 
 # ---------------------------------------------------------------------------
 # Connection test (stdlib only)
 # ---------------------------------------------------------------------------
+
 
 def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
     """Probe the configured model and return (ok, message, latency_ms).
@@ -514,11 +549,13 @@ def test_connection(config: AIProviderConfig) -> tuple[bool, str, float]:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {config.api_key}",
     }
-    body = json.dumps({
-        "model": config.model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "model": config.model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+    ).encode("utf-8")
 
     started = time.monotonic()
     try:
@@ -647,15 +684,26 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
 # QThread worker (lazy PyQt6 import)
 # ---------------------------------------------------------------------------
 
+_AI_WORKER_CLASS = None
+
+
 def _get_ai_worker_class():
-    """Lazy import of AIWorker to avoid requiring PyQt6 at module level."""
+    """Return the cached lazy PyQt AI worker class.
+
+    Importing this module remains usable without PyQt6; the worker class is
+    constructed only on its first UI use and reused thereafter.
+    """
+    global _AI_WORKER_CLASS
+    if _AI_WORKER_CLASS is not None:
+        return _AI_WORKER_CLASS
+
     from PyQt6.QtCore import QThread, pyqtSignal
 
     class AIWorker(QThread):
         """Background thread for AI API calls — keeps the PyQt UI responsive."""
 
-        result = pyqtSignal(str)     # emits response text
-        error = pyqtSignal(str)      # emits error message
+        result = pyqtSignal(str)  # emits response text
+        error = pyqtSignal(str)  # emits error message
 
         def __init__(self, config: AIProviderConfig, prompt: str):
             super().__init__()
@@ -667,7 +715,8 @@ def _get_ai_worker_class():
                 client = AIClient(self._config)
                 url, headers, body = client.build_request(self._prompt)
                 raw = http_request(
-                    url, headers,
+                    url,
+                    headers,
                     body=json.dumps(body).encode("utf-8"),
                     timeout=self._config.timeout_seconds,
                     method="POST",
@@ -683,9 +732,8 @@ def _get_ai_worker_class():
             except Exception as e:
                 self.error.emit(f"Unexpected error: {e}")
 
-    return AIWorker
-
-
+    _AI_WORKER_CLASS = AIWorker
+    return _AI_WORKER_CLASS
 
 
 def _get_ai_test_worker_class():

@@ -22,6 +22,7 @@ from kgb_srs.catalog import (
 # DatabaseType enum
 # ---------------------------------------------------------------------------
 
+
 class TestDatabaseType:
     def test_canonical_values(self):
         assert DatabaseType.LANGUAGE_SENTENCE.value == "language_sentence"
@@ -29,8 +30,13 @@ class TestDatabaseType:
         assert DatabaseType.KNOWLEDGE.value == "knowledge"
 
     def test_category_property(self):
-        assert DatabaseType.LANGUAGE_SENTENCE.category == DatabaseCategory.LANGUAGE_BASED
-        assert DatabaseType.LANGUAGE_WORD_PHRASE.category == DatabaseCategory.LANGUAGE_BASED
+        assert (
+            DatabaseType.LANGUAGE_SENTENCE.category == DatabaseCategory.LANGUAGE_BASED
+        )
+        assert (
+            DatabaseType.LANGUAGE_WORD_PHRASE.category
+            == DatabaseCategory.LANGUAGE_BASED
+        )
         assert DatabaseType.KNOWLEDGE.category == DatabaseCategory.KNOWLEDGE_BASED
 
     def test_subtypes(self):
@@ -43,6 +49,7 @@ class TestDatabaseType:
 # DatabaseCategory enum
 # ---------------------------------------------------------------------------
 
+
 class TestDatabaseCategory:
     def test_values(self):
         assert DatabaseCategory.LANGUAGE_BASED.value == "language_based"
@@ -52,6 +59,7 @@ class TestDatabaseCategory:
 # ---------------------------------------------------------------------------
 # infer_database_type
 # ---------------------------------------------------------------------------
+
 
 class TestInferDatabaseType:
     """Test metadata inference from database paths."""
@@ -95,6 +103,7 @@ class TestInferDatabaseType:
 # read_database_type / write_database_type
 # ---------------------------------------------------------------------------
 
+
 class TestDatabaseTypePersistence:
     """Test that database_type is stored and retrieved from settings table."""
 
@@ -103,7 +112,9 @@ class TestDatabaseTypePersistence:
         db_fd, db_path = tempfile.mkstemp(suffix=".db")
         os.close(db_fd)
         conn = sqlite3.connect(db_path)
-        conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)"
+        )
         yield conn
         conn.close()
         os.unlink(db_path)
@@ -137,6 +148,7 @@ class TestDatabaseTypePersistence:
 # build_catalog_tree
 # ---------------------------------------------------------------------------
 
+
 class TestBuildCatalogTree:
     """Test the catalog tree structure used for database menus."""
 
@@ -152,37 +164,107 @@ class TestBuildCatalogTree:
 
     def test_word_phrase_databases_are_flat(self):
         entries = [
-            ("Language-based/Word/Phrase-based/Languages/English",
-             "/old/db/Languages/English_barsky.db",
-             DatabaseType.LANGUAGE_WORD_PHRASE),
+            (
+                "Language-based/Word/Phrase-based/Languages/English",
+                "/old/db/Languages/English_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
         ]
         tree = build_catalog_tree(entries)
         branch = tree["Language-based"]["Word/Phrase-based"]
         assert branch == {
-            "English": ("/old/db/Languages/English_barsky.db",
-                        DatabaseType.LANGUAGE_WORD_PHRASE)
+            "English": (
+                "/old/db/Languages/English_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            )
         }
 
+    def test_colliding_word_phrase_leaves_use_flat_relative_labels(self):
+        entries = [
+            (
+                "Language-based\\Word-Phrase-based\\English\\A1",
+                "/db/Language-based/Word-Phrase-based/English/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            (
+                "Language-based/Word-Phrase-based/French/A1",
+                "/db/Language-based/Word-Phrase-based/French/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        ]
+
+        branch = build_catalog_tree(entries)["Language-based"]["Word/Phrase-based"]
+
+        assert branch == {
+            "English/A1": (
+                "/db/Language-based/Word-Phrase-based/English/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            "French/A1": (
+                "/db/Language-based/Word-Phrase-based/French/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        }
+        assert all(not isinstance(value, dict) for value in branch.values())
+
+    def test_legacy_collision_without_word_phrase_marker_uses_display_labels(self):
+        entries = [
+            (
+                "Languages/A/Shared",
+                "/legacy/Languages/A/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            (
+                "Languages/B/Shared",
+                "/legacy/Languages/B/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        ]
+
+        branch = build_catalog_tree(entries)["Language-based"]["Word/Phrase-based"]
+
+        assert branch == {
+            "Languages/A/Shared": (
+                "/legacy/Languages/A/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            "Languages/B/Shared": (
+                "/legacy/Languages/B/Shared_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        }
+        assert all(not isinstance(value, dict) for value in branch.values())
+
     def test_single_language_sentence(self):
-        entry = ("Language-based/Sentence-based/French", "/path/French_barsky.db",
-                 DatabaseType.LANGUAGE_SENTENCE)
+        entry = (
+            "Language-based/Sentence-based/French",
+            "/path/French_barsky.db",
+            DatabaseType.LANGUAGE_SENTENCE,
+        )
         tree = build_catalog_tree([entry])
         assert "Language-based" in tree
         lang_branch = tree["Language-based"]
         assert "Sentence-based" in lang_branch
         sent_branch = lang_branch["Sentence-based"]
         assert "French" in sent_branch
-        assert sent_branch["French"] == ("/path/French_barsky.db",
-                                         DatabaseType.LANGUAGE_SENTENCE)
+        assert sent_branch["French"] == (
+            "/path/French_barsky.db",
+            DatabaseType.LANGUAGE_SENTENCE,
+        )
 
     def test_multiple_categories(self):
         entries = [
-            ("Language-based/Sentence-based/FR", "/p/fr.db",
-             DatabaseType.LANGUAGE_SENTENCE),
-            ("Language-based/Word-Phrase-based/EN", "/p/en.db",
-             DatabaseType.LANGUAGE_WORD_PHRASE),
-            ("Knowledge-based/Math", "/p/math.db",
-             DatabaseType.KNOWLEDGE),
+            (
+                "Language-based/Sentence-based/FR",
+                "/p/fr.db",
+                DatabaseType.LANGUAGE_SENTENCE,
+            ),
+            (
+                "Language-based/Word-Phrase-based/EN",
+                "/p/en.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            ("Knowledge-based/Math", "/p/math.db", DatabaseType.KNOWLEDGE),
         ]
         tree = build_catalog_tree(entries)
         assert set(tree.keys()) == {"Language-based", "Knowledge-based"}
@@ -196,8 +278,11 @@ class TestBuildCatalogTree:
     def test_sorts_categories_language_first(self):
         entries = [
             ("Knowledge-based/X", "/p/x.db", DatabaseType.KNOWLEDGE),
-            ("Language-based/Word-Phrase-based/Y", "/p/y.db",
-             DatabaseType.LANGUAGE_WORD_PHRASE),
+            (
+                "Language-based/Word-Phrase-based/Y",
+                "/p/y.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
         ]
         tree = build_catalog_tree(entries)
         keys = list(tree.keys())
@@ -209,9 +294,11 @@ class TestBuildCatalogTree:
         Language-based/Word-Phrase-based."""
         entries = [
             # This would come from infer_database_type on a legacy path
-            ("Language-based/Word-Phrase-based/Languages/English",
-             "/old/db/Languages/English_barsky.db",
-             DatabaseType.LANGUAGE_WORD_PHRASE),
+            (
+                "Language-based/Word-Phrase-based/Languages/English",
+                "/old/db/Languages/English_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
         ]
         tree = build_catalog_tree(entries)
         assert "Language-based" in tree

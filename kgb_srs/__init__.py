@@ -3,7 +3,7 @@
 A spaced-repetition learning application with Markdown + MathJax support.
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 # Non-PyQt modules are safe to import eagerly.
 from .config import (
@@ -46,6 +46,7 @@ def __getattr__(name: str):
     """
     if name == "BarskyApp":
         from .main_window import BarskyApp
+
         return BarskyApp
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -53,4 +54,5 @@ def __getattr__(name: str):
 def get_app():
     """Lazy import of BarskyApp to avoid requiring PyQt6 at import time."""
     from .main_window import BarskyApp
+
     return BarskyApp

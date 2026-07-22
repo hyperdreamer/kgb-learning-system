@@ -38,6 +38,11 @@ _RE_ESCAPE_RE = re.compile(r"([.^$*+?{}[\]\\|()])")
 # Hyphen is intentionally NOT stripped here — compounds like non-staple stay
 # intact so we can match lemmas against individual hyphen segments.
 _PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…«»"
+_INTERNAL_APOSTROPHE_CHARS = "'’ʼ＇"
+_ASCII_WORD_SEGMENT_RE = rf"[a-z]+(?:[{_INTERNAL_APOSTROPHE_CHARS}][a-z]+)*"
+_ASCII_WORD_PHRASE_RE = re.compile(
+    rf"{_ASCII_WORD_SEGMENT_RE}(?: {_ASCII_WORD_SEGMENT_RE})*"
+)
 # Hyphen-like characters that split English compounds (non-staple, well–known).
 _HYPHEN_CHARS = frozenset("-–—")
 
@@ -306,7 +311,9 @@ _IRREGULAR_VERB_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"weave", "weaves", "weaving", "wove", "woven"}),
     frozenset({"wring", "wringing", "wrings", "wrung"}),
     frozenset({"rewrite", "rewrites", "rewriting", "rewritten", "rewrote"}),
-    frozenset({"underwrite", "underwrites", "underwriting", "underwritten", "underwrote"}),
+    frozenset(
+        {"underwrite", "underwrites", "underwriting", "underwritten", "underwrote"}
+    ),
     frozenset({"write", "writes", "writing", "written", "wrote"}),
 )
 
@@ -585,13 +592,21 @@ def _tokenize(text: str) -> list[str]:
 def _flexible_phrase_match(norm_item: str, norm_sentence: str) -> bool:
     """Match item as a consecutive token sequence under flex token equality.
 
-    Requires both sides to yield at least one whitespace-separated token so
-    continuous CJK strings stay on the literal-only path.
+    Whitespace-tokenized phrases and single ASCII-word tokens are eligible;
+    continuous scripts stay on the literal-only path.
     """
-    # Need real whitespace separation for this path to be meaningful.
+    # Continuous scripts stay literal-only.  A pair of single ASCII-word
+    # tokens, however, is a normal spaced-language case even though neither
+    # value happens to contain whitespace (for example, ``go`` ↔ ``Went``).
+    # The inflection rules below are English-oriented, so do not apply them to
+    # arbitrary continuous Unicode text such as CJK.
     if " " not in norm_item and " " not in norm_sentence:
-        # Single-token item vs multi-token sentence still allowed.
-        if " " not in norm_sentence:
+        item_token = _strip_token_punct(norm_item)
+        sentence_token = _strip_token_punct(norm_sentence)
+        if not (
+            re.fullmatch(r"[a-z]+", item_token)
+            and re.fullmatch(r"[a-z]+", sentence_token)
+        ):
             return False
 
     item_tokens = _tokenize(norm_item)
@@ -662,6 +677,17 @@ def validate_unfamiliar_items(
     )
 
 
+def _strip_unicode_edge_punctuation(text: str) -> str:
+    """Remove leading and trailing Unicode punctuation from *text*."""
+    start = 0
+    end = len(text)
+    while start < end and unicodedata.category(text[start]).startswith("P"):
+        start += 1
+    while end > start and unicodedata.category(text[end - 1]).startswith("P"):
+        end -= 1
+    return text[start:end]
+
+
 def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     """True if *surface* occurs in *sentence* as a real span.
 
@@ -673,7 +699,24 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     norm_surface = normalize_sentence(surface)
     if not norm_surface:
         return False
-    # Multi-word or punct-bearing: literal substring after escape.
+    stripped_surface = _strip_unicode_edge_punctuation(norm_surface)
+    if _ASCII_WORD_PHRASE_RE.fullmatch(stripped_surface):
+        start = norm_sentence.find(norm_surface)
+        while start != -1:
+            end = start + len(norm_surface)
+            left_is_alphanumeric = (
+                start > 0
+                and norm_sentence[start - 1] in "abcdefghijklmnopqrstuvwxyz0123456789_"
+            )
+            right_is_alphanumeric = (
+                end < len(norm_sentence)
+                and norm_sentence[end] in "abcdefghijklmnopqrstuvwxyz0123456789_"
+            )
+            if not left_is_alphanumeric and not right_is_alphanumeric:
+                return True
+            start = norm_sentence.find(norm_surface, start + 1)
+        return False
+    # Multi-word or other punct-bearing surfaces: literal substring after escape.
     if " " in norm_surface or not re.fullmatch(r"[a-z]+", norm_surface):
         return _literal_find(norm_surface, norm_sentence)
     # Single alphabetic token: whole-token or hyphen-segment only.
@@ -865,9 +908,7 @@ def locate_unfamiliar_spans(
         expr, preferred = _item_expression_and_surface(item)
         if not expr:
             continue
-        span = locate_item_surface_span(
-            sentence, expr, preferred_surface=preferred
-        )
+        span = locate_item_surface_span(sentence, expr, preferred_surface=preferred)
         if span is None:
             continue
         start, end = span
@@ -908,9 +949,7 @@ def sort_items_by_sentence_order(sentence: str, items: list) -> list:
         else:
             located.append((span[0], idx, item))
     located.sort(key=lambda t: (t[0], t[1]))
-    return [item for _start, _idx, item in located] + [
-        item for _idx, item in missing
-    ]
+    return [item for _start, _idx, item in located] + [item for _idx, item in missing]
 
 
 def format_sentence_meaning_lines(items: list) -> list[str]:

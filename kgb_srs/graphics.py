@@ -3,7 +3,7 @@
 These are QGraphicsItem subclasses for the canvas-based review UI.
 """
 
-import os
+import logging
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -16,27 +16,127 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QColor, QBrush, QPen, QPainterPath, QIcon
+from PyQt6.QtGui import (
+    QColor,
+    QBrush,
+    QPen,
+    QPainterPath,
+    QIcon,
+    QDesktopServices,
+)
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
+
     try:
-        from PyQt6.QtWebEngineCore import QWebEngineSettings
+        from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     except ImportError:
+        QWebEnginePage = None
         QWebEngineSettings = None
     HAS_WEBENGINE = True
 except ImportError:
     QWebEngineView = None
+    QWebEnginePage = None
     QWebEngineSettings = None
     HAS_WEBENGINE = False
 
 from .markdown_utils import build_review_html
 
 
+logger = logging.getLogger(__name__)
+
+
+class ReviewCardNavigationPolicy:
+    """Strict navigation policy for untrusted review-card HTML.
+
+    The embedded review view is display-only.  Explicit HTTP(S) links may be
+    handed to the operating system, while every navigation stays out of the
+    card (including local-file, data, JavaScript, and custom schemes).
+    """
+
+    BLOCKED_SCHEMES = frozenset({"file", "data", "javascript", "qrc", "mailto", "ftp"})
+    EXTERNAL_SCHEMES = frozenset({"http", "https"})
+
+    @staticmethod
+    def _url_text(url: QUrl | str) -> str:
+        return url.toString() if isinstance(url, QUrl) else str(url or "")
+
+    @classmethod
+    def should_open_externally(cls, url: QUrl | str) -> bool:
+        """Return whether *url* is an HTTP(S) link suitable for the desktop."""
+        parsed = QUrl(cls._url_text(url))
+        return (
+            parsed.isValid()
+            and parsed.scheme().lower() in cls.EXTERNAL_SCHEMES
+            and bool(parsed.host())
+        )
+
+    @classmethod
+    def allows_embedded_navigation(cls, url: QUrl | str) -> bool:
+        """Review cards are never allowed to navigate their embedded page."""
+        return False
+
+
+def route_review_card_link(url: QUrl | str, opener=QDesktopServices.openUrl) -> bool:
+    """Open a permitted card link outside the application, returning success."""
+    if not ReviewCardNavigationPolicy.should_open_externally(url):
+        return False
+    qurl = url if isinstance(url, QUrl) else QUrl(str(url))
+    return bool(opener(qurl))
+
+
+if QWebEnginePage is not None:
+
+    class ReviewCardWebPage(QWebEnginePage):
+        """Display-only page which delegates user links to the desktop."""
+
+        def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+            link_click = (
+                navigation_type
+                == QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+            )
+            if link_click:
+                route_review_card_link(url)
+            return ReviewCardNavigationPolicy.allows_embedded_navigation(url)
+else:
+    ReviewCardWebPage = None
+
+
+def configure_review_web_view(web_view) -> None:
+    """Apply the review-card's no-script, no-local-content web policy."""
+    if QWebEngineSettings is None:
+        return
+    settings = web_view.settings()
+    settings.setAttribute(
+        QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
+        False,
+    )
+    settings.setAttribute(
+        QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
+        False,
+    )
+    settings.setAttribute(
+        QWebEngineSettings.WebAttribute.JavascriptEnabled,
+        False,
+    )
+
+
+def _set_transparent_web_view_background(web_view) -> None:
+    """Apply optional WebEngine styling without disrupting card rendering."""
+    try:
+        web_view.page().setBackgroundColor(QColor("transparent"))
+    except Exception:
+        logger.warning(
+            "Could not set the review-card WebEngine background.", exc_info=True
+        )
+
+
 # ── Reusable button stylesheet helper ────────────────────────────────────────
 
-def _button_stylesheet(object_name, base_color, hover_color, pressed_color,
-                       font_fam, font_sz, dyn_pad):
+
+def _button_stylesheet(
+    object_name, base_color, hover_color, pressed_color, font_fam, font_sz, dyn_pad
+):
     """Return a full QPushButton stylesheet covering normal, hover, pressed,
     and disabled states."""
     shared = (
@@ -105,7 +205,9 @@ class DropZoneItem(QGraphicsRectItem):
 
         brush = self._brush_dim if self._hovered else self._brush
         painter.fillPath(path, brush)
-        painter.setPen(self._pen if self._hovered else QPen(self._pen.color().darker(120), 2))
+        painter.setPen(
+            self._pen if self._hovered else QPen(self._pen.color().darker(120), 2)
+        )
         painter.drawPath(path)
 
         # let text paint via child item
@@ -146,37 +248,18 @@ class FlashCardItem(QGraphicsRectItem):
         self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
-        if HAS_WEBENGINE:
-            self.text_widget = QWebEngineView()
-            self.text_widget.setStyleSheet("background-color: transparent;")
-
-            try:
-                if QWebEngineSettings is not None:
-                    web_settings = self.text_widget.settings()
-                    web_settings.setAttribute(
-                        QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
-                        True,
-                    )
-                    web_settings.setAttribute(
-                        QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
-                        True,
-                    )
-            except Exception:
-                pass
-
-            try:
-                self.text_widget.page().setBackgroundColor(QColor("transparent"))
-            except Exception:
-                pass
-        else:
-            self.text_widget = QTextEdit()
-            self.text_widget.setReadOnly(True)
-            self.text_widget.setStyleSheet(
-                "background-color: transparent; border: none; color: black;"
-            )
-            self.text_widget.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextBrowserInteraction
-            )
+        # The card is embedded through QGraphicsProxyWidget. QWebEngineView
+        # uses a separate composited surface that is not reliably painted in
+        # that host, leaving an otherwise functional card blank. QTextEdit
+        # safely renders the generated HTML and its offline LaTeX fallback.
+        self.text_widget = QTextEdit()
+        self.text_widget.setReadOnly(True)
+        self.text_widget.setStyleSheet(
+            "background-color: transparent; border: none; color: black;"
+        )
+        self.text_widget.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
 
         self.btn_layout = QHBoxLayout()
 
@@ -190,8 +273,13 @@ class FlashCardItem(QGraphicsRectItem):
         self.tts_btn.setToolTip("Speak this card (Alt+L)")
         self.tts_btn.setStyleSheet(
             _button_stylesheet(
-                "ttsBtn", "#9C27B0", "#AB47BC", "#8E24AA",
-                font_fam, font_sz, dyn_pad,
+                "ttsBtn",
+                "#9C27B0",
+                "#AB47BC",
+                "#8E24AA",
+                font_fam,
+                font_sz,
+                dyn_pad,
             )
         )
         self.tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -202,8 +290,13 @@ class FlashCardItem(QGraphicsRectItem):
         self.flip_btn.setToolTip("Reveal the answer (Alt+R)")
         self.flip_btn.setStyleSheet(
             _button_stylesheet(
-                "revealBtn", "#2196F3", "#42A5F5", "#1E88E5",
-                font_fam, font_sz, dyn_pad,
+                "revealBtn",
+                "#2196F3",
+                "#42A5F5",
+                "#1E88E5",
+                font_fam,
+                font_sz,
+                dyn_pad,
             )
         )
         self.flip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -230,7 +323,9 @@ class FlashCardItem(QGraphicsRectItem):
         super().paint(painter, option, widget)
 
         painter.save()
-        painter.setPen(QPen(QColor("#bbbbbb"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(
+            QPen(QColor("#bbbbbb"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        )
         grip_w = 40
         grip_x = -grip_w / 2
         grip_y = -self.rect().height() / 2 + 10
@@ -255,14 +350,9 @@ class FlashCardItem(QGraphicsRectItem):
             display_text,
             font_family=font_fam,
             font_size=font_sz,
-            include_mathjax=HAS_WEBENGINE,
+            include_mathjax=False,
         )
-
-        if HAS_WEBENGINE:
-            base_url = QUrl.fromLocalFile(os.getcwd() + os.sep)
-            self.text_widget.setHtml(html_template, base_url)
-        else:
-            self.text_widget.setHtml(html_template)
+        self.text_widget.setHtml(html_template)
 
         if is_flipped:
             self.flip_btn.hide()

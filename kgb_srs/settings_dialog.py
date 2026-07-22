@@ -51,6 +51,7 @@ from .config import (
 from .db import DB_SUFFIX
 from .secret_line_edit import SecretLineEdit
 from .tts import TTSWorker, VoiceListWorker
+from .version import get_app_version
 
 _PREVIEW_SAMPLE = "Hello. This is a preview of the selected voice."
 
@@ -109,13 +110,15 @@ class SettingsDialog(QDialog):
         "Appearance",
         "Audio & Speech",
         "AI Providers",
+        "About",
     )
 
-    def __init__(self, settings, parent=None, current_size=None):
+    def __init__(self, settings, parent=None, current_size=None, settings_file=None):
         super().__init__(parent)
         if parent is not None:
             self.setFont(parent.font())
         self.settings = settings
+        self.settings_file = settings_file
         # Staged AI provider bag (mutated by switch/add/rename/delete before Save).
         self._ai_stage = {
             "ai_active_provider": settings.get(
@@ -123,18 +126,14 @@ class SettingsDialog(QDialog):
             ),
             "ai_providers": {
                 name: dict(entry)
-                for name, entry in (
-                    settings.get("ai_providers") or {}
-                ).items()
+                for name, entry in (settings.get("ai_providers") or {}).items()
                 if isinstance(entry, dict)
             },
         }
         ensure_ai_provider_profiles(self._ai_stage)
         self._ai_loading_profile = False
         self.current_size = current_size
-        self.current_voice = settings.get(
-            "tts_voice", "en-US-AvaMultilingualNeural"
-        )
+        self.current_voice = settings.get("tts_voice", "en-US-AvaMultilingualNeural")
         self.current_language = settings.get("tts_language", "") or ""
         self._all_voices = []  # (ShortName, Locale, Gender, FriendlyName)
         self.ai_test_worker = None
@@ -145,6 +144,7 @@ class SettingsDialog(QDialog):
         self._closing_workers = []
         self._deferred_close_action = None
         self._allow_deferred_close = False
+        self._terminal_closing = False
         self._tts_temp_path = None
         self.setWindowTitle("App Settings")
         self.setMinimumSize(620, 480)
@@ -185,6 +185,7 @@ class SettingsDialog(QDialog):
         self._build_appearance_page()
         self._build_audio_page()
         self._build_ai_page()
+        self._build_about_page()
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -208,9 +209,7 @@ class SettingsDialog(QDialog):
     def _page():
         page = QWidget()
         layout = QFormLayout(page)
-        layout.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
-        )
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         return page, layout
 
     def _build_general_page(self):
@@ -226,9 +225,7 @@ class SettingsDialog(QDialog):
             "Directory that holds all databases"
         )
         self.database_root_browse_button = QPushButton("Browse…")
-        self.database_root_browse_button.setObjectName(
-            "databaseRootBrowseButton"
-        )
+        self.database_root_browse_button.setObjectName("databaseRootBrowseButton")
 
         root_row = QWidget()
         root_row_layout = QHBoxLayout(root_row)
@@ -236,9 +233,7 @@ class SettingsDialog(QDialog):
         root_row_layout.addWidget(self.database_root_input, 1)
         root_row_layout.addWidget(self.database_root_browse_button)
         layout.addRow("Database Directory:", root_row)
-        self.database_root_browse_button.clicked.connect(
-            self.browse_database_root
-        )
+        self.database_root_browse_button.clicked.connect(self.browse_database_root)
 
         # --- Default database file (stored relative to database root) ---
         default_display = self._display_default_database(
@@ -269,7 +264,8 @@ class SettingsDialog(QDialog):
     def _build_appearance_page(self):
         page, layout = self._page()
         current_width, current_height = self.current_size or (
-            self.settings["width"], self.settings["height"]
+            self.settings["width"],
+            self.settings["height"],
         )
         self.window_width_input = QSpinBox()
         self.window_width_input.setObjectName("windowWidthInput")
@@ -376,10 +372,15 @@ class SettingsDialog(QDialog):
         )
         self.tts_gender_group.buttonClicked.connect(self._refilter_voices)
         self.tts_voice_search.textChanged.connect(self._refilter_voices)
-        self.tts_voice_list.currentItemChanged.connect(
-            self._on_voice_selection_changed
-        )
+        self.tts_voice_list.currentItemChanged.connect(self._on_voice_selection_changed)
 
+        self.pages.addWidget(page)
+
+    def _build_about_page(self):
+        page, layout = self._page()
+        version_label = QLabel(f"KGB 5-Box SRS System {get_app_version()}")
+        version_label.setObjectName("aboutVersionLabel")
+        layout.addRow("Version:", version_label)
         self.pages.addWidget(page)
 
     def _build_ai_page(self):
@@ -458,9 +459,7 @@ class SettingsDialog(QDialog):
         self.explanation_language_input = QLineEdit(
             self.settings.get("explanation_language", "Chinese")
         )
-        self.explanation_language_input.setObjectName(
-            "explanationLanguageInput"
-        )
+        self.explanation_language_input.setObjectName("explanationLanguageInput")
         layout.addRow("Explanation Language:", self.explanation_language_input)
 
         self.ai_test_button = QPushButton("Test")
@@ -478,9 +477,7 @@ class SettingsDialog(QDialog):
         self.ai_test_button.clicked.connect(self._start_ai_test)
         self.ai_models_refresh_btn.clicked.connect(self._start_ai_models_refresh)
 
-        self.ai_provider_combo.currentTextChanged.connect(
-            self._on_ai_provider_selected
-        )
+        self.ai_provider_combo.currentTextChanged.connect(self._on_ai_provider_selected)
         self.ai_provider_add_btn.clicked.connect(self._add_ai_provider)
         self.ai_provider_rename_btn.clicked.connect(self._rename_ai_provider)
         self.ai_provider_delete_btn.clicked.connect(self._delete_ai_provider)
@@ -493,9 +490,7 @@ class SettingsDialog(QDialog):
         name = self.ai_provider_combo.currentText().strip()
         if name:
             return name
-        return str(
-            self._ai_stage.get("ai_active_provider") or DEFAULT_AI_PROVIDER_NAME
-        )
+        return str(self._ai_stage.get("ai_active_provider") or DEFAULT_AI_PROVIDER_NAME)
 
     def _capture_ai_fields_to_stage(
         self, name: str | None = None, *, make_active: bool = True
@@ -617,8 +612,7 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Rename AI Provider",
-                f"Could not rename to “{new}” "
-                f"(name may already exist).",
+                f"Could not rename to “{new}” (name may already exist).",
             )
             return
         self._reload_ai_provider_combo()
@@ -707,9 +701,7 @@ class SettingsDialog(QDialog):
         dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
         dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
-        dialog.setNameFilters(
-            [f"Barsky DB (*{DB_SUFFIX})", "All Files (*)"]
-        )
+        dialog.setNameFilters([f"Barsky DB (*{DB_SUFFIX})", "All Files (*)"])
         # Hide places that let the user jump outside the root.
         dialog.setSidebarUrls([QUrl.fromLocalFile(root)])
         dialog.setDirectory(start)
@@ -838,9 +830,7 @@ class SettingsDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, short_name)
             item.setData(Qt.ItemDataRole.UserRole + 1, locale)
             item.setData(Qt.ItemDataRole.UserRole + 2, gender)
-            row = _VoiceRowWidget(
-                short_name, locale, gender, self._preview_voice
-            )
+            row = _VoiceRowWidget(short_name, locale, gender, self._preview_voice)
             item.setSizeHint(row.sizeHint())
             self.tts_voice_list.addItem(item)
             self.tts_voice_list.setItemWidget(item, row)
@@ -854,9 +844,7 @@ class SettingsDialog(QDialog):
 
         if select_row >= 0:
             self.tts_voice_list.setCurrentRow(select_row)
-            self._on_voice_selection_changed(
-                self.tts_voice_list.currentItem(), None
-            )
+            self._on_voice_selection_changed(self.tts_voice_list.currentItem(), None)
         else:
             # Preferred voice is filtered out — keep it staged, clear list
             # selection so filters never silently reassign tts_voice.
@@ -876,16 +864,21 @@ class SettingsDialog(QDialog):
 
         self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
 
+    def _stop_preview_and_cleanup(self):
+        """Stop preview playback before removing its temporary audio file."""
+        self.preview_player.stop()
+        self._cleanup_tts_temp()
+
     def _preview_voice(self, short_name):
         if (
             not short_name
             or self.preview_tts_worker is not None
             or self._deferred_close_action is not None
+            or self._terminal_closing
         ):
             return
         # Stop any currently playing sample before starting a new one.
-        self.preview_player.stop()
-        self._cleanup_tts_temp()
+        self._stop_preview_and_cleanup()
         self._set_preview_controls_enabled(False)
         worker = TTSWorker(_PREVIEW_SAMPLE, short_name)
         self.preview_tts_worker = worker
@@ -898,6 +891,11 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_preview_finished(self, file_path):
+        if self._deferred_close_action is not None or self._terminal_closing:
+            from .tts import unlink_tts_temp
+
+            unlink_tts_temp(file_path)
+            return
         self._tts_temp_path = file_path
         self.preview_player.setSource(QUrl.fromLocalFile(file_path))
         self.preview_player.play()
@@ -910,9 +908,10 @@ class SettingsDialog(QDialog):
             return
         # QDialog.closeEvent() calls reject(), so retain this guard through the
         # superclass call to avoid re-entering the worker-close deferral.
+        self._terminal_closing = True
         self._allow_deferred_close = True
         try:
-            self._cleanup_tts_temp()
+            self._stop_preview_and_cleanup()
             super().closeEvent(event)
         finally:
             self._allow_deferred_close = False
@@ -921,7 +920,8 @@ class SettingsDialog(QDialog):
         """Accept immediately unless a worker thread must finish first."""
         if self._defer_close_for_running_workers("accept"):
             return
-        self._cleanup_tts_temp()
+        self._terminal_closing = True
+        self._stop_preview_and_cleanup()
         super().accept()
 
     def reject(self):
@@ -931,7 +931,8 @@ class SettingsDialog(QDialog):
             return
         if self._defer_close_for_running_workers("reject"):
             return
-        self._cleanup_tts_temp()
+        self._terminal_closing = True
+        self._stop_preview_and_cleanup()
         super().reject()
 
     def _running_workers(self):
@@ -966,6 +967,12 @@ class SettingsDialog(QDialog):
             return False
         if self._deferred_close_action is None:
             self._deferred_close_action = action
+            # Save & Apply has already persisted a snapshot when accept() is
+            # deferred.  Freeze the dialog so later edits cannot look staged
+            # even though they will not be included in that saved snapshot.
+            # Worker completion handlers may still update child widgets; Qt
+            # permits that while the disabled parent blocks user interaction.
+            self.setEnabled(False)
         for worker in workers:
             if worker not in self._closing_workers:
                 self._closing_workers.append(worker)
@@ -983,13 +990,16 @@ class SettingsDialog(QDialog):
                 self._allow_deferred_close = True
                 self.close()
             else:
-                self._cleanup_tts_temp()
+                self._terminal_closing = True
+                self._stop_preview_and_cleanup()
                 if action == "accept":
                     super().accept()
                 else:
                     super().reject()
 
     def _on_preview_error(self, message):
+        if self._deferred_close_action is not None or self._terminal_closing:
+            return
         QMessageBox.warning(self, "TTS Preview", f"Audio Error: {message}")
 
     def _on_preview_worker_done(self, worker):
@@ -1020,7 +1030,9 @@ class SettingsDialog(QDialog):
         else:
             self.ai_model_input.setEditText(value)
 
-    def _populate_ai_models(self, models: list[str], *, keep: str | None = None) -> None:
+    def _populate_ai_models(
+        self, models: list[str], *, keep: str | None = None
+    ) -> None:
         """Fill the model combo with *models*, preserving *keep* selection."""
         selected = (keep if keep is not None else self._ai_model_text()).strip()
         self.ai_model_input.blockSignals(True)
@@ -1107,9 +1119,7 @@ class SettingsDialog(QDialog):
         self.ai_test_status_label.setText("Loading models…")
         config = self._staged_ai_config()
         provider_name = self._current_ai_provider_name()
-        self._ai_models_refresh_token = self._ai_models_token(
-            provider_name, config
-        )
+        self._ai_models_refresh_token = self._ai_models_token(provider_name, config)
         worker = create_ai_models_worker(config)
         self.ai_models_worker = worker
         worker.result.connect(self._on_ai_models_result)
@@ -1138,15 +1148,14 @@ class SettingsDialog(QDialog):
             self._ai_models_refresh_token = None
             self.ai_models_refresh_btn.setEnabled(True)
 
-    def _staged_settings(self):
+    def _collect_staged_settings(self):
+        """Synchronize current controls into a settings dictionary for save."""
         staged = dict(self.settings)
         staged["width"] = self.window_width_input.value()
         staged["height"] = self.window_height_input.value()
         staged["font_family"] = self.font_family_input.currentText()
         staged["font_size"] = self.font_size_input.value()
-        staged["content_font_family"] = (
-            self.content_font_family_input.currentText()
-        )
+        staged["content_font_family"] = self.content_font_family_input.currentText()
         staged["content_font_size"] = self.content_font_size_input.value()
         root_text = self.database_root_input.text().strip()
         # Store empty when the user keeps the project default so upgrades stay
@@ -1156,9 +1165,7 @@ class SettingsDialog(QDialog):
         ):
             staged["database_root"] = ""
         else:
-            staged["database_root"] = os.path.abspath(
-                os.path.expanduser(root_text)
-            )
+            staged["database_root"] = os.path.abspath(os.path.expanduser(root_text))
         root = get_database_root(staged)
         staged["default_database"] = normalize_default_database(
             self.default_database_input.text().strip(),
@@ -1170,21 +1177,22 @@ class SettingsDialog(QDialog):
         self._capture_ai_fields_to_stage()
         ensure_ai_provider_profiles(self._ai_stage)
         staged["ai_providers"] = {
-            name: dict(entry)
-            for name, entry in self._ai_stage["ai_providers"].items()
+            name: dict(entry) for name, entry in self._ai_stage["ai_providers"].items()
         }
         staged["ai_active_provider"] = self._ai_stage["ai_active_provider"]
         # Profiles only — drop any legacy flat mirrors from the live dict copy.
         from .ai_provider import strip_legacy_ai_flat_keys
 
         strip_legacy_ai_flat_keys(staged)
-        staged["explanation_language"] = (
-            self.explanation_language_input.text().strip()
-        )
+        staged["explanation_language"] = self.explanation_language_input.text().strip()
         return staged
 
+    # Kept as a private compatibility seam for existing extensions/tests.
+    def _staged_settings(self):
+        return self._collect_staged_settings()
+
     def save_and_apply(self):
-        staged = self._staged_settings()
+        staged = self._collect_staged_settings()
         root = get_database_root(staged)
         try:
             ensure_database_root_structure(root)
@@ -1197,7 +1205,10 @@ class SettingsDialog(QDialog):
             )
             return
         try:
-            save_settings(staged)
+            if self.settings_file is None:
+                save_settings(staged)
+            else:
+                save_settings(staged, self.settings_file)
         except OSError as exc:
             QMessageBox.critical(self, "Settings Not Saved", str(exc))
             return

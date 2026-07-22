@@ -17,6 +17,7 @@ and ORs the groups together.
 """
 
 import unicodedata
+import weakref
 from typing import Optional
 
 
@@ -27,12 +28,11 @@ def _normalize_search_text(s: str) -> str:
     then we strip combining marks and casefold, so é maps to e.
     """
     return "".join(
-        ch for ch in unicodedata.normalize("NFKD", s)
-        if not unicodedata.combining(ch)
+        ch for ch in unicodedata.normalize("NFKD", s) if not unicodedata.combining(ch)
     ).casefold()
 
 
-_REGISTERED_CONNS: set = set()
+_REGISTERED_CONNS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _register_search_functions(conn):
@@ -43,24 +43,40 @@ def _register_search_functions(conn):
     are all treated literally — no LIKE wildcards and no accent
     sensitivity.
 
-    Registration is idempotent; only performed once per connection.
+    Registration is idempotent for connections that support weak references.
+    Standard sqlite3.Connection instances cannot be weak-referenced, so they
+    are safely re-registered on each search instead of being retained.
     """
-    if conn in _REGISTERED_CONNS:
-        return
-    _REGISTERED_CONNS.add(conn)
+    try:
+        if conn in _REGISTERED_CONNS:
+            return
+    except TypeError:
+        # sqlite3.Connection cannot be weak-referenced. Re-registering a
+        # SQLite scalar function replaces the prior registration and does not
+        # retain the connection after callers close or discard it.
+        pass
 
     def _contains(haystack, needle):
         if haystack is None or needle is None:
             return 0
-        return 1 if _normalize_search_text(needle) in _normalize_search_text(haystack) else 0
+        return (
+            1
+            if _normalize_search_text(needle) in _normalize_search_text(haystack)
+            else 0
+        )
 
     conn.create_function("kgb_contains", 2, _contains)
 
+    try:
+        _REGISTERED_CONNS[conn] = None
+    except TypeError:
+        pass
 
 
 # ---------------------------------------------------------------------------
 # Tokenization — OR groups of AND operands
 # ---------------------------------------------------------------------------
+
 
 def parse_search_tokens(query: str) -> list[list[str]]:
     """Parse a search query into OR groups of AND operands.
@@ -172,23 +188,19 @@ def _build_sentence_search_cond(
         )
 
 
-def _build_word_search_cond(
-    term: str, field_filter: Optional[str]
-) -> tuple[str, list]:
+def _build_word_search_cond(term: str, field_filter: Optional[str]) -> tuple[str, list]:
     if field_filter == "front":
         return "kgb_contains(front, ?)", [term]
     elif field_filter == "back":
         return "kgb_contains(back, ?)", [term]
     else:
-        return ("(kgb_contains(front, ?)"
-                " OR kgb_contains(back, ?))"), [term, term]
+        return ("(kgb_contains(front, ?) OR kgb_contains(back, ?))"), [term, term]
 
 
 def _build_search_sql(
     groups: list[list[str]],
     base_sql: str,
     cond_builder,
-    select_cols: str,
 ) -> tuple[str, list]:
     """Build OR-of-AND query.
 
@@ -197,7 +209,7 @@ def _build_search_sql(
     - Multi-group: EXISTS per term inside each group, OR'd across groups.
     """
     if not groups:
-        return f"SELECT {select_cols} FROM cards ORDER BY id", []
+        raise ValueError("Search groups must contain at least one term")
 
     if len(groups) == 1 and len(groups[0]) == 1:
         cond, params = cond_builder(groups[0][0], None)
@@ -231,6 +243,7 @@ def _build_search_sql(
 # Sentence-card search
 # ---------------------------------------------------------------------------
 
+
 def search_sentence_cards(
     conn,
     query: str,
@@ -258,8 +271,9 @@ def search_sentence_cards(
         return _build_sentence_search_cond(term, field_filter)
 
     sql, params = _build_search_sql(
-        groups, _SENTENCE_BASE_SQL, cond_builder,
-        select_cols="DISTINCT c.id, c.front, c.back, c.box, c.next_review",
+        groups,
+        _SENTENCE_BASE_SQL,
+        cond_builder,
     )
     cur.execute(sql, params)
     rows = cur.fetchall()
@@ -269,6 +283,7 @@ def search_sentence_cards(
 # ---------------------------------------------------------------------------
 # Word/phrase-card search
 # ---------------------------------------------------------------------------
+
 
 def search_word_phrase_cards(
     conn,
@@ -297,8 +312,9 @@ def search_word_phrase_cards(
         return _build_word_search_cond(term, field_filter)
 
     sql, params = _build_search_sql(
-        groups, base_sql, cond_builder,
-        select_cols="id, front, back, box, next_review",
+        groups,
+        base_sql,
+        cond_builder,
     )
     cur.execute(sql, params)
     rows = cur.fetchall()
@@ -308,6 +324,7 @@ def search_word_phrase_cards(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _fetch_expressions(conn, card_id: int) -> list[str]:
     cur = conn.cursor()

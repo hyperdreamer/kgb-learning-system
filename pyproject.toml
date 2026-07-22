@@ -1,0 +1,5 @@
+[tool.ruff.lint.per-file-ignores]
+# main_window deliberately re-exports these helpers for existing callers and
+# monkeypatch-based regression tests after their implementations moved to
+# focused modules.
+"kgb_srs/main_window.py" = ["F401"]

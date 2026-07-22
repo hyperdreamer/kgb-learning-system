@@ -1,8 +1,8 @@
 # KGB 5-Box SRS System
 
-**Version 2.1.0**
+**Version 2.2.0**
 
-A spaced-repetition flashcard application with **Markdown**, **MathJax** (LaTeX math), **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
+A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
 Language learning is **sentence-first**: sentence databases feed a shared sense catalog, which automatically projects a read-only word/phrase dictionary. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
@@ -11,12 +11,20 @@ Language learning is **sentence-first**: sentence databases feed a shared sense 
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install PyQt6 edge-tts PyQt6-WebEngine   # WebEngine optional but recommended for math
+# Install direct runtime and test dependencies
+pip install -r requirements.txt
 
 # Run
 python main.py
+
+# Use a separate settings file (keeps its preferences and API keys isolated)
+python main.py --config ~/my-kgb-settings.json
+# Short form: python main.py -c ~/my-kgb-settings.json
 ```
+
+Without `--config`, settings continue to use the project-root `barsky_settings.json`.
+The current build version is shown in **Settings → About**; development builds on
+`dev` or `dev-*` branches are labeled with a `.dev` suffix.
 
 Package version:
 
@@ -72,7 +80,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 - **No manual editing**: Add Entry, Delete Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by automatic projection from a sentence database.
 - **Derived projection**: One card per expression; back lists each sense with its meaning and an indented example sentence where the surface form is **bold** (e.g. lemma `insist on` → **insists on**).
 - **Linked auto-sync**: The sentence DB stores `linked_word_phrase_db`. App startup, DB open, and every sentence Save ensure the link exists and re-derive the W/P DB.
-- **Review**: Standard front/back flip card with Markdown and MathJax rendering (SRS boxes still work).
+- **Review**: Standard front/back flip card with Markdown and visible offline LaTeX fallback (SRS boxes still work).
 - **Search**: Searches front and back (meanings/examples) fields. Browse is view-only for W/P (Edit/Delete selected disabled); use **Review Selected** (or double-click) to open a card for review.
 
 ### Knowledge-based (`knowledge`)
@@ -156,6 +164,18 @@ When creating a new sentence card, if a card with the same normalized sentence a
   still live under the root are resolved at runtime and rewritten to relative
   form on the next save; absolute paths outside the root are treated as unset.
 
+### Compatibility migration
+
+- Private `kgb_srs.forms._AIGenerateWorker` and `_apply_ui_font` imports remain
+  available through the 2.x series and emit `DeprecationWarning`. Import and
+  monkeypatch their canonical names from `kgb_srs.form_helpers`; the aliases
+  are scheduled for removal in 3.0.
+- The focused `tests/test_*_regressions.py` modules are canonical. Existing
+  `python -m pytest tests/test_regression.py` automation remains supported as
+  a deprecated direct-only entry point through 2.x; it is excluded from normal
+  `python -m pytest tests/` discovery. Migrate scripts to the full suite or a
+  relevant focused module before 3.0.
+
 ---
 
 ## Usage Guide
@@ -192,6 +212,7 @@ Click **Add Entry**. The dialog adapts to the database type:
 All shortcuts use **Alt** so they never steal plain typing.
 
 - **Start Daily Review** — begins a review of all cards due today. During an active review, this primary button becomes **Next** and skips the current card to the end of the same daily queue. Shortcut: **Alt+S**.
+- **Shuffle / All cards** — these review options are remembered separately for each database.
 - **Reveal Answer** — flips the card (shortcut: **Alt+R**).
 - **Incorrect / Correct** — grade after flip: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card onto the drop zones).
 - **Listen** — speak the card (shortcut: **Alt+L**).
@@ -219,7 +240,7 @@ Other chrome shortcuts: **Alt+N** Add Entry, **Alt+,** Settings.
 
 ### 6. Text-to-Speech 🔊
 
-TTS reads the sentence (front) and back content when flipped. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample from a list row, then save the selected Edge TTS voice. The language filter is remembered with your settings.
+TTS reads the card front and revealed back content. It automatically adds a terminal pause after any unpunctuated card field, sentence-card expression/meaning entry, or word/phrase dictionary meaning/example, so each review item is spoken separately. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample from a list row, then save the selected Edge TTS voice. The language filter is remembered with your settings.
 
 ### 7. Settings
 
@@ -254,7 +275,7 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package (__version__ = 2.1.0)
+kgb_srs/                    # Python package (__version__ = 2.2.0)
 ├── __init__.py
 ├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference
@@ -265,12 +286,17 @@ kgb_srs/                    # Python package (__version__ = 2.1.0)
 ├── search.py               # Subtype-aware AND/OR search
 ├── ai_provider.py          # OpenAI-compatible HTTP client
 ├── ai_parser.py            # AI JSON response parsing & validation
-├── forms.py                # SentenceCardDialog, WordPhraseCardDialog, DBCreationDialog
+├── forms.py                # Dialog facade; private helper aliases deprecated in 2.x
+├── form_helpers.py         # Shared card-dialog styling and AI worker
+├── sentence_card_dialog.py # Sentence card editor dialog
+├── word_phrase_dialog.py   # Legacy W/P editor compatibility dialog
+├── database_creation_dialog.py # Database creation dialog
 ├── dialogs.py              # Generic DynamicInputDialog
 ├── settings_dialog.py      # Categorized settings UI
 ├── graphics.py             # Flash card & drop zones
-├── main_window.py          # Main application window
-├── markdown_utils.py       # Markdown + MathJax rendering
+├── review_controller.py   # Daily-review state machine and queue scheduling
+├── main_window.py          # QMainWindow composition and UI lifecycle
+├── markdown_utils.py       # Markdown + safe offline LaTeX fallback
 └── tts.py                  # Text-to-speech worker
 
 main.py                     # Entry point
@@ -288,14 +314,14 @@ db/                         # Database directory (git-ignored)
 # Run all tests
 python -m pytest tests/ -v
 
-# Run specific module tests
-python -m pytest tests/test_validation.py -v
-python -m pytest tests/test_catalog.py -v
-python -m pytest tests/test_schema.py -v
+# Run a focused domain module
+python -m pytest tests/test_forms.py -v
+python -m pytest tests/test_review_regressions.py -v
+python -m pytest tests/test_schema_regressions.py -v
+python -m pytest tests/test_search_regressions.py -v
+python -m pytest tests/test_catalog_regressions.py -v
 python -m pytest tests/test_ai_parser.py -v
 python -m pytest tests/test_ai_provider.py -v
-python -m pytest tests/test_search.py -v
-python -m pytest tests/test_regression.py -v
 ```
 
 ---
@@ -303,10 +329,9 @@ python -m pytest tests/test_regression.py -v
 ## Requirements
 
 - Python 3.10+
-- PyQt6
-- edge-tts
-- PyQt6-WebEngine *(optional, for MathJax rendering)*
+- Direct runtime and test dependencies are listed in [`requirements.txt`](requirements.txt)
+- Review cards use Qt's proxy-safe text renderer; PyQt6-WebEngine is not required.
 
-```
-pip install PyQt6 edge-tts PyQt6-WebEngine
+```bash
+pip install -r requirements.txt
 ```
