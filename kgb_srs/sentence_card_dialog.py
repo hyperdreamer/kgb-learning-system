@@ -33,6 +33,7 @@ from .senses import get_sense, list_senses_for_expression
 from .validation import (
     apply_ai_membership_claims,
     deduplicate_unfamiliar_items,
+    surface_form_in_sentence,
     validate_unfamiliar_items,
 )
 
@@ -93,6 +94,8 @@ class SentenceCardDialog(QDialog):
         # Meanings are AI-assigned (reuse existing sense or create new).
         self._meanings: dict[str, str] = {}
         self._sense_ids: dict[str, int | None] = {}
+        # Expression → previously AI-verified residual surface form.
+        self._persisted_verified_surfaces: dict[str, str] = {}
         if items:
             for item in items:
                 if isinstance(item, tuple):
@@ -105,6 +108,10 @@ class SentenceCardDialog(QDialog):
                         except (TypeError, ValueError):
                             sid = None
                     self._sense_ids[expr] = sid
+                    if len(item) > 3 and item[3] is not None:
+                        surface = str(item[3]).strip()
+                        if surface:
+                            self._persisted_verified_surfaces[expr] = surface
                 else:
                     self._meanings[str(item)] = ""
                     self._sense_ids[str(item)] = None
@@ -393,6 +400,7 @@ class SentenceCardDialog(QDialog):
             self._items_list.takeItem(self._items_list.row(item))
             self._meanings.pop(expr, None)
             self._sense_ids.pop(expr, None)
+            self._persisted_verified_surfaces.pop(expr, None)
         self._status_label.setText("")
         self._on_item_selection_changed()
 
@@ -767,13 +775,20 @@ class SentenceCardDialog(QDialog):
                 return
 
         result = validate_unfamiliar_items(sentence, items)
-        if result.valid:
-            self._finish_accept(sentence, items, verified_surfaces={})
+        retained_surfaces = {
+            expr: surface
+            for expr in result.missing
+            if (surface := self._persisted_verified_surfaces.get(expr))
+            and surface_form_in_sentence(sentence, surface)
+        }
+        missing = [expr for expr in result.missing if expr not in retained_surfaces]
+        if not missing:
+            self._finish_accept(sentence, items, verified_surfaces=retained_surfaces)
             return
 
         # Local-first residual: optional AI only for items local rules missed.
         ai_config = AIProviderConfig.from_settings(self._settings)
-        missing_str = ", ".join(result.missing)
+        missing_str = ", ".join(missing)
         if not ai_config.configured:
             QMessageBox.warning(
                 self,
@@ -796,7 +811,9 @@ class SentenceCardDialog(QDialog):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._start_membership_ai_check(sentence, items, result.missing, ai_config)
+        self._start_membership_ai_check(
+            sentence, items, missing, ai_config, retained_surfaces
+        )
 
     def _start_membership_ai_check(
         self,
@@ -804,6 +821,7 @@ class SentenceCardDialog(QDialog):
         items: list[str],
         missing: list[str],
         ai_config: AIProviderConfig,
+        retained_surfaces: dict[str, str] | None = None,
     ) -> None:
         """Run AI membership fallback for residual missing items only."""
         if getattr(self, "_membership_worker", None) is not None:
@@ -813,6 +831,7 @@ class SentenceCardDialog(QDialog):
         self._membership_sentence = sentence
         self._membership_items = items
         self._membership_missing = list(missing)
+        self._membership_retained_surfaces = dict(retained_surfaces or {})
         self._membership_pending_accept = None
 
         self._status_label.setText(f"🤖 AI checking {len(missing)} residual item(s)…")
@@ -881,10 +900,12 @@ class SentenceCardDialog(QDialog):
             f"✅ AI residual check accepted {recovered} item(s); finalizing…"
         )
         self._status_label.setStyleSheet("color: #393;")
+        verified_surfaces = dict(getattr(self, "_membership_retained_surfaces", {}))
+        verified_surfaces.update(residual.accepted_surfaces or {})
         self._membership_pending_accept = (
             sentence,
             list(items),
-            dict(residual.accepted_surfaces or {}),
+            verified_surfaces,
         )
 
     def _on_membership_ai_error(self, message: str, worker=None) -> None:

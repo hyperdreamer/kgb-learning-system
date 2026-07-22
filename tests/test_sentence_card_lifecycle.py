@@ -1,4 +1,4 @@
-"""Deterministic lifecycle tests for residual membership AI workers."""
+"""Headless lifecycle tests for sentence-card residual membership checks."""
 
 import os
 from types import SimpleNamespace
@@ -56,6 +56,97 @@ def _start_membership_worker(monkeypatch, dialog):
     monkeypatch.setattr(dialog_module, "_create_ai_worker", lambda *_args: worker)
     dialog._start_membership_ai_check("I went home.", ["go"], ["go"], SimpleNamespace())
     return worker
+
+
+def test_reopened_verified_surface_accepts_without_ai(qapp):
+    from kgb_srs.sentence_card_dialog import SentenceCardDialog
+
+    dialog = SentenceCardDialog(
+        sentence="Yesterday he lay down.",
+        items=[("lie", "recline", 7, "lay")],
+    )
+
+    dialog._accept()
+
+    assert dialog.result_items == [("lie", "recline", 7, "lay")]
+    assert dialog.result_verified_surfaces == {"lie": "lay"}
+    dialog.close()
+
+
+def test_changed_sentence_does_not_retain_verified_surface_without_ai(
+    monkeypatch, qapp
+):
+    from kgb_srs.sentence_card_dialog import SentenceCardDialog
+
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(args[2]),
+    )
+    dialog = SentenceCardDialog(
+        sentence="Yesterday he rested.",
+        items=[("lie", "recline", 7, "lay")],
+    )
+
+    dialog._accept()
+
+    assert dialog.result_items == []
+    assert warnings
+    assert "lie" in warnings[0]
+    dialog.close()
+
+
+def test_removing_expression_clears_persisted_verified_surface(qapp):
+    from kgb_srs.sentence_card_dialog import SentenceCardDialog
+
+    dialog = SentenceCardDialog(
+        sentence="Yesterday he lay down.",
+        items=[("lie", "recline", 7, "lay")],
+    )
+
+    dialog._remove_selected()
+
+    assert "lie" not in dialog._persisted_verified_surfaces
+    dialog.close()
+
+
+def test_membership_ai_merges_new_surfaces_with_retained_surfaces(monkeypatch, qapp):
+    import kgb_srs.sentence_card_dialog as dialog_module
+    from kgb_srs.sentence_card_dialog import SentenceCardDialog
+
+    worker = _ControllableWorker()
+    monkeypatch.setattr(dialog_module, "_create_ai_worker", lambda *_args: worker)
+    monkeypatch.setattr(dialog_module, "parse_membership_claims", lambda *_args: [])
+    monkeypatch.setattr(
+        dialog_module,
+        "apply_ai_membership_claims",
+        lambda *_args: SimpleNamespace(
+            valid=True,
+            accepted_surfaces={"missing": "found"},
+        ),
+    )
+    dialog = SentenceCardDialog(
+        sentence="Yesterday he lay down; found it later.",
+        items=[("lie", "recline", 7, "lay"), ("missing", "lost", 8)],
+    )
+
+    dialog._start_membership_ai_check(
+        "Yesterday he lay down; found it later.",
+        ["lie", "missing"],
+        ["missing"],
+        SimpleNamespace(),
+        {"lie": "lay"},
+    )
+    worker.result.emit("valid result")
+    worker.finished.emit()
+
+    assert dialog.result_verified_surfaces == {"lie": "lay", "missing": "found"}
+    assert dialog.result_items == [
+        ("lie", "recline", 7, "lay"),
+        ("missing", "lost", 8, "found"),
+    ]
+    dialog.close()
 
 
 def test_valid_membership_result_waits_for_matching_finished(monkeypatch, qapp):
