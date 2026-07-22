@@ -11,11 +11,15 @@ expression, using source sentences as examples.
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
+import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .schema import create_database_exclusively
 from .validation import normalize_sentence
 
 
@@ -74,6 +78,10 @@ class ProjectionPathSafetyError(ValueError):
     def __init__(self, conflict: dict):
         self.conflict = conflict
         super().__init__(conflict["message"])
+
+
+class ProjectionOwnershipConflictError(ProjectionPathSafetyError):
+    """A canonical projection exists but is not owned by this sentence DB."""
 
 
 # ---------------------------------------------------------------------------
@@ -532,8 +540,139 @@ def find_normalized_word_phrase_duplicates(
     ]
 
 
-# Settings key on sentence DBs: absolute path of linked word/phrase DB.
+# Settings keys used to establish a durable projection ownership tuple.
 LINKED_WORD_PHRASE_DB_KEY = "linked_word_phrase_db"
+PROJECTION_SOURCE_UUID_KEY = "projection_source_uuid"
+PROJECTION_OWNER_VERSION_KEY = "projection_owner_version"
+PROJECTION_OWNER_SOURCE_UUID_KEY = "projection_owner_source_uuid"
+PROJECTION_OWNER_SOURCE_PATH_KEY = "projection_owner_source_path"
+PROJECTION_OWNER_VERSION = "1"
+
+
+def _normalized_realpath(path: str) -> str:
+    """Return the normalized resolved path used in ownership markers."""
+    return os.path.normpath(os.path.realpath(os.path.abspath(path)))
+
+
+def _get_setting(conn, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    if row is None:
+        return None
+    value = (row[0] or "").strip()
+    return value or None
+
+
+def get_projection_source_uuid(conn) -> str | None:
+    """Return the persisted sentence projection identity without creating one."""
+    return _get_setting(conn, PROJECTION_SOURCE_UUID_KEY)
+
+
+def _ensure_projection_source_uuid(conn, *, commit: bool) -> str:
+    source_uuid = get_projection_source_uuid(conn)
+    if source_uuid is None:
+        source_uuid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            (PROJECTION_SOURCE_UUID_KEY, source_uuid),
+        )
+        if commit:
+            conn.commit()
+    return source_uuid
+
+
+def _owner_marker_from_connection(conn) -> dict[str, str | None]:
+    return {
+        "version": _get_setting(conn, PROJECTION_OWNER_VERSION_KEY),
+        "source_uuid": _get_setting(conn, PROJECTION_OWNER_SOURCE_UUID_KEY),
+        "source_path": _get_setting(conn, PROJECTION_OWNER_SOURCE_PATH_KEY),
+    }
+
+
+def _read_projection_owner(path: str) -> dict[str, str | None]:
+    """Read an existing target's marker without allowing SQLite to write it."""
+    try:
+        target = sqlite3.connect(
+            f"{Path(_normalized_realpath(path)).as_uri()}?mode=ro", uri=True
+        )
+        try:
+            return _owner_marker_from_connection(target)
+        finally:
+            target.close()
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        raise ProjectionOwnershipConflictError(
+            {
+                "code": "word_phrase_projection_target_unreadable",
+                "message": "Canonical word/phrase projection cannot be inspected "
+                "without changing it.",
+                "target_path": os.path.abspath(path),
+            }
+        ) from exc
+
+
+def _ownership_conflict(
+    *,
+    code: str,
+    marker: dict[str, str | None],
+    target_path: str,
+    source_uuid: str | None,
+    source_path: str,
+) -> ProjectionOwnershipConflictError:
+    return ProjectionOwnershipConflictError(
+        {
+            "code": code,
+            "message": "Canonical word/phrase projection is not owned by this "
+            "sentence database.",
+            "target_path": os.path.abspath(target_path),
+            "marker": marker,
+            "source_uuid": source_uuid,
+            "source_path": source_path,
+        }
+    )
+
+
+def _assert_matching_projection_owner(
+    target_path: str, source_uuid: str | None, source_path: str
+) -> None:
+    marker = _read_projection_owner(target_path)
+    if not any(marker.values()):
+        raise _ownership_conflict(
+            code="word_phrase_projection_marker_missing",
+            marker=marker,
+            target_path=target_path,
+            source_uuid=source_uuid,
+            source_path=source_path,
+        )
+    if None in marker.values():
+        raise _ownership_conflict(
+            code="word_phrase_projection_marker_invalid",
+            marker=marker,
+            target_path=target_path,
+            source_uuid=source_uuid,
+            source_path=source_path,
+        )
+    if marker != {
+        "version": PROJECTION_OWNER_VERSION,
+        "source_uuid": source_uuid,
+        "source_path": source_path,
+    }:
+        raise _ownership_conflict(
+            code="word_phrase_projection_owner_mismatch",
+            marker=marker,
+            target_path=target_path,
+            source_uuid=source_uuid,
+            source_path=source_path,
+        )
+
+
+def _write_projection_owner(target_conn, source_uuid: str, source_path: str) -> None:
+    target_conn.executemany(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+        (
+            (PROJECTION_OWNER_VERSION_KEY, PROJECTION_OWNER_VERSION),
+            (PROJECTION_OWNER_SOURCE_UUID_KEY, source_uuid),
+            (PROJECTION_OWNER_SOURCE_PATH_KEY, source_path),
+        ),
+    )
 
 
 def get_linked_word_phrase_db(conn) -> str | None:
@@ -572,6 +711,7 @@ def derive_word_phrase_database(
     *,
     write_type: bool = True,
     prune_missing: bool = True,
+    commit: bool = True,
 ) -> dict:
     """Copy unique (expression, sense) units into a word/phrase DB.
 
@@ -621,7 +761,8 @@ def derive_word_phrase_database(
 
         write_database_type(target_conn, DatabaseType.LANGUAGE_WORD_PHRASE)
 
-    target_conn.commit()
+    if commit:
+        target_conn.commit()
     return {
         "expressions": len(entries),
         "senses": sense_count,
@@ -815,6 +956,36 @@ def _raise_for_populated_legacy_flat_link(
         )
 
 
+def _initialize_owned_projection(
+    source_conn, canonical_path: str, source_path: str
+) -> str:
+    """Atomically publish a fully marked projection without adopting a race winner."""
+    from .catalog import DatabaseType, write_database_type
+
+    # Preserve the source unchanged unless this target is safely claimed. A
+    # concurrent creator may publish an unrelated canonical file at any time.
+    source_uuid = get_projection_source_uuid(source_conn) or str(uuid.uuid4())
+
+    def initialize(target):
+        _write_projection_owner(target, source_uuid, source_path)
+        write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
+
+    os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
+    try:
+        create_database_exclusively(canonical_path, initialize)
+    except FileExistsError:
+        # Another creator won; only its exact ownership marker makes it safe.
+        _assert_matching_projection_owner(canonical_path, source_uuid, source_path)
+
+    if get_projection_source_uuid(source_conn) is None:
+        source_conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            (PROJECTION_SOURCE_UUID_KEY, source_uuid),
+        )
+        source_conn.commit()
+    return source_uuid
+
+
 def ensure_linked_word_phrase_database(
     source_conn,
     sentence_db_path: str,
@@ -822,42 +993,36 @@ def ensure_linked_word_phrase_database(
     *,
     sync: bool = True,
 ) -> tuple[str, dict | None]:
-    """Ensure a sentence DB has a linked W/P projection file and optionally sync it.
+    """Ensure an owned canonical W/P projection and optionally synchronize it.
 
-    Creates the target file and settings link when missing. Returns
-    ``(target_path, stats_or_None)``.
+    Existing canonical databases are never adopted based on name or type. They
+    must already carry this sentence database's complete ownership marker.
+    Returns ``(target_path, stats_or_None)`` on success.
     """
     canonical_path = default_word_phrase_path_for_sentence(sentence_db_path, db_root)
+    source_path = _normalized_realpath(sentence_db_path)
     path = get_linked_word_phrase_db(source_conn)
     _raise_for_populated_legacy_flat_link(
         path, sentence_db_path, db_root, canonical_path
     )
 
-    # Path validation and legacy migration checks above must remain before
-    # source schema/backfill writes, target initialization, or settings edits.
-    ensure_expression_senses_table(source_conn)
-    backfill_senses_from_items(source_conn)
+    # Inspect an existing target read-only before any schema, link, type, card,
+    # or source-identity writes. A markerless target may be a user's database.
+    if os.path.isfile(canonical_path):
+        _assert_matching_projection_owner(
+            canonical_path, get_projection_source_uuid(source_conn), source_path
+        )
+    else:
+        _initialize_owned_projection(source_conn, canonical_path, source_path)
 
-    from .schema import init_db
-
+    # A saved symlink that resolves to the canonical owned file remains valid.
     if (
         not path
         or not os.path.isfile(path)
-        or os.path.realpath(path) != os.path.realpath(canonical_path)
+        or _normalized_realpath(path) != _normalized_realpath(canonical_path)
     ):
-        # A saved link is not authority to derive into that file.  Only the
-        # matching canonical projection path may be opened and mutated.
         path = canonical_path
-        os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
-        # Create empty DB shell if needed, then link.
-        target = init_db(canonical_path)
-        try:
-            from .catalog import DatabaseType, write_database_type
-
-            write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
-        finally:
-            target.close()
-        set_linked_word_phrase_db(source_conn, canonical_path)
+        set_linked_word_phrase_db(source_conn, path)
 
     stats = None
     if sync:
@@ -875,15 +1040,7 @@ def sync_linked_word_phrase_database(
     sentence_db_path: str | None = None,
     db_root: str | None = None,
 ) -> dict | None:
-    """If the sentence DB has a linked W/P path, fully re-derive it.
-
-    When the sentence DB path and root are supplied, the saved target must
-    resolve to this sentence DB's canonical projection path. Legacy direct
-    callers may omit them, but then only an existing target explicitly marked
-    as a word/phrase DB is eligible for synchronization.
-
-    Returns stats dict, or None when no safe linked target is available.
-    """
+    """Synchronize a linked W/P projection only when it is safe to mutate."""
     path = get_linked_word_phrase_db(source_conn)
     if not path:
         return None
@@ -893,21 +1050,27 @@ def sync_linked_word_phrase_database(
         canonical_path = default_word_phrase_path_for_sentence(
             sentence_db_path, db_root
         )
+        source_path = _normalized_realpath(sentence_db_path)
         _raise_for_populated_legacy_flat_link(
             path, sentence_db_path, db_root, canonical_path
         )
-        # Do not open a saved target unless it is the owned canonical file.
-        if os.path.realpath(path) != os.path.realpath(canonical_path):
+        if _normalized_realpath(path) != _normalized_realpath(canonical_path):
             return None
+        if not os.path.isfile(canonical_path):
+            _initialize_owned_projection(source_conn, canonical_path, source_path)
+        else:
+            _assert_matching_projection_owner(
+                canonical_path, get_projection_source_uuid(source_conn), source_path
+            )
     else:
-        # Legacy callers did not provide enough context to establish path
-        # ownership. Inspect existing metadata read-only before opening the
-        # target for a destructive projection refresh.
+        # Retain the conservative legacy direct-call behavior. Without a
+        # source pathname there is no ownership tuple to validate, so only a
+        # pre-existing explicitly typed W/P database is eligible.
         if not os.path.isfile(path):
             return None
         try:
             target = sqlite3.connect(
-                f"{Path(os.path.realpath(path)).as_uri()}?mode=ro", uri=True
+                f"{Path(_normalized_realpath(path)).as_uri()}?mode=ro", uri=True
             )
             try:
                 from .catalog import DatabaseType, read_database_type
@@ -922,13 +1085,126 @@ def sync_linked_word_phrase_database(
     from .schema import init_db
 
     target_path = canonical_path or path
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
     target = init_db(target_path)
     try:
-        stats = derive_word_phrase_database(source_conn, target)
+        return derive_word_phrase_database(source_conn, target)
     finally:
         target.close()
-    return stats
+
+
+def _backup_projection_database(target_path: str) -> str:
+    """Make a unique byte-for-byte backup next to a target before adoption."""
+    parent = os.path.dirname(os.path.abspath(target_path))
+    prefix = f"{os.path.basename(target_path)}.pre-projection-backup-"
+    fd, backup_path = tempfile.mkstemp(prefix=prefix, suffix=".db", dir=parent)
+    os.close(fd)
+    try:
+        shutil.copy2(target_path, backup_path)
+    except Exception:
+        try:
+            os.unlink(backup_path)
+        except FileNotFoundError:
+            pass
+        raise
+    return backup_path
+
+
+def adopt_canonical_word_phrase_projection(
+    source_conn, sentence_db_path: str, db_root: str
+) -> tuple[str, dict]:
+    """Explicitly back up, claim, and derive a markerless canonical W/P DB.
+
+    This backend-only escape hatch deliberately refuses non-W/P targets and
+    targets with any marker. The target marker and derived card changes share
+    one SQLite transaction; a backup or sync failure leaves its ownership
+    marker and the sentence link unchanged.
+    """
+    from .catalog import DatabaseType, read_database_type
+    from .schema import init_db
+
+    canonical_path = default_word_phrase_path_for_sentence(sentence_db_path, db_root)
+    source_path = _normalized_realpath(sentence_db_path)
+    linked_path = get_linked_word_phrase_db(source_conn)
+    _raise_for_populated_legacy_flat_link(
+        linked_path, sentence_db_path, db_root, canonical_path
+    )
+    if not os.path.isfile(canonical_path):
+        raise ProjectionOwnershipConflictError(
+            {
+                "code": "word_phrase_projection_adoption_target_missing",
+                "message": "Only an existing markerless canonical word/phrase "
+                "database can be adopted.",
+                "target_path": canonical_path,
+            }
+        )
+
+    marker = _read_projection_owner(canonical_path)
+    if any(marker.values()):
+        raise _ownership_conflict(
+            code="word_phrase_projection_adoption_requires_markerless_target",
+            marker=marker,
+            target_path=canonical_path,
+            source_uuid=get_projection_source_uuid(source_conn),
+            source_path=source_path,
+        )
+    try:
+        readonly_target = sqlite3.connect(
+            f"{Path(_normalized_realpath(canonical_path)).as_uri()}?mode=ro", uri=True
+        )
+        try:
+            if read_database_type(readonly_target) != DatabaseType.LANGUAGE_WORD_PHRASE:
+                raise ProjectionOwnershipConflictError(
+                    {
+                        "code": "word_phrase_projection_adoption_requires_word_phrase",
+                        "message": "Only a markerless word/phrase database can "
+                        "be explicitly adopted.",
+                        "target_path": canonical_path,
+                    }
+                )
+        finally:
+            readonly_target.close()
+    except ProjectionOwnershipConflictError:
+        raise
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        raise ProjectionOwnershipConflictError(
+            {
+                "code": "word_phrase_projection_target_unreadable",
+                "message": "Canonical word/phrase projection cannot be inspected "
+                "without changing it.",
+                "target_path": canonical_path,
+            }
+        ) from exc
+
+    backup_path = _backup_projection_database(canonical_path)
+    source_uuid = get_projection_source_uuid(source_conn) or str(uuid.uuid4())
+    target = init_db(canonical_path)
+    try:
+        target.execute("BEGIN")
+        _write_projection_owner(target, source_uuid, source_path)
+        target.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            ("database_type", DatabaseType.LANGUAGE_WORD_PHRASE.value),
+        )
+        stats = derive_word_phrase_database(
+            source_conn, target, write_type=False, commit=False
+        )
+        target.commit()
+    except Exception:
+        target.rollback()
+        raise
+    finally:
+        target.close()
+
+    # Link only after the target's ownership claim and derivation committed.
+    if get_projection_source_uuid(source_conn) is None:
+        source_conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            (PROJECTION_SOURCE_UUID_KEY, source_uuid),
+        )
+    set_linked_word_phrase_db(source_conn, canonical_path, commit=False)
+    source_conn.commit()
+    stats["backup_path"] = backup_path
+    return canonical_path, stats
 
 
 def ensure_all_sentence_databases_linked(db_root: str) -> list[dict]:

@@ -18,21 +18,9 @@ Toolbar font styling uses guarded widget access because controls are created inc
 
 ## Compatibility risks
 
-### Database creation pathname race (TOCTOU)
+### Markerless legacy projection adoption requires an explicit user workflow
 
-`BarskyApp.create_database()` validates that a requested database path does not exist and subsequently opens it with SQLite. A concurrent local process could create or replace that pathname in the gap. The simple `O_CREAT | O_EXCL` reservation suggested by audit is insufficient because another process can still replace the pathname after the reservation descriptor is closed and before SQLite opens it. A correct cross-platform repair needs an ownership-safe creation/open design and explicit failure semantics; it is deferred to avoid shipping a partial guarantee that could regress database creation.
-
-### Projection target ownership conflict
-
-`ensure_linked_word_phrase_database()` can currently adopt a pre-existing database at the canonical Word/Phrase projection pathname while linking a sentence database, then sync/prune it as though it were that sentence database's projection. If the target is an unrelated populated database, its type and cards can be overwritten or removed. A safe repair needs persistent source-identity ownership metadata plus an explicit migration/conflict policy for existing markerless projections; a simple type/path guard cannot distinguish a valid legacy projection from an unrelated W/P database. This is deferred to avoid data loss or breaking existing links until that migration design and conflict UI/behavior are specified and tested.
-
-### Failed database selection replaces an active session
-
-Selecting a missing, unreadable, or corrupt database currently replaces the selected path and closes the active connection before candidate initialization completes. A failure then clears the working database and review state. A safe fix needs a two-phase candidate-open/adopt design so the old connection, labels, and review session remain intact until the candidate is fully initialized; this crosses migration and session ownership and is deferred to avoid state mixing or connection leaks.
-
-### Previous navigation can requeue already graded cards
-
-`ReviewController._previous_daily_card()` restores a prior graded card as the current card, and the subsequent Next action currently treats it as an ungraded skip and appends it to `cards_due`. This can show and grade the same card twice in one daily session. A safe repair requires history entries to retain explicit `skipped` versus `graded` transition metadata through Previous, pause/resume, restart, and session reset. Changing this navigation/state contract without that model risks breaking the valid Next → Previous → Next path for ungraded cards, so it is deferred until the behavior and regression matrix are designed and tested together.
+A canonical Word/Phrase projection that lacks ownership metadata is now preserved unchanged and reported as a typed conflict; automatic linking never claims or prunes it. The backend supports explicit backup-first adoption for a confirmed canonical W/P target, but the desktop confirmation/backup-discovery UI has not yet been added. Noncanonical, moved, or flat legacy links remain conservative failures because their source ownership cannot be proven safely. A dedicated migration dialog must show the source/target paths, require confirmation, retain the created backup, and never block sentence-database use.
 
 ### `kgb_srs.forms` private legacy exports
 

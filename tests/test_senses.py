@@ -961,9 +961,12 @@ class TestLinkedWordPhraseSync:
         expected = default_word_phrase_path_for_sentence(
             str(sentence_path), str(db_root)
         )
-        os.makedirs(os.path.dirname(expected), exist_ok=True)
-        target = init_db(expected)
-        target.close()
+        # Establish ownership before exercising a saved symlink alias. A
+        # markerless canonical target must now be explicitly adopted instead.
+        owned_path, _ = ensure_linked_word_phrase_database(
+            conn, str(sentence_path), str(db_root), sync=False
+        )
+        assert owned_path == expected
         link_path = tmp_path / "canonical-projection-link.db"
         try:
             os.symlink(expected, link_path)

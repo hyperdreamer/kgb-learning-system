@@ -3,7 +3,7 @@
 import sqlite3
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from kgb_srs.catalog import DatabaseType, write_database_type
 from kgb_srs.main_window import BarskyApp
@@ -234,6 +234,101 @@ def test_successful_candidate_adoption_closes_old_connection_once_and_resets_rev
     assert window._paused_cards_due == []
     assert window._paused_daily_queue == []
     assert window._paused_review_history == []
+
+
+def test_projection_ownership_conflict_does_not_block_sentence_database_load(
+    window, tmp_path
+):
+    """A protected canonical target must not make its sentence DB unloadable."""
+    root = tmp_path / "db"
+    candidate_path = root / "Language-based" / "Sentence-based" / "English_barsky.db"
+    candidate_path.parent.mkdir(parents=True)
+    candidate = init_db(str(candidate_path))
+    try:
+        write_database_type(candidate, DatabaseType.LANGUAGE_SENTENCE)
+        from kgb_srs.schema import ensure_sentence_schema
+
+        ensure_sentence_schema(candidate)
+    finally:
+        candidate.close()
+    target_path = root / "Language-based" / "Word-Phrase-based" / "English_barsky.db"
+    target_path.parent.mkdir(parents=True)
+    target = init_db(str(target_path))
+    try:
+        write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
+        target.execute(
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+            ("private", "must survive", 4, "2030-01-01"),
+        )
+        target.commit()
+    finally:
+        target.close()
+
+    window.settings["database_root"] = str(root)
+    window.load_database(
+        silent=True,
+        db_path=str(candidate_path),
+        display="Language-based/Sentence-based/English",
+    )
+
+    assert window.current_db_path == str(candidate_path)
+    assert window.conn is not None
+    with sqlite3.connect(target_path) as target:
+        assert target.execute("SELECT front FROM cards").fetchall() == [("private",)]
+        assert (
+            target.execute(
+                "SELECT value FROM settings WHERE key LIKE 'projection_owner_%'"
+            ).fetchall()
+            == []
+        )
+
+
+def test_projection_ownership_conflict_does_not_block_sentence_database_create(
+    window, tmp_path, monkeypatch
+):
+    """Creation still adopts the new sentence DB when projection is protected."""
+    import kgb_srs.main_window as main_window
+
+    class AcceptedSentenceDialog:
+        selected_type = DatabaseType.LANGUAGE_SENTENCE
+        db_name = "English"
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    root = tmp_path / "db"
+    target_path = root / "Language-based" / "Word-Phrase-based" / "English_barsky.db"
+    target_path.parent.mkdir(parents=True)
+    target = init_db(str(target_path))
+    try:
+        write_database_type(target, DatabaseType.LANGUAGE_WORD_PHRASE)
+        target.execute(
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+            ("private", "must survive", 4, "2030-01-01"),
+        )
+        target.commit()
+    finally:
+        target.close()
+
+    window.settings["database_root"] = str(root)
+    monkeypatch.setattr(main_window, "DBCreationDialog", AcceptedSentenceDialog)
+    window.create_new_database()
+
+    source_path = root / "Language-based" / "Sentence-based" / "English_barsky.db"
+    assert source_path.is_file()
+    assert window.current_db_path == str(source_path)
+    assert window.conn is not None
+    with sqlite3.connect(target_path) as target:
+        assert target.execute("SELECT front FROM cards").fetchall() == [("private",)]
+        assert (
+            target.execute(
+                "SELECT value FROM settings WHERE key LIKE 'projection_owner_%'"
+            ).fetchall()
+            == []
+        )
 
 
 def test_projection_failure_does_not_block_candidate_adoption(
