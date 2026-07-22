@@ -54,5 +54,6 @@ Projection updates one normalized match and intentionally retains pre-existing d
 
 ## Recent Completed Reconsideration Fixes
 
+- `36da7cc` — split the oversized UI modules into focused review, menu, browse, and dialog modules; retained `forms.py` as a compatibility facade; cached lazy AI worker classes; removed SQLite connection retention; and centralized sentence-item normalization/deduplication.
 - `0f6a370` — atomic sentence-card rollback across nested sense helpers; canonical W/P link enforcement that preserves malformed legacy targets.
 - `d490c0c` — AI-created senses are materialized only on Save; cancelling the dialog leaves no orphan sense.
