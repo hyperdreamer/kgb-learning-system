@@ -59,6 +59,24 @@ class TestSearchFunctionRegistration:
 
 
 # ---------------------------------------------------------------------------
+# Search SQL builder
+# ---------------------------------------------------------------------------
+
+
+class TestSearchSqlBuilder:
+    def test_requires_nonempty_groups(self):
+        def condition_builder(_term, _field_filter):
+            return "", []
+
+        with pytest.raises(ValueError, match="at least one term"):
+            search._build_search_sql(
+                [],
+                "SELECT id FROM cards",
+                condition_builder,
+            )
+
+
+# ---------------------------------------------------------------------------
 # parse_search_tokens
 # ---------------------------------------------------------------------------
 

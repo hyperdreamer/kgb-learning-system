@@ -201,7 +201,6 @@ def _build_search_sql(
     groups: list[list[str]],
     base_sql: str,
     cond_builder,
-    select_cols: str,
 ) -> tuple[str, list]:
     """Build OR-of-AND query.
 
@@ -210,7 +209,7 @@ def _build_search_sql(
     - Multi-group: EXISTS per term inside each group, OR'd across groups.
     """
     if not groups:
-        return f"SELECT {select_cols} FROM cards ORDER BY id", []
+        raise ValueError("Search groups must contain at least one term")
 
     if len(groups) == 1 and len(groups[0]) == 1:
         cond, params = cond_builder(groups[0][0], None)
@@ -275,7 +274,6 @@ def search_sentence_cards(
         groups,
         _SENTENCE_BASE_SQL,
         cond_builder,
-        select_cols="DISTINCT c.id, c.front, c.back, c.box, c.next_review",
     )
     cur.execute(sql, params)
     rows = cur.fetchall()
@@ -317,7 +315,6 @@ def search_word_phrase_cards(
         groups,
         base_sql,
         cond_builder,
-        select_cols="id, front, back, box, next_review",
     )
     cur.execute(sql, params)
     rows = cur.fetchall()
