@@ -32,7 +32,14 @@ _REVIEW_EVENT_ATTRIBUTE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _REVIEW_STYLE_ATTRIBUTE_RE = re.compile(
-    r"\s+style\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)",
+    r"\s+style\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|[^\s>]+)",
+    flags=re.IGNORECASE,
+)
+# QTextDocument emits Markdown bold as ``<span style="font-weight:700">``.
+# Retain only that presentation semantic, in canonical form; every other CSS
+# declaration remains untrusted and is discarded.
+_REVIEW_SAFE_BOLD_STYLE_RE = re.compile(
+    r"(?:^|;)\s*font-weight\s*:\s*(?:bold|[6-9]00)\s*(?:;|$)",
     flags=re.IGNORECASE,
 )
 _REVIEW_URL_ATTRIBUTE_RE = re.compile(
@@ -65,7 +72,15 @@ def sanitize_review_html_fragment(fragment: str) -> str:
     cleaned = _REVIEW_BLOCK_TAGS_RE.sub("", fragment or "")
     cleaned = _REVIEW_VOID_TAGS_RE.sub("", cleaned)
     cleaned = _REVIEW_EVENT_ATTRIBUTE_RE.sub("", cleaned)
-    cleaned = _REVIEW_STYLE_ATTRIBUTE_RE.sub("", cleaned)
+
+    def replace_style_attribute(match):
+        raw_value = match.group("value")
+        style_value = raw_value[1:-1] if raw_value[:1] in {'"', "'"} else raw_value
+        if _REVIEW_SAFE_BOLD_STYLE_RE.search(html_lib.unescape(style_value)):
+            return ' style="font-weight: 700;"'
+        return ""
+
+    cleaned = _REVIEW_STYLE_ATTRIBUTE_RE.sub(replace_style_attribute, cleaned)
 
     def replace_url_attribute(match):
         name = match.group("name").lower()

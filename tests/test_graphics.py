@@ -126,6 +126,50 @@ def test_set_text_uses_content_font_not_ui_font_plus_four(monkeypatch):
     app.processEvents()
 
 
+def test_set_text_renders_unfamiliar_sentence_terms_in_bold(flashcard):
+    """Markdown highlights remain bold in the proxy-safe review renderer."""
+    from PyQt6.QtGui import QFont
+
+    display_text = (
+        "Revenge for a **Grievance** of a Hundred Generations "
+        "May Still Be **Exacted**!\n\nHe **insists on** speaking."
+    )
+
+    flashcard.set_text(display_text, is_flipped=False)
+
+    document = flashcard.text_widget.document()
+    for unfamiliar_term in ("Grievance", "Exacted", "insists on"):
+        cursor = document.find(unfamiliar_term)
+        assert not cursor.isNull()
+        assert cursor.charFormat().fontWeight() >= QFont.Weight.Bold.value
+
+
+def test_review_card_uses_proxy_safe_text_renderer_when_webengine_is_available(
+    monkeypatch,
+):
+    """An optional WebEngine install must not blank a proxy-embedded card."""
+    from PyQt6.QtWidgets import QTextEdit
+    from kgb_srs import graphics as graphics_mod
+    from kgb_srs.graphics import FlashCardItem
+
+    class WebEngineMustNotBeEmbedded:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("QWebEngineView must not be embedded in QGraphicsProxyWidget")
+
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(graphics_mod, "HAS_WEBENGINE", True)
+    monkeypatch.setattr(graphics_mod, "QWebEngineView", WebEngineMustNotBeEmbedded)
+
+    item = FlashCardItem(_MockApp(), 200, 150, 350, 200)
+    item.set_text("Visible **review content**", is_flipped=False)
+
+    assert isinstance(item.text_widget, QTextEdit)
+    assert item.text_widget.toPlainText().strip() == "Visible review content"
+
+    del item
+    app.processEvents()
+
+
 def test_math_placeholder_collision_preserves_literal_and_math():
     from kgb_srs.markdown_utils import (
         MATH_PLACEHOLDER_PREFIX,
@@ -182,6 +226,18 @@ def test_review_html_is_offline_and_sanitizes_resource_markup():
     assert "cdn.jsdelivr.net" not in document
     assert "<script" not in document.lower()
     assert "$x^2$" in document  # safe, visible offline math fallback
+
+
+def test_review_html_preserves_only_safe_bold_inline_style():
+    """Markdown's bold style survives while unrelated CSS remains stripped."""
+    from kgb_srs.markdown_utils import sanitize_review_html_fragment
+
+    fragment = sanitize_review_html_fragment(
+        '<span style="color: red; font-weight: 700; '
+        'background: url(https://bad.test/style)">target</span>'
+    )
+
+    assert fragment == '<span style="font-weight: 700;">target</span>'
 
 
 @pytest.mark.parametrize(

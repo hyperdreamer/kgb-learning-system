@@ -14,9 +14,6 @@ Language learning is **sentence-first**: sentence databases feed a shared sense 
 # Install direct runtime and test dependencies
 pip install -r requirements.txt
 
-# Optional: richer display-only MathJax review rendering
-pip install 'PyQt6-WebEngine>=6.6,<7'
-
 # Run
 python main.py
 
@@ -333,10 +330,8 @@ python -m pytest tests/test_ai_provider.py -v
 
 - Python 3.10+
 - Direct runtime and test dependencies are listed in [`requirements.txt`](requirements.txt)
-- PyQt6-WebEngine *(optional, for the richer display-only review view)*
+- Review cards use Qt's proxy-safe text renderer; PyQt6-WebEngine is not required.
 
 ```bash
 pip install -r requirements.txt
-# Optional richer MathJax review rendering
-pip install 'PyQt6-WebEngine>=6.6,<7'
 ```

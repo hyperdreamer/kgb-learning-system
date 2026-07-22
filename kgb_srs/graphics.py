@@ -248,23 +248,18 @@ class FlashCardItem(QGraphicsRectItem):
         self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
-        if HAS_WEBENGINE:
-            self.text_widget = QWebEngineView()
-            self.text_widget.setStyleSheet("background-color: transparent;")
-            if ReviewCardWebPage is not None:
-                self.text_widget.setPage(ReviewCardWebPage(self.text_widget))
-            configure_review_web_view(self.text_widget)
-
-            _set_transparent_web_view_background(self.text_widget)
-        else:
-            self.text_widget = QTextEdit()
-            self.text_widget.setReadOnly(True)
-            self.text_widget.setStyleSheet(
-                "background-color: transparent; border: none; color: black;"
-            )
-            self.text_widget.setTextInteractionFlags(
-                Qt.TextInteractionFlag.TextBrowserInteraction
-            )
+        # The card is embedded through QGraphicsProxyWidget. QWebEngineView
+        # uses a separate composited surface that is not reliably painted in
+        # that host, leaving an otherwise functional card blank. QTextEdit
+        # safely renders the generated HTML and its offline LaTeX fallback.
+        self.text_widget = QTextEdit()
+        self.text_widget.setReadOnly(True)
+        self.text_widget.setStyleSheet(
+            "background-color: transparent; border: none; color: black;"
+        )
+        self.text_widget.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
 
         self.btn_layout = QHBoxLayout()
 
@@ -355,15 +350,9 @@ class FlashCardItem(QGraphicsRectItem):
             display_text,
             font_family=font_fam,
             font_size=font_sz,
-            include_mathjax=HAS_WEBENGINE,
+            include_mathjax=False,
         )
-
-        if HAS_WEBENGINE:
-            # A stable non-file origin ensures user Markdown is never based on
-            # the application's working directory.
-            self.text_widget.setHtml(html_template, QUrl("about:blank"))
-        else:
-            self.text_widget.setHtml(html_template)
+        self.text_widget.setHtml(html_template)
 
         if is_flipped:
             self.flip_btn.hide()

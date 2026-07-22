@@ -18,6 +18,10 @@ All notable changes to the KGB 5-Box SRS System are documented here.
   placeholder sentinel, and preserved collision-safe rendering behavior.
 - Replaced development-branch subprocess detection with direct `.git/HEAD`
   metadata parsing that supports normal and linked worktrees.
+- Rendered review-card content with Qt's proxy-safe text widget, preventing
+  blank cards when the optional WebEngine package is installed.
+- Preserved safe Markdown bold formatting for unfamiliar terms in the
+  proxy-safe review renderer.
 
 ### Compatibility
 
