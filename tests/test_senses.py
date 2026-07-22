@@ -808,6 +808,7 @@ class TestLinkedWordPhraseSync:
             ensure_linked_word_phrase_database,
             get_linked_word_phrase_db,
             set_linked_word_phrase_db,
+            sync_linked_word_phrase_database,
         )
 
         insert_sentence_card(
@@ -1038,6 +1039,311 @@ class TestUpsertPreservesSrs:
         box, next_review = cur.fetchone()
         assert box == 1
         assert next_review == today
+
+
+# ---------------------------------------------------------------------------
+# Projection safety and normalized W/P duplicate conflicts
+# ---------------------------------------------------------------------------
+
+
+class TestProjectionSafety:
+    def test_nested_sentence_paths_use_distinct_mirrored_targets_and_do_not_prune(
+        self, tmp_path
+    ):
+        from kgb_srs.senses import ensure_linked_word_phrase_database
+
+        db_root = tmp_path / "db"
+        sentence_root = db_root / "Language-based" / "Sentence-based"
+        english_path = sentence_root / "English" / "A1_barsky.db"
+        french_path = sentence_root / "French" / "A1_barsky.db"
+        english_path.parent.mkdir(parents=True)
+        french_path.parent.mkdir(parents=True)
+        english = init_db(str(english_path))
+        french = init_db(str(french_path))
+        try:
+            ensure_sentence_schema(english)
+            ensure_sentence_schema(french)
+            insert_sentence_card(
+                english, "The English bank.", [("bank", "financial institution")]
+            )
+            insert_sentence_card(
+                french, "La rivière.", [("rivière", "river")]
+            )
+
+            english_target, _ = ensure_linked_word_phrase_database(
+                english, str(english_path), str(db_root)
+            )
+            french_target, _ = ensure_linked_word_phrase_database(
+                french, str(french_path), str(db_root)
+            )
+        finally:
+            english.close()
+            french.close()
+
+        assert english_target == str(
+            db_root / "Language-based" / "Word-Phrase-based" / "English" / "A1_barsky.db"
+        )
+        assert french_target == str(
+            db_root / "Language-based" / "Word-Phrase-based" / "French" / "A1_barsky.db"
+        )
+        assert english_target != french_target
+        english_target_conn = init_db(english_target)
+        french_target_conn = init_db(french_target)
+        try:
+            assert english_target_conn.execute("SELECT front FROM cards").fetchall() == [
+                ("bank",)
+            ]
+            assert french_target_conn.execute("SELECT front FROM cards").fetchall() == [
+                ("rivière",)
+            ]
+        finally:
+            english_target_conn.close()
+            french_target_conn.close()
+
+    def test_canonical_symlink_escape_does_not_mutate_source_or_external_target(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+            sync_linked_word_phrase_database,
+        )
+
+        db_root = tmp_path / "db"
+        sentence_path = (
+            db_root / "Language-based" / "Sentence-based" / "English" / "A1_barsky.db"
+        )
+        sentence_path.parent.mkdir(parents=True)
+        external = tmp_path / "external"
+        external.mkdir()
+        marker = external / "must-not-change.txt"
+        marker.write_text("unchanged", encoding="utf-8")
+        word_phrase_root = db_root / "Language-based" / "Word-Phrase-based"
+        word_phrase_root.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(external, word_phrase_root)
+        except (AttributeError, NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        old_link = str(tmp_path / "existing-link.db")
+        set_linked_word_phrase_db(conn, old_link)
+        settings_before = conn.execute(
+            "SELECT key, value FROM settings ORDER BY key"
+        ).fetchall()
+        external_before = sorted((path.name, path.read_bytes()) for path in external.iterdir())
+
+        with pytest.raises(ProjectionPathSafetyError) as ensure_error:
+            ensure_linked_word_phrase_database(
+                conn, str(sentence_path), str(db_root), sync=True
+            )
+        assert ensure_error.value.conflict["code"] == "sentence_projection_target_escapes_root"
+        with pytest.raises(ProjectionPathSafetyError):
+            sync_linked_word_phrase_database(
+                conn, sentence_db_path=str(sentence_path), db_root=str(db_root)
+            )
+
+        assert get_linked_word_phrase_db(conn) == os.path.abspath(old_link)
+        assert conn.execute("SELECT key, value FROM settings ORDER BY key").fetchall() == settings_before
+        assert sorted((path.name, path.read_bytes()) for path in external.iterdir()) == external_before
+
+    def test_populated_legacy_flat_target_is_not_relinked_for_nested_source(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            default_word_phrase_path_for_sentence,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+            sync_linked_word_phrase_database,
+        )
+
+        db_root = tmp_path / "db"
+        sentence_path = (
+            db_root / "Language-based" / "Sentence-based" / "English" / "A1_barsky.db"
+        )
+        sentence_path.parent.mkdir(parents=True)
+        legacy_path = db_root / "Language-based" / "Word-Phrase-based" / "A1_barsky.db"
+        legacy_path.parent.mkdir(parents=True)
+        legacy = init_db(str(legacy_path))
+        try:
+            legacy.execute(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+                ("legacy", "must survive", 4, "2030-01-01"),
+            )
+            legacy.commit()
+        finally:
+            legacy.close()
+        legacy_bytes = legacy_path.read_bytes()
+        set_linked_word_phrase_db(conn, str(legacy_path))
+
+        with pytest.raises(ProjectionPathSafetyError) as error:
+            ensure_linked_word_phrase_database(
+                conn, str(sentence_path), str(db_root), sync=True
+            )
+
+        mirrored_path = default_word_phrase_path_for_sentence(
+            str(sentence_path), str(db_root)
+        )
+        assert error.value.conflict["code"] == "legacy_word_phrase_projection_conflict"
+        assert get_linked_word_phrase_db(conn) == os.path.abspath(str(legacy_path))
+        assert legacy_path.read_bytes() == legacy_bytes
+        assert not os.path.exists(mirrored_path)
+        with pytest.raises(ProjectionPathSafetyError):
+            sync_linked_word_phrase_database(
+                conn, sentence_db_path=str(sentence_path), db_root=str(db_root)
+            )
+
+    def test_empty_legacy_flat_target_is_replaced_by_nested_mirror(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            default_word_phrase_path_for_sentence,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+        )
+
+        db_root = tmp_path / "db"
+        sentence_path = (
+            db_root / "Language-based" / "Sentence-based" / "English" / "A1_barsky.db"
+        )
+        sentence_path.parent.mkdir(parents=True)
+        legacy_path = db_root / "Language-based" / "Word-Phrase-based" / "A1_barsky.db"
+        legacy_path.parent.mkdir(parents=True)
+        legacy = init_db(str(legacy_path))
+        legacy.close()
+        set_linked_word_phrase_db(conn, str(legacy_path))
+
+        target_path, stats = ensure_linked_word_phrase_database(
+            conn, str(sentence_path), str(db_root), sync=True
+        )
+
+        expected = default_word_phrase_path_for_sentence(
+            str(sentence_path), str(db_root)
+        )
+        assert target_path == expected
+        assert stats is not None
+        assert get_linked_word_phrase_db(conn) == expected
+        assert os.path.isfile(expected)
+
+    def test_source_outside_sentence_root_is_rejected_before_link_mutation(
+        self, conn, tmp_path
+    ):
+        from kgb_srs.senses import (
+            ProjectionPathSafetyError,
+            ensure_linked_word_phrase_database,
+            get_linked_word_phrase_db,
+            set_linked_word_phrase_db,
+        )
+
+        old_link = str(tmp_path / "existing-link.db")
+        set_linked_word_phrase_db(conn, old_link)
+        outside_source = tmp_path / "outside" / "A1_barsky.db"
+
+        with pytest.raises(ProjectionPathSafetyError) as error:
+            ensure_linked_word_phrase_database(
+                conn, str(outside_source), str(tmp_path / "db"), sync=True
+            )
+
+        assert error.value.conflict["code"] == "sentence_projection_source_outside_root"
+        assert get_linked_word_phrase_db(conn) == os.path.abspath(old_link)
+
+
+class TestWordPhraseDuplicateSafety:
+    def test_duplicate_scanner_groups_unicode_nfc_nfd_and_casefold(self, conn):
+        from kgb_srs.senses import find_normalized_word_phrase_duplicates
+
+        conn.executemany(
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, '2030-01-01')",
+            [
+                ("École", "one"),
+                ("e\u0301COLE", "two"),
+                ("BANK", "three"),
+                ("bank", "four"),
+            ],
+        )
+        conn.commit()
+
+        groups = find_normalized_word_phrase_duplicates(conn)
+
+        assert [(group.normalized_front, group.fronts) for group in groups] == [
+            ("bank", ("BANK", "bank")),
+            ("école", ("École", "e\u0301COLE")),
+        ]
+        assert [group.card_ids for group in groups] == [(3, 4), (1, 2)]
+
+    def test_upsert_duplicate_conflict_does_not_mutate_cards(self, conn):
+        from kgb_srs.senses import (
+            WordPhraseDuplicateConflictError,
+            upsert_word_phrase_card,
+        )
+
+        conn.executemany(
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+            [
+                ("École", "first", 2, "2030-01-01"),
+                ("e\u0301cole", "second", 5, "2031-01-01"),
+            ],
+        )
+        conn.commit()
+        before = conn.execute(
+            "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+        ).fetchall()
+
+        with pytest.raises(WordPhraseDuplicateConflictError) as error:
+            upsert_word_phrase_card(conn, "ÉCOLE", "new projection")
+
+        assert error.value.conflict["normalized_front"] == "école"
+        assert conn.execute(
+            "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+        ).fetchall() == before
+
+    def test_derive_conflict_preserves_duplicates_and_projects_other_entries(
+        self, conn, tmp_path
+    ):
+        insert_sentence_card(conn, "The bank is open.", [("bank", "financial institution")])
+        insert_sentence_card(conn, "A river runs here.", [("river", "watercourse")])
+        target = init_db(str(tmp_path / "word_phrase_barsky.db"))
+        try:
+            target.executemany(
+                "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
+                [
+                    ("BANK", "first history", 2, "2030-01-01"),
+                    ("bank", "second history", 5, "2031-01-01"),
+                ],
+            )
+            target.commit()
+            before_duplicates = target.execute(
+                "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+            ).fetchall()
+
+            stats = derive_word_phrase_database(conn, target)
+
+            assert stats["inserted"] == 1
+            assert stats["updated"] == 0
+            assert stats["pruned"] == 0
+            assert stats["conflicts"] == [
+                {
+                    "code": "normalized_word_phrase_front_duplicates",
+                    "normalized_front": "bank",
+                    "cards": [
+                        {"id": before_duplicates[0][0], "front": "BANK"},
+                        {"id": before_duplicates[1][0], "front": "bank"},
+                    ],
+                }
+            ]
+            assert target.execute(
+                "SELECT id, front, back, box, next_review FROM cards WHERE id IN (?, ?) ORDER BY id",
+                (before_duplicates[0][0], before_duplicates[1][0]),
+            ).fetchall() == before_duplicates
+            assert target.execute(
+                "SELECT front, back FROM cards WHERE front='river'"
+            ).fetchone()[0] == "river"
+        finally:
+            target.close()
 
 
 class TestOrphanSensePurge:

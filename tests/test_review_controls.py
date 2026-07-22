@@ -31,7 +31,7 @@ import os
 import tempfile
 import pytest
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 
 from kgb_srs.main_window import BarskyApp
@@ -517,45 +517,149 @@ class TestCloseEventSettingsFailure:
     def test_settings_save_oserror_does_not_interrupt_cleanup(self, qapp, capsys):
         app = BarskyApp()
         cleanup_calls = []
-        worker_waits = []
+        close_requests = []
 
         def fail_save():
             raise OSError("disk full")
 
-        class Signal:
-            def disconnect(self):
-                pass
-
         class Worker:
-            audio_ready = Signal()
-            error = Signal()
+            running = True
 
             def isRunning(self):
-                return True
-
-            def wait(self, timeout):
-                worker_waits.append(timeout)
+                return self.running
 
         class Event:
             accepted = False
+            ignored = False
 
             def accept(self):
                 self.accepted = True
 
+            def ignore(self):
+                self.ignored = True
+
         app._save_settings = fail_save
         app._cleanup_tts_temp = lambda: cleanup_calls.append(True)
-        app.tts_worker = Worker()
+        worker = Worker()
+        app.tts_worker = worker
         event = Event()
         app.closeEvent(event)
 
-        assert event.accepted
-        assert cleanup_calls == [True]
-        assert worker_waits == [2000]
+        assert event.ignored
+        assert app.tts_worker is worker
+        assert cleanup_calls == []
+
+        app.close = lambda: close_requests.append(True)
+        worker.running = False
+        app._on_tts_worker_finished(worker)
+
         assert app.tts_worker is None
+        assert close_requests == [True]
+
+        final_event = Event()
+        app.closeEvent(final_event)
+        assert final_event.accepted
+        assert cleanup_calls == [True]
         assert "Could not save settings: disk full" in capsys.readouterr().err
 
         app._save_settings = lambda: None
         app.close()
+        app.deleteLater()
+
+    def test_active_tts_close_defers_until_finished_and_silences_late_audio(
+        self, qapp, tmp_path, monkeypatch
+    ):
+        """A close keeps its worker alive, but never presents late TTS output."""
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as main_window
+        import kgb_srs.tts as tts
+
+        late_audio = tmp_path / "barsky_tts_late_close.mp3"
+        late_audio.write_bytes(b"late")
+
+        class Worker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            instance = None
+
+            def __init__(self, *_args):
+                super().__init__()
+                self.running = True
+                Worker.instance = self
+
+            def start(self):
+                return None
+
+            def isRunning(self):
+                return self.running
+
+            def deleteLater(self):
+                return None
+
+        class Player:
+            set_source_calls = 0
+            play_calls = 0
+
+            def setSource(self, *_args):
+                self.set_source_calls += 1
+
+            def play(self):
+                self.play_calls += 1
+
+        class Event:
+            accepted = False
+            ignored = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                self.ignored = True
+
+        monkeypatch.setattr(main_window, "TTSWorker", Worker)
+        unlinked = []
+        monkeypatch.setattr(
+            tts,
+            "unlink_tts_temp",
+            lambda path: unlinked.append(path) or None,
+        )
+
+        app = BarskyApp()
+        app._save_settings = lambda: None
+        app.player = Player()
+        close_requests = []
+        app.close = lambda: close_requests.append(True)
+        cleanup_calls = []
+        app._cleanup_tts_temp = lambda: cleanup_calls.append(True)
+        btn = QPushButton("Listen")
+
+        app.speak_text("hello", btn)
+        cleanup_calls.clear()  # setup cleanup is unrelated to window closing
+        worker = Worker.instance
+        event = Event()
+        app.closeEvent(event)
+
+        assert event.ignored
+        assert app.tts_worker is worker  # no early identity drop / no wait()
+
+        worker.audio_ready.emit(str(late_audio))
+        worker.error.emit("late failure")
+        assert unlinked == [str(late_audio)]
+        assert app.player.set_source_calls == 0
+        assert app.player.play_calls == 0
+
+        worker.running = False
+        worker.finished.emit()
+        worker.finished.emit()  # stale/duplicate completion cannot re-close
+        assert app.tts_worker is None
+        assert close_requests == [True]
+
+        final_event = Event()
+        app.closeEvent(final_event)
+        assert final_event.accepted
+        assert cleanup_calls == [True]
+        btn.deleteLater()
         app.deleteLater()
 
 

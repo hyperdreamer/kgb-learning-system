@@ -389,27 +389,46 @@ def find_duplicate_sentence_card(conn, sentence: str, items: list):
     if not norm_items:
         return None
 
-    # Find candidate cards with matching sentence (normalized)
+    # SQLite's built-in LOWER() neither NFC-normalizes nor implements Python's
+    # Unicode casefold semantics.  Register the application normalizer for
+    # this connection so SQLite can discard non-matching cards before we fetch
+    # their child rows.  A second, joined query fetches every candidate's
+    # children at once instead of one query per candidate.  Python still
+    # compares the lists to retain exact normalization and ordered-list
+    # semantics without delimiter-sensitive SQL aggregation.
+    conn.create_function("kgb_normalize_sentence", 1, normalize_sentence)
     cur = conn.cursor()
-    cur.execute("SELECT id, front FROM cards")
-    candidates = []
-    for row in cur.fetchall():
-        if normalize_sentence(row[1]) == norm_sentence:
-            candidates.append(row[0])
-
-    if not candidates:
+    cur.execute(
+        "SELECT id FROM cards WHERE kgb_normalize_sentence(front) = ? "
+        "ORDER BY id",
+        (norm_sentence,),
+    )
+    if cur.fetchone() is None:
         return None
 
-    # For each candidate, check if expressions match (ordered list)
-    for cid in candidates:
-        cur.execute(
-            "SELECT expression FROM unfamiliar_items WHERE card_id=? ORDER BY id",
-            (cid,),
-        )
-        existing = [normalize_sentence(r[0]) for r in cur.fetchall()]
-        existing = [e for e in existing if e]
-        if existing == norm_items:
-            return cid
+    cur.execute(
+        """SELECT cards.id, unfamiliar_items.expression
+           FROM cards
+           JOIN unfamiliar_items ON unfamiliar_items.card_id = cards.id
+           WHERE kgb_normalize_sentence(cards.front) = ?
+           ORDER BY cards.id, unfamiliar_items.id""",
+        (norm_sentence,),
+    )
+
+    current_id = None
+    existing = []
+    for card_id, expression in cur:
+        if current_id is not None and card_id != current_id:
+            if existing == norm_items:
+                return current_id
+            existing = []
+        current_id = card_id
+        normalized = normalize_sentence(expression)
+        if normalized:
+            existing.append(normalized)
+
+    if current_id is not None and existing == norm_items:
+        return current_id
 
     return None
 

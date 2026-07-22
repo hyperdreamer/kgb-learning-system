@@ -74,6 +74,10 @@ class SentenceCardDialog(QDialog):
         self._conn = conn  # optional: sentence DB for sense inventory
         _apply_ui_font(self, self._settings, parent)
         self._ai_worker: _AIGenerateWorker | None = None
+        # Membership results are only committed after the exact worker that
+        # produced them has emitted ``finished``.
+        self._membership_worker = None
+        self._membership_pending_accept = None
         # `back` is accepted for API compatibility with main_window but is
         # not shown or edited; meanings come from items pairs only.
         _ = back
@@ -299,7 +303,7 @@ class SentenceCardDialog(QDialog):
         if self._ai_worker is not None and self._ai_worker.isRunning():
             return True
         membership = getattr(self, "_membership_worker", None)
-        return membership is not None and membership.isRunning()
+        return membership is not None
 
     def _update_save_enabled(self) -> None:
         """Dim Save when empty or while AI is busy; stay open on failed Save."""
@@ -309,6 +313,20 @@ class SentenceCardDialog(QDialog):
         has_sentence = bool(self._sentence_edit.toPlainText().strip())
         has_items = self._items_list.count() > 0
         self._save_btn.setEnabled(has_sentence and has_items)
+
+    def _set_membership_controls_enabled(self, enabled: bool) -> None:
+        """Lock edits/cancellation while residual membership is unresolved."""
+        for control in (
+            self._sentence_edit,
+            self._item_entry,
+            self._add_sel_btn,
+            self._remove_btn,
+            self._items_list,
+            self._generate_btn,
+            self._save_btn,
+            self._cancel_btn,
+        ):
+            control.setEnabled(enabled)
 
     def _on_item_selection_changed(self) -> None:
         """Selection drives Remove, Generate, and the single Meaning card."""
@@ -812,23 +830,34 @@ class SentenceCardDialog(QDialog):
         self._membership_sentence = sentence
         self._membership_items = items
         self._membership_missing = list(missing)
+        self._membership_pending_accept = None
 
         self._status_label.setText(
             f"🤖 AI checking {len(missing)} residual item(s)…")
         self._status_label.setStyleSheet("color: #666;")
         self._ai_progress.setVisible(True)
         self._ai_progress.setRange(0, 0)
-        self._save_btn.setEnabled(False)
-        self._generate_btn.setEnabled(False)
+        self._set_membership_controls_enabled(False)
 
         worker = _create_ai_worker(ai_config, prompt)
-        worker.result.connect(self._on_membership_ai_result)
-        worker.error.connect(self._on_membership_ai_error)
-        worker.finished.connect(self._on_membership_ai_finished)
+        worker.result.connect(
+            lambda response_text, w=worker: self._on_membership_ai_result(
+                response_text, w
+            )
+        )
+        worker.error.connect(
+            lambda message, w=worker: self._on_membership_ai_error(message, w)
+        )
+        worker.finished.connect(
+            lambda w=worker: self._on_membership_ai_finished(w)
+        )
         self._membership_worker = worker
         worker.start()
 
-    def _on_membership_ai_result(self, response_text: str) -> None:
+    def _on_membership_ai_result(self, response_text: str, worker=None) -> None:
+        """Validate a result but defer acceptance until its worker finishes."""
+        if worker is not None and worker is not self._membership_worker:
+            return
         sentence = getattr(self, "_membership_sentence", "")
         items = getattr(self, "_membership_items", [])
         missing = getattr(self, "_membership_missing", [])
@@ -836,6 +865,7 @@ class SentenceCardDialog(QDialog):
             claims = parse_membership_claims(response_text, missing)
             residual = apply_ai_membership_claims(sentence, missing, claims)
         except (AIParseError, AIValidationError) as e:
+            self._membership_pending_accept = None
             QMessageBox.warning(
                 self, "AI membership check",
                 f"Could not use AI residual check:\n{e}\n\n"
@@ -843,6 +873,7 @@ class SentenceCardDialog(QDialog):
             )
             return
         except Exception as e:
+            self._membership_pending_accept = None
             QMessageBox.warning(
                 self, "AI membership check",
                 f"Unexpected error in AI residual check:\n{e}"
@@ -850,6 +881,7 @@ class SentenceCardDialog(QDialog):
             return
 
         if not residual.valid:
+            self._membership_pending_accept = None
             missing_str = ", ".join(residual.missing)
             QMessageBox.warning(
                 self, "Validation",
@@ -864,15 +896,18 @@ class SentenceCardDialog(QDialog):
 
         recovered = len(missing)
         self._status_label.setText(
-            f"✅ AI residual check accepted {recovered} item(s).")
+            f"✅ AI residual check accepted {recovered} item(s); finalizing…")
         self._status_label.setStyleSheet("color: #393;")
-        self._finish_accept(
+        self._membership_pending_accept = (
             sentence,
-            items,
-            verified_surfaces=dict(residual.accepted_surfaces or {}),
+            list(items),
+            dict(residual.accepted_surfaces or {}),
         )
 
-    def _on_membership_ai_error(self, message: str) -> None:
+    def _on_membership_ai_error(self, message: str, worker=None) -> None:
+        if worker is not None and worker is not self._membership_worker:
+            return
+        self._membership_pending_accept = None
         missing = getattr(self, "_membership_missing", [])
         missing_str = ", ".join(missing) if missing else "(unknown)"
         QMessageBox.warning(
@@ -884,12 +919,24 @@ class SentenceCardDialog(QDialog):
             f"❌ AI residual check failed; still missing: {missing_str}")
         self._status_label.setStyleSheet("color: #c00;")
 
-    def _on_membership_ai_finished(self) -> None:
-        worker = getattr(self, "_membership_worker", None)
+    def _on_membership_ai_finished(self, worker=None) -> None:
+        """Clear only the matching worker, then commit a queued valid result."""
+        active_worker = getattr(self, "_membership_worker", None)
+        if active_worker is None or (worker is not None and worker is not active_worker):
+            return
+
+        pending_accept = self._membership_pending_accept
+        self._membership_pending_accept = None
         self._membership_worker = None
-        if worker is not None:
-            worker.deleteLater()
+        active_worker.deleteLater()
         self._ai_progress.setVisible(False)
+
+        if pending_accept is not None:
+            sentence, items, verified_surfaces = pending_accept
+            self._finish_accept(sentence, items, verified_surfaces)
+            return
+
+        self._set_membership_controls_enabled(True)
         self._update_generate_enabled()
         self._update_save_enabled()
 
@@ -1012,7 +1059,7 @@ class SentenceCardDialog(QDialog):
             event.ignore()
             return
         membership = getattr(self, "_membership_worker", None)
-        if membership is not None and membership.isRunning():
+        if membership is not None:
             event.ignore()
             return
         self._persist_dialog_geometry_once()
@@ -1023,7 +1070,7 @@ class SentenceCardDialog(QDialog):
         if self._ai_worker is not None and self._ai_worker.isRunning():
             return
         membership = getattr(self, "_membership_worker", None)
-        if membership is not None and membership.isRunning():
+        if membership is not None:
             return
         self._persist_dialog_geometry_once()
         super().reject()

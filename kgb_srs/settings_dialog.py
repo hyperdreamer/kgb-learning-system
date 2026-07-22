@@ -1138,7 +1138,8 @@ class SettingsDialog(QDialog):
             self._ai_models_refresh_token = None
             self.ai_models_refresh_btn.setEnabled(True)
 
-    def _staged_settings(self):
+    def _collect_staged_settings(self):
+        """Synchronize current controls into a settings dictionary for save."""
         staged = dict(self.settings)
         staged["width"] = self.window_width_input.value()
         staged["height"] = self.window_height_input.value()
@@ -1183,8 +1184,12 @@ class SettingsDialog(QDialog):
         )
         return staged
 
+    # Kept as a private compatibility seam for existing extensions/tests.
+    def _staged_settings(self):
+        return self._collect_staged_settings()
+
     def save_and_apply(self):
-        staged = self._staged_settings()
+        staged = self._collect_staged_settings()
         root = get_database_root(staged)
         try:
             ensure_database_root_structure(root)

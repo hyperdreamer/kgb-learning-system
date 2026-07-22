@@ -1451,6 +1451,105 @@ class TestDuplicateOrdered:
             conn, "A B C", [("C", "m3"), ("B", "m2"), ("A", "m1")])
         assert dup is None
 
+    def test_matches_legacy_normalized_semantics_for_legacy_rows(self, conn):
+        """The bounded query retains the old normalizing/filtering behavior."""
+        from kgb_srs.schema import find_duplicate_sentence_card
+        from kgb_srs.validation import normalize_sentence
+
+        def add_card(front, expressions):
+            card_id = conn.execute("INSERT INTO cards (front) VALUES (?)", (front,)).lastrowid
+            conn.executemany(
+                "INSERT INTO unfamiliar_items (card_id, expression) VALUES (?, ?)",
+                [(card_id, expression) for expression in expressions],
+            )
+            return card_id
+
+        first_match = add_card(
+            "Straße\nCAFE\u0301", ["  ALPHA  ", "BETA\u0301"]
+        )
+        add_card("STRASSE café", ["beta\u0301", "alpha"])
+        add_card("STRASSE café", ["", "alpha", "beta\u0301"])
+        add_card("unrelated", ["alpha", "beta\u0301"])
+        conn.commit()
+
+        def legacy_match(sentence, items):
+            norm_sentence = normalize_sentence(sentence)
+            if not norm_sentence:
+                return None
+            if items and isinstance(items[0], tuple):
+                norm_items = [normalize_sentence(item[0]) for item in items]
+            else:
+                norm_items = [normalize_sentence(item) for item in items]
+            norm_items = [item for item in norm_items if item]
+            if not norm_items:
+                return None
+
+            for card_id, front in conn.execute("SELECT id, front FROM cards"):
+                if normalize_sentence(front) != norm_sentence:
+                    continue
+                existing = [
+                    normalize_sentence(row[0])
+                    for row in conn.execute(
+                        "SELECT expression FROM unfamiliar_items "
+                        "WHERE card_id=? ORDER BY id",
+                        (card_id,),
+                    )
+                ]
+                if [item for item in existing if item] == norm_items:
+                    return card_id
+            return None
+
+        cases = [
+            ("  STRASSE   café ", [("alpha", "ignored"), ("beta\u0301", "ignored")]),
+            ("STRASSE café", ["beta\u0301", "alpha"]),
+            ("STRASSE café", ["", "alpha", "beta\u0301"]),
+            ("unrelated", ["alpha", "beta\u0301"]),
+            ("   ", ["alpha"]),
+            ("STRASSE café", ["   "]),
+        ]
+
+        for sentence, items in cases:
+            assert find_duplicate_sentence_card(conn, sentence, items) == legacy_match(
+                sentence, items
+            )
+        assert find_duplicate_sentence_card(
+            conn, "STRASSE café", ["alpha", "beta\u0301"]
+        ) == first_match
+
+    def test_fetches_matching_cards_and_children_in_one_query(self, conn):
+        """Candidate child rows are fetched once, never once per card."""
+        from kgb_srs.schema import find_duplicate_sentence_card
+
+        for index in range(5):
+            card_id = conn.execute(
+                "INSERT INTO cards (front) VALUES (?)", ("Same sentence",)
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO unfamiliar_items (card_id, expression) VALUES (?, ?)",
+                (card_id, f"other-{index}"),
+            )
+        matching_id = conn.execute(
+            "INSERT INTO cards (front) VALUES (?)", ("Same sentence",)
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO unfamiliar_items (card_id, expression) VALUES (?, ?)",
+            (matching_id, "target"),
+        )
+        conn.commit()
+
+        statements = []
+        conn.set_trace_callback(statements.append)
+        try:
+            assert find_duplicate_sentence_card(
+                conn, "  SAME\nsentence ", ["TARGET"]
+            ) == matching_id
+        finally:
+            conn.set_trace_callback(None)
+
+        assert len(statements) == 2
+        assert "kgb_normalize_sentence(front)" in statements[0]
+        assert "JOIN unfamiliar_items" in statements[1]
+
 
 # ============================================================================
 # Finding #14: DB path resolution hardening

@@ -125,6 +125,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.tts_worker = None
         self.voice_worker = None
         self._tts_temp_path = None
+        # A close requested during TTS is completed by the worker's actual
+        # finished signal.  Never block the GUI thread waiting for it.
+        self._pending_close = False
+        self._pending_close_worker = None
+        self._close_completion_requested = False
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -167,6 +172,16 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         save_settings(self.settings)
 
     def closeEvent(self, event):
+        worker = self.tts_worker
+        if worker is not None and worker.isRunning():
+            # Keep the worker alive: it may still create a temp file which its
+            # callback must unlink.  Presentation callbacks consult this flag
+            # and therefore cannot play audio or show an error while closing.
+            self._pending_close = True
+            self._pending_close_worker = worker
+            event.ignore()
+            return
+
         self.settings["width"] = self.width()
         self.settings["height"] = self.height()
         if self.current_db_path:
@@ -177,20 +192,6 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             self._save_settings()
         except OSError as exc:
             print(f"Could not save settings: {exc}", file=sys.stderr)
-
-        worker = self.tts_worker
-        if worker is not None and worker.isRunning():
-            try:
-                worker.audio_ready.disconnect()
-            except TypeError:
-                pass
-            try:
-                worker.error.disconnect()
-            except TypeError:
-                pass
-            worker.wait(2000)
-            if self.tts_worker is worker:
-                self.tts_worker = None
 
         self._cleanup_tts_temp()
         event.accept()
@@ -1034,7 +1035,31 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         self._tts_temp_path = unlink_tts_temp(self._tts_temp_path)
 
+    def _tts_is_closing(self) -> bool:
+        """Whether TTS callbacks must not update review presentation state."""
+        return bool(
+            getattr(self, "_pending_close", False)
+            or getattr(self, "_close_completion_requested", False)
+        )
+
+    def _on_tts_worker_finished(self, worker) -> None:
+        """Release a completed TTS worker and resume a deferred window close."""
+        if self.tts_worker is worker:
+            self.tts_worker = None
+
+        if getattr(self, "_pending_close_worker", None) is not worker:
+            return
+
+        self._pending_close_worker = None
+        self._pending_close = False
+        if not getattr(self, "_close_completion_requested", False):
+            self._close_completion_requested = True
+            # This schedules the normal close path; no GUI-thread wait.
+            self.close()
+
     def speak_text(self, text, btn):
+        if BarskyApp._tts_is_closing(self):
+            return
         if self.tts_worker is not None and self.tts_worker.isRunning():
             # Avoid stacking workers; ignore while one is already generating.
             return
@@ -1053,6 +1078,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         def on_audio_ready(file_path):
             if (
+                BarskyApp._tts_is_closing(self)
+                or
                 self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
                 or getattr(self, "card_ui", None) is not request_card_ui
@@ -1069,6 +1096,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         def on_error(err):
             if (
+                BarskyApp._tts_is_closing(self)
+                or
                 self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
                 or getattr(self, "card_ui", None) is not request_card_ui
@@ -1079,8 +1108,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             btn.setText("🔊 Listen")
 
         def on_thread_finished():
-            if self.tts_worker is worker:
-                self.tts_worker = None
+            BarskyApp._on_tts_worker_finished(self, worker)
 
         worker.audio_ready.connect(on_audio_ready)
         worker.error.connect(on_error)

@@ -3,8 +3,6 @@
 These are QGraphicsItem subclasses for the canvas-based review UI.
 """
 
-import os
-
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -16,21 +14,92 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QColor, QBrush, QPen, QPainterPath, QIcon
+from PyQt6.QtGui import (
+    QColor, QBrush, QPen, QPainterPath, QIcon, QDesktopServices,
+)
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     try:
-        from PyQt6.QtWebEngineCore import QWebEngineSettings
+        from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     except ImportError:
+        QWebEnginePage = None
         QWebEngineSettings = None
     HAS_WEBENGINE = True
 except ImportError:
     QWebEngineView = None
+    QWebEnginePage = None
     QWebEngineSettings = None
     HAS_WEBENGINE = False
 
 from .markdown_utils import build_review_html
+
+
+class ReviewCardNavigationPolicy:
+    """Strict navigation policy for untrusted review-card HTML.
+
+    The embedded review view is display-only.  Explicit HTTP(S) links may be
+    handed to the operating system, while every navigation stays out of the
+    card (including local-file, data, JavaScript, and custom schemes).
+    """
+
+    BLOCKED_SCHEMES = frozenset({"file", "data", "javascript", "qrc", "mailto", "ftp"})
+    EXTERNAL_SCHEMES = frozenset({"http", "https"})
+
+    @staticmethod
+    def _url_text(url: QUrl | str) -> str:
+        return url.toString() if isinstance(url, QUrl) else str(url or "")
+
+    @classmethod
+    def should_open_externally(cls, url: QUrl | str) -> bool:
+        """Return whether *url* is an HTTP(S) link suitable for the desktop."""
+        parsed = QUrl(cls._url_text(url))
+        return parsed.isValid() and parsed.scheme().lower() in cls.EXTERNAL_SCHEMES and bool(parsed.host())
+
+    @classmethod
+    def allows_embedded_navigation(cls, url: QUrl | str) -> bool:
+        """Review cards are never allowed to navigate their embedded page."""
+        return False
+
+
+def route_review_card_link(url: QUrl | str, opener=QDesktopServices.openUrl) -> bool:
+    """Open a permitted card link outside the application, returning success."""
+    if not ReviewCardNavigationPolicy.should_open_externally(url):
+        return False
+    qurl = url if isinstance(url, QUrl) else QUrl(str(url))
+    return bool(opener(qurl))
+
+
+if QWebEnginePage is not None:
+    class ReviewCardWebPage(QWebEnginePage):
+        """Display-only page which delegates user links to the desktop."""
+
+        def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+            link_click = (
+                navigation_type
+                == QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+            )
+            if link_click:
+                route_review_card_link(url)
+            return ReviewCardNavigationPolicy.allows_embedded_navigation(url)
+else:
+    ReviewCardWebPage = None
+
+
+def configure_review_web_view(web_view) -> None:
+    """Apply the review-card's no-script, no-local-content web policy."""
+    if QWebEngineSettings is None:
+        return
+    settings = web_view.settings()
+    settings.setAttribute(
+        QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False,
+    )
+    settings.setAttribute(
+        QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, False,
+    )
+    settings.setAttribute(
+        QWebEngineSettings.WebAttribute.JavascriptEnabled, False,
+    )
 
 
 # ── Reusable button stylesheet helper ────────────────────────────────────────
@@ -149,20 +218,9 @@ class FlashCardItem(QGraphicsRectItem):
         if HAS_WEBENGINE:
             self.text_widget = QWebEngineView()
             self.text_widget.setStyleSheet("background-color: transparent;")
-
-            try:
-                if QWebEngineSettings is not None:
-                    web_settings = self.text_widget.settings()
-                    web_settings.setAttribute(
-                        QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
-                        True,
-                    )
-                    web_settings.setAttribute(
-                        QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
-                        True,
-                    )
-            except Exception:
-                pass
+            if ReviewCardWebPage is not None:
+                self.text_widget.setPage(ReviewCardWebPage(self.text_widget))
+            configure_review_web_view(self.text_widget)
 
             try:
                 self.text_widget.page().setBackgroundColor(QColor("transparent"))
@@ -259,8 +317,9 @@ class FlashCardItem(QGraphicsRectItem):
         )
 
         if HAS_WEBENGINE:
-            base_url = QUrl.fromLocalFile(os.getcwd() + os.sep)
-            self.text_widget.setHtml(html_template, base_url)
+            # A stable non-file origin ensures user Markdown is never based on
+            # the application's working directory.
+            self.text_widget.setHtml(html_template, QUrl("about:blank"))
         else:
             self.text_widget.setHtml(html_template)
 

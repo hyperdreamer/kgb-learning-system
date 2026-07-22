@@ -338,6 +338,30 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     assert dialog.result() == dialog.DialogCode.Accepted
 
 
+def test_collect_staged_settings_synchronizes_active_ai_profile(monkeypatch, settings):
+    """Collecting settings captures unsaved AI controls in the staged profile."""
+    dialog, _ = _dialog(monkeypatch, settings)
+    dialog.ai_base_url_input.setText(" https://example.test/v1 ")
+    dialog.ai_model_input.setEditText(" staged-model ")
+    dialog.ai_api_key_input.setText(" staged-key ")
+    dialog.ai_timeout_input.setValue(12)
+
+    staged = dialog._collect_staged_settings()
+    active = staged["ai_active_provider"]
+
+    assert staged["ai_providers"][active] == {
+        "base_url": "https://example.test/v1",
+        "model": "staged-model",
+        "api_key": "staged-key",
+        "timeout": 12,
+    }
+    assert dialog._ai_stage["ai_providers"][active] == staged["ai_providers"][active]
+    assert settings["ai_providers"][active]["api_key"] == "secret"
+    # Retain the prior private seam for existing extensions that used it.
+    assert dialog._staged_settings() == staged
+    dialog.reject()
+
+
 def test_save_failure_keeps_live_settings_and_dialog_open(monkeypatch, settings):
     import kgb_srs.settings_dialog as module
 
@@ -1306,7 +1330,7 @@ def test_selecting_list_item_stages_voice_short_name(monkeypatch, settings):
     _app().processEvents()
 
     assert dialog.current_voice == target
-    assert dialog._staged_settings()["tts_voice"] == target
+    assert dialog._collect_staged_settings()["tts_voice"] == target
     assert settings["tts_voice"] == "en-US-AvaMultilingualNeural"  # not saved yet
 
     dialog.save_button.click()
@@ -1413,7 +1437,7 @@ def test_language_filter_is_remembered_on_save_and_restore(monkeypatch, settings
     dialog.tts_language_filter.setCurrentIndex(en_index)
     _app().processEvents()
     assert dialog.current_language == "en-US"
-    assert dialog._staged_settings()["tts_language"] == "en-US"
+    assert dialog._collect_staged_settings()["tts_language"] == "en-US"
     assert settings["tts_language"] == "zh-CN"  # not saved yet
 
     dialog.save_button.click()
@@ -1430,8 +1454,8 @@ def test_empty_voice_list_still_allows_save_of_current_voice(monkeypatch, settin
     _app().processEvents()
 
     assert dialog.current_voice == settings["tts_voice"]
-    assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
-    assert dialog._staged_settings()["tts_language"] == ""
+    assert dialog._collect_staged_settings()["tts_voice"] == settings["tts_voice"]
+    assert dialog._collect_staged_settings()["tts_language"] == ""
 
     dialog.save_button.click()
     assert saved[0]["tts_voice"] == settings["tts_voice"]
@@ -1447,7 +1471,7 @@ def test_voice_error_still_allows_save_of_current_voice(monkeypatch, settings):
     _app().processEvents()
 
     assert dialog.current_voice == settings["tts_voice"]
-    assert dialog._staged_settings()["tts_voice"] == settings["tts_voice"]
+    assert dialog._collect_staged_settings()["tts_voice"] == settings["tts_voice"]
     dialog.save_button.click()
     assert saved[0]["tts_voice"] == settings["tts_voice"]
 

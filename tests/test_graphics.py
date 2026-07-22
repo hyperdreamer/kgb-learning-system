@@ -139,3 +139,82 @@ def test_math_placeholder_collision_preserves_literal_and_math():
     assert "BARSKYMATHPLACEHOLDER0TOKEN" in html
     assert "$x$" in html
     assert markdown_to_plain_text(source) == "BARSKYMATHPLACEHOLDER0TOKEN plus x"
+
+
+def test_review_html_is_offline_and_sanitizes_resource_markup():
+    from kgb_srs.markdown_utils import (
+        build_review_html,
+        sanitize_review_html_fragment,
+    )
+
+    fragment = sanitize_review_html_fragment(
+        '<p><a href="https://example.test/path">safe</a>'
+        '<a href="javascript:alert(1)">bad</a>'
+        '<img src="file:///etc/passwd" onerror="alert(1)">'
+        '<script src="https://cdn.example.test/x.js"></script></p>'
+    )
+    document = build_review_html("Math: $x^2$", "Arial", 18, include_mathjax=True)
+
+    assert 'href="https://example.test/path"' in fragment
+    assert "javascript:" not in fragment
+    assert "file:///etc/passwd" not in fragment
+    assert "onerror" not in fragment
+    assert "<script" not in fragment.lower()
+    assert "cdn.jsdelivr.net" not in document
+    assert "<script" not in document.lower()
+    assert "$x^2$" in document  # safe, visible offline math fallback
+
+
+@pytest.mark.parametrize(
+    "url, allowed",
+    [
+        ("https://example.test/a", True),
+        ("http://example.test/a", True),
+        ("file:///etc/passwd", False),
+        ("data:text/html,hello", False),
+        ("javascript:alert(1)", False),
+        ("qrc:/internal", False),
+        ("mailto:test@example.test", False),
+        ("ftp://example.test/a", False),
+        ("/relative/path", False),
+    ],
+)
+def test_review_card_navigation_policy_routes_only_http_links(url, allowed):
+    from kgb_srs.graphics import ReviewCardNavigationPolicy, route_review_card_link
+
+    opened = []
+    result = route_review_card_link(url, lambda qurl: opened.append(qurl.toString()) or True)
+
+    assert ReviewCardNavigationPolicy.should_open_externally(url) is allowed
+    assert ReviewCardNavigationPolicy.allows_embedded_navigation(url) is False
+    assert result is allowed
+    assert opened == ([url] if allowed else [])
+
+
+def test_review_web_view_disables_local_content_access():
+    from kgb_srs import graphics
+
+    if graphics.QWebEngineSettings is None:
+        pytest.skip("PyQt WebEngine is not installed")
+
+    class Settings:
+        def __init__(self):
+            self.attributes = {}
+
+        def setAttribute(self, attribute, value):
+            self.attributes[attribute] = value
+
+    class View:
+        def __init__(self):
+            self.web_settings = Settings()
+
+        def settings(self):
+            return self.web_settings
+
+    view = View()
+    graphics.configure_review_web_view(view)
+    attrs = graphics.QWebEngineSettings.WebAttribute
+
+    assert view.web_settings.attributes[attrs.LocalContentCanAccessRemoteUrls] is False
+    assert view.web_settings.attributes[attrs.LocalContentCanAccessFileUrls] is False
+    assert view.web_settings.attributes[attrs.JavascriptEnabled] is False

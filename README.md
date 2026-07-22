@@ -2,7 +2,7 @@
 
 **Version 2.1.0**
 
-A spaced-repetition flashcard application with **Markdown**, **MathJax** (LaTeX math), **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
+A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
 Language learning is **sentence-first**: sentence databases feed a shared sense catalog, which automatically projects a read-only word/phrase dictionary. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
@@ -72,7 +72,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 - **No manual editing**: Add Entry, Delete Entry, Edit, and AI Generate Meanings are **disabled**. Content is produced only by automatic projection from a sentence database.
 - **Derived projection**: One card per expression; back lists each sense with its meaning and an indented example sentence where the surface form is **bold** (e.g. lemma `insist on` → **insists on**).
 - **Linked auto-sync**: The sentence DB stores `linked_word_phrase_db`. App startup, DB open, and every sentence Save ensure the link exists and re-derive the W/P DB.
-- **Review**: Standard front/back flip card with Markdown and MathJax rendering (SRS boxes still work).
+- **Review**: Standard front/back flip card with Markdown and visible offline LaTeX fallback (SRS boxes still work).
 - **Search**: Searches front and back (meanings/examples) fields. Browse is view-only for W/P (Edit/Delete selected disabled); use **Review Selected** (or double-click) to open a card for review.
 
 ### Knowledge-based (`knowledge`)
@@ -274,7 +274,7 @@ kgb_srs/                    # Python package (__version__ = 2.1.0)
 ├── settings_dialog.py      # Categorized settings UI
 ├── graphics.py             # Flash card & drop zones
 ├── main_window.py          # Main application window
-├── markdown_utils.py       # Markdown + MathJax rendering
+├── markdown_utils.py       # Markdown + safe offline LaTeX fallback
 └── tts.py                  # Text-to-speech worker
 
 main.py                     # Entry point
@@ -309,7 +309,7 @@ python -m pytest tests/test_regression.py -v
 - Python 3.10+
 - PyQt6
 - edge-tts
-- PyQt6-WebEngine *(optional, for MathJax rendering)*
+- PyQt6-WebEngine *(optional, for the richer display-only review view)*
 
 ```
 pip install PyQt6 edge-tts PyQt6-WebEngine
