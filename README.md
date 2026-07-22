@@ -265,7 +265,11 @@ kgb_srs/                    # Python package (__version__ = 2.1.0)
 ├── search.py               # Subtype-aware AND/OR search
 ├── ai_provider.py          # OpenAI-compatible HTTP client
 ├── ai_parser.py            # AI JSON response parsing & validation
-├── forms.py                # SentenceCardDialog, WordPhraseCardDialog, DBCreationDialog
+├── forms.py                # Backward-compatible dialog import facade
+├── form_helpers.py         # Shared card-dialog styling and AI worker
+├── sentence_card_dialog.py # Sentence card editor dialog
+├── word_phrase_dialog.py   # Legacy W/P editor compatibility dialog
+├── database_creation_dialog.py # Database creation dialog
 ├── dialogs.py              # Generic DynamicInputDialog
 ├── settings_dialog.py      # Categorized settings UI
 ├── graphics.py             # Flash card & drop zones

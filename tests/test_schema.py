@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import pytest
 
+from kgb_srs import schema
 from kgb_srs.schema import (
     init_db,
     ensure_unfamiliar_items_table,
@@ -319,6 +320,43 @@ class TestUpdateSentenceCard:
                 migrated_conn, card_id,
                 front="Test sentence", back="M", items=[("Test", "")]
             )
+
+    def test_insert_and_update_share_item_normalization_and_deduplication(
+        self, migrated_conn, monkeypatch
+    ):
+        original_helper = schema._normalize_and_deduplicate_sentence_items
+        calls = []
+
+        def spy(items, *, verified_surfaces=None):
+            calls.append((items, verified_surfaces))
+            return original_helper(items, verified_surfaces=verified_surfaces)
+
+        monkeypatch.setattr(schema, "_normalize_and_deduplicate_sentence_items", spy)
+        items = [
+            ("lie", "recline", None, ""),
+            ("LIE", "ignored duplicate", None, "discarded"),
+            ("down", "below", None, " explicit "),
+        ]
+        surfaces = {"lie": "lay"}
+
+        card_id = insert_sentence_card(
+            migrated_conn, "She lay down", items, verified_surfaces=surfaces
+        )
+        update_sentence_card(
+            migrated_conn,
+            card_id,
+            front="She lay down",
+            back="updated",
+            items=items,
+            verified_surfaces=surfaces,
+        )
+
+        card = get_sentence_card(migrated_conn, card_id)
+        assert [(expr, meaning, surface) for expr, meaning, _sense, surface in card[3]] == [
+            ("lie", "recline", "lay"),
+            ("down", "below", "explicit"),
+        ]
+        assert calls == [(items, surfaces), (items, surfaces)]
 
 
 # ---------------------------------------------------------------------------

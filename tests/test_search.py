@@ -1,8 +1,11 @@
 """Tests for kgb_srs.search — database search across card types."""
 
+import gc
 import sqlite3
+import weakref
 import pytest
 
+from kgb_srs import search
 from kgb_srs.search import (
     search_sentence_cards,
     search_word_phrase_cards,
@@ -12,6 +15,46 @@ from kgb_srs.schema import (
     init_db,
     ensure_unfamiliar_items_table,
 )
+
+
+# ---------------------------------------------------------------------------
+# Search-function registration
+# ---------------------------------------------------------------------------
+
+class TestSearchFunctionRegistration:
+    def test_weakrefable_connection_is_registered_once_and_not_retained(self):
+        class TrackingConnection(sqlite3.Connection):
+            registrations = 0
+
+            def create_function(self, *args, **kwargs):
+                type(self).registrations += 1
+                return super().create_function(*args, **kwargs)
+
+        search._REGISTERED_CONNS.clear()
+        conn = sqlite3.connect(":memory:", factory=TrackingConnection)
+        search._register_search_functions(conn)
+        search._register_search_functions(conn)
+
+        assert TrackingConnection.registrations == 1
+        ref = weakref.ref(conn)
+        conn.close()
+        del conn
+        gc.collect()
+        assert ref() is None
+        assert not search._REGISTERED_CONNS
+
+    def test_standard_connection_is_not_retained_and_search_function_works(self):
+        search._REGISTERED_CONNS.clear()
+        conn = sqlite3.connect(":memory:")
+        try:
+            search._register_search_functions(conn)
+            search._register_search_functions(conn)
+            assert not search._REGISTERED_CONNS
+            assert conn.execute(
+                "SELECT kgb_contains('Caf\u00e9', 'cafe')"
+            ).fetchone() == (1,)
+        finally:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------

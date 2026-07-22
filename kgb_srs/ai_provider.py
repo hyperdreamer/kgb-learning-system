@@ -647,8 +647,19 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
 # QThread worker (lazy PyQt6 import)
 # ---------------------------------------------------------------------------
 
+_AI_WORKER_CLASS = None
+
+
 def _get_ai_worker_class():
-    """Lazy import of AIWorker to avoid requiring PyQt6 at module level."""
+    """Return the cached lazy PyQt AI worker class.
+
+    Importing this module remains usable without PyQt6; the worker class is
+    constructed only on its first UI use and reused thereafter.
+    """
+    global _AI_WORKER_CLASS
+    if _AI_WORKER_CLASS is not None:
+        return _AI_WORKER_CLASS
+
     from PyQt6.QtCore import QThread, pyqtSignal
 
     class AIWorker(QThread):
@@ -683,7 +694,8 @@ def _get_ai_worker_class():
             except Exception as e:
                 self.error.emit(f"Unexpected error: {e}")
 
-    return AIWorker
+    _AI_WORKER_CLASS = AIWorker
+    return _AI_WORKER_CLASS
 
 
 

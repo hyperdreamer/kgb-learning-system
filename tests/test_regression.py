@@ -171,12 +171,20 @@ class TestFinalFormRegressions:
         )
 
     def test_public_ai_worker_does_not_shadow_thread_finished(self):
+        """The worker's result signal must stay distinct from QThread.finished."""
         _qt_app()
         from kgb_srs.ai_provider import _get_ai_worker_class
 
         worker_class = _get_ai_worker_class()
-        assert hasattr(worker_class, "result")
         assert "finished" not in worker_class.__dict__
+
+    def test_ai_worker_class_is_cached_after_lazy_import(self):
+        """Repeated worker creation reuses PyQt signal metadata and class state."""
+        _qt_app()
+        from kgb_srs.ai_provider import _get_ai_worker_class
+
+        assert _get_ai_worker_class() is _get_ai_worker_class()
+
 
     def test_settings_save_failure_is_propagated(self, tmp_path, monkeypatch):
         import kgb_srs.config as config

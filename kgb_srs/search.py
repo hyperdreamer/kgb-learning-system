@@ -17,6 +17,7 @@ and ORs the groups together.
 """
 
 import unicodedata
+import weakref
 from typing import Optional
 
 
@@ -32,7 +33,7 @@ def _normalize_search_text(s: str) -> str:
     ).casefold()
 
 
-_REGISTERED_CONNS: set = set()
+_REGISTERED_CONNS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _register_search_functions(conn):
@@ -43,11 +44,18 @@ def _register_search_functions(conn):
     are all treated literally — no LIKE wildcards and no accent
     sensitivity.
 
-    Registration is idempotent; only performed once per connection.
+    Registration is idempotent for connections that support weak references.
+    Standard sqlite3.Connection instances cannot be weak-referenced, so they
+    are safely re-registered on each search instead of being retained.
     """
-    if conn in _REGISTERED_CONNS:
-        return
-    _REGISTERED_CONNS.add(conn)
+    try:
+        if conn in _REGISTERED_CONNS:
+            return
+    except TypeError:
+        # sqlite3.Connection cannot be weak-referenced. Re-registering a
+        # SQLite scalar function replaces the prior registration and does not
+        # retain the connection after callers close or discard it.
+        pass
 
     def _contains(haystack, needle):
         if haystack is None or needle is None:
@@ -55,6 +63,11 @@ def _register_search_functions(conn):
         return 1 if _normalize_search_text(needle) in _normalize_search_text(haystack) else 0
 
     conn.create_function("kgb_contains", 2, _contains)
+
+    try:
+        _REGISTERED_CONNS[conn] = None
+    except TypeError:
+        pass
 
 
 

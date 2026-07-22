@@ -18,25 +18,13 @@ Toolbar font styling uses guarded widget access because controls are constructed
 
 ## Deferred Cleanup and Optimization
 
-### Remove legacy `WordPhraseCardDialog`
-
-The application is projection-only for W/P databases, but the legacy dialog and direct tests remain. Removal is maintenance work with broad test/API churn and no user-facing defect.
-
 ### Optimize sentence duplicate detection
 
 `find_duplicate_sentence_card()` retains the current normalized, order-sensitive behavior but scans cards and child rows in Python. Optimize only when measured data shows a need; preserve duplicate-edit UX with regression coverage.
 
-### Rework lazy AI worker classes
-
-AI worker factories recreate QThread subclasses per request. This has no correctness impact. Caching the existing lazy factories is possible but is cleanup, not a functional fix.
-
 ### Rename `_staged_settings()`
 
 The method mutates the AI stage before returning settings. Its name is imperfect but the behavior is tested and localized; rename only as part of focused API cleanup.
-
-### Connection registration retention
-
-`search.py` retains connection objects after function registration. The natural weak-reference approach is incompatible with `sqlite3.Connection`, and `id(conn)` reuse is unsafe. The effect is negligible for the application’s long-lived UI connections; defer a fix until a connection lifecycle API exists.
 
 ## Deferred Lifecycle and Data Policy
 

@@ -322,6 +322,47 @@ def _preferred_sense_id(value) -> int | None:
         return None
 
 
+def _normalize_and_deduplicate_sentence_items(
+    items: list,
+    *,
+    verified_surfaces: dict[str, str] | None = None,
+) -> list[tuple[str, str, int | None, str]]:
+    """Normalize sentence items while preserving first-occurrence order."""
+    normalized: list[tuple[str, str, int | None, str]] = []
+    for item in items:
+        if isinstance(item, tuple):
+            expr = str(item[0])
+            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
+            sense_id = None
+            if len(item) > 2 and item[2] is not None:
+                sense_id = _preferred_sense_id(item[2])
+            surface = ""
+            if len(item) > 3 and item[3]:
+                surface = str(item[3]).strip()
+            normalized.append((expr, meaning, sense_id, surface))
+        else:
+            normalized.append((str(item), "", None, ""))
+
+    seen: set[str] = set()
+    deduped: list[tuple[str, str, int | None, str]] = []
+    for expr, meaning, sense_id, surface in normalized:
+        key = normalize_sentence(expr)
+        if key and key not in seen:
+            seen.add(key)
+            if not surface and verified_surfaces:
+                surface = (
+                    verified_surfaces.get(expr)
+                    or verified_surfaces.get(key)
+                    or ""
+                )
+                surface = str(surface).strip()
+            deduped.append((expr, meaning, sense_id, surface))
+
+    if not deduped:
+        raise ValueError("At least one non-empty unfamiliar item is required.")
+    return deduped
+
+
 # ---------------------------------------------------------------------------
 # Duplicate detection
 # ---------------------------------------------------------------------------
@@ -415,41 +456,9 @@ def insert_sentence_card(
 
     from .senses import create_or_get_sense
 
-    # Normalize items to (expression, meaning, sense_id, surface_form)
-    normalized: list[tuple[str, str, int | None, str]] = []
-    for item in unfamiliar_items:
-        if isinstance(item, tuple):
-            expr = str(item[0])
-            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
-            sense_id = None
-            if len(item) > 2 and item[2] is not None:
-                sense_id = _preferred_sense_id(item[2])
-            surface = ""
-            if len(item) > 3 and item[3]:
-                surface = str(item[3]).strip()
-            normalized.append((expr, meaning, sense_id, surface))
-        else:
-            normalized.append((str(item), "", None, ""))
-
-    # Deduplicate by expression
-    seen: set[str] = set()
-    deduped: list[tuple[str, str, int | None, str]] = []
-    for expr, meaning, sense_id, surface in normalized:
-        key = normalize_sentence(expr)
-        if key and key not in seen:
-            seen.add(key)
-            # Prefer verified_surfaces map when the item did not carry surface.
-            if not surface and verified_surfaces:
-                surface = (
-                    verified_surfaces.get(expr)
-                    or verified_surfaces.get(key)
-                    or ""
-                )
-                surface = str(surface).strip()
-            deduped.append((expr, meaning, sense_id, surface))
-
-    if not deduped:
-        raise ValueError("At least one non-empty unfamiliar item is required.")
+    deduped = _normalize_and_deduplicate_sentence_items(
+        unfamiliar_items, verified_surfaces=verified_surfaces
+    )
 
     today = datetime.date.today().isoformat()
 
@@ -558,40 +567,9 @@ def update_sentence_card(
 
     from .senses import create_or_get_sense, get_sense
 
-    # Normalize items to (expression, meaning, sense_id, surface_form)
-    normalized: list[tuple[str, str, int | None, str]] = []
-    for item in items:
-        if isinstance(item, tuple):
-            expr = str(item[0])
-            meaning = str(item[1]) if len(item) > 1 and item[1] else ""
-            sense_id = None
-            if len(item) > 2 and item[2] is not None:
-                sense_id = _preferred_sense_id(item[2])
-            surface = ""
-            if len(item) > 3 and item[3]:
-                surface = str(item[3]).strip()
-            normalized.append((expr, meaning, sense_id, surface))
-        else:
-            normalized.append((str(item), "", None, ""))
-
-    # Deduplicate by expression
-    seen: set[str] = set()
-    deduped: list[tuple[str, str, int | None, str]] = []
-    for expr, meaning, sense_id, surface in normalized:
-        key = normalize_sentence(expr)
-        if key and key not in seen:
-            seen.add(key)
-            if not surface and verified_surfaces:
-                surface = (
-                    verified_surfaces.get(expr)
-                    or verified_surfaces.get(key)
-                    or ""
-                )
-                surface = str(surface).strip()
-            deduped.append((expr, meaning, sense_id, surface))
-
-    if not deduped:
-        raise ValueError("At least one non-empty unfamiliar item is required.")
+    deduped = _normalize_and_deduplicate_sentence_items(
+        items, verified_surfaces=verified_surfaces
+    )
 
     today = datetime.date.today().isoformat()
 
