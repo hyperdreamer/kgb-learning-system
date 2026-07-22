@@ -3,6 +3,7 @@
 import datetime
 import random
 import sqlite3
+from typing import Literal, NamedTuple
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
@@ -16,6 +17,13 @@ from .validation import (
     highlight_unfamiliar_in_sentence as _highlight_sentence_for_items,
     sort_items_by_sentence_order as _sort_items_by_sentence_order,
 )
+
+
+class ReviewHistoryEntry(NamedTuple):
+    """A card left behind during review and the transition that left it."""
+
+    card: tuple
+    transition: Literal["skipped", "graded"]
 
 
 class ReviewControllerMixin:
@@ -110,10 +118,13 @@ class ReviewControllerMixin:
         if not self.current_card or self.review_mode != "daily":
             return
 
-        # Session path: Next leaves the current card behind.
-        self._daily_review_history.append(self.current_card)
-        # Return ungraded card to end of queue.
-        self.cards_due.append(self.current_card)
+        transition = self._current_card_transition or "skipped"
+        self._daily_review_history.append(
+            ReviewHistoryEntry(self.current_card, transition)
+        )
+        # A graded card restored by Previous has already left the queue.
+        if transition != "graded":
+            self.cards_due.append(self.current_card)
         self._update_button_visibility()
         self.show_next_card()
 
@@ -151,10 +162,10 @@ class ReviewControllerMixin:
             return
 
         # Skip deleted/missing history entries instead of showing a ghost card.
-        prev_card = None
+        previous = None
         while self._daily_review_history:
             candidate = self._daily_review_history.pop()
-            prev_id = candidate[0]
+            prev_id = candidate.card[0]
             if self.conn is not None:
                 c = self.conn.cursor()
                 c.execute(
@@ -164,21 +175,22 @@ class ReviewControllerMixin:
                 fresh = c.fetchone()
                 if fresh is None:
                     continue
-                prev_card = fresh
+                previous = ReviewHistoryEntry(fresh, candidate.transition)
             else:
-                prev_card = candidate
+                previous = candidate
             break
 
-        if prev_card is None:
+        if previous is None:
             self._update_button_visibility()
             return
 
-        # Push current card to front of queue only after success.
-        if self.current_card is not None:
+        # A restored grade is no longer an ungraded queue member.
+        if self.current_card is not None and self._current_card_transition != "graded":
             self.cards_due.insert(0, self.current_card)
 
         # Next-skip puts the prior card at the end of the queue; remove it
         # so we do not show a duplicate after restoring it as current.
+        prev_card = previous.card
         prev_id = prev_card[0]
         self.cards_due = [c for c in self.cards_due if c[0] != prev_id]
 
@@ -187,6 +199,7 @@ class ReviewControllerMixin:
             self.card_ui = None
 
         self.current_card = prev_card
+        self._current_card_transition = previous.transition
         self.is_current_flipped = False
         self.draw_card_ui()
         self._update_button_visibility()
@@ -214,6 +227,7 @@ class ReviewControllerMixin:
 
         self._daily_review_history = []
         self.current_card = None
+        self._current_card_transition = None
 
         self.show_next_card()
 
@@ -234,12 +248,14 @@ class ReviewControllerMixin:
         self._paused_cards_due = list(self.cards_due)
         self._paused_daily_queue = list(self._daily_queue_snapshot)
         self._paused_review_history = list(self._daily_review_history)
+        self._paused_current_card_transition = self._current_card_transition
 
         if self.card_ui:
             self.scene.removeItem(self.card_ui)
             self.card_ui = None
 
         self.current_card = None
+        self._current_card_transition = None
         self.review_mode = ""
         self._daily_review_history = []
         self._daily_queue_snapshot = []
@@ -247,13 +263,16 @@ class ReviewControllerMixin:
         self._update_button_visibility()
 
     def _resume_paused_card(self, cursor):
-        """If a paused card exists, re-fetch it from DB and insert at
-        front of cards_due, de-duplicating.  Clears paused state.
-        If the paused card was deleted from DB, clears state silently.
+        """Restore a paused card with its review-transition provenance.
+
+        If the paused card was deleted from DB, clear state and continue with
+        the queue silently.
         """
         paused = self._paused_review_card
+        paused_transition = self._paused_current_card_transition
         self._paused_review_card = None
         self._paused_review_mode = ""
+        self._paused_current_card_transition = None
 
         if paused is None:
             return
@@ -266,11 +285,10 @@ class ReviewControllerMixin:
         if fresh is None:
             return  # card deleted — skip silently
 
-        # De-dup: remove from cards_due if present
         paused_id = fresh[0]
         self.cards_due = [c for c in self.cards_due if c[0] != paused_id]
-        # Insert at front
-        self.cards_due.insert(0, fresh)
+        self.current_card = fresh
+        self._current_card_transition = paused_transition
 
     def delete_current_card(self):
         if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
@@ -334,6 +352,7 @@ class ReviewControllerMixin:
                 self.scene.removeItem(self.card_ui)
                 self.card_ui = None
             self.current_card = None
+        self._current_card_transition = None
 
         c = self.conn.cursor()
 
@@ -366,8 +385,14 @@ class ReviewControllerMixin:
             # First start: snapshot the complete queue for Restart.
             self._daily_queue_snapshot = list(self.cards_due)
 
-        # Resume paused card (inserts at front, de-duplicates).
+        # Resume paused card directly so a restored grade cannot become an
+        # ungraded queue card.
         self._resume_paused_card(c)
+
+        if self.current_card is not None:
+            self.is_current_flipped = False
+            self.draw_card_ui()
+            return
 
         if not self.cards_due:
             # Finished-but-paused session: restore active shell so Previous
@@ -391,6 +416,7 @@ class ReviewControllerMixin:
             self.review_mode = ""
             self._daily_queue_snapshot = []
             self._daily_review_history = []
+            self._current_card_transition = None
             self._update_button_visibility()
             return
 
@@ -417,6 +443,7 @@ class ReviewControllerMixin:
 
             if fresh_card:
                 self.current_card = fresh_card
+                self._current_card_transition = None
                 self.is_current_flipped = False
                 self.draw_card_ui()
                 return
@@ -429,11 +456,13 @@ class ReviewControllerMixin:
         if self._daily_review_history:
             QMessageBox.information(self, "Done", "You have finished your reviews.")
             self.current_card = None
+            self._current_card_transition = None
             self._update_button_visibility()
             return
 
         QMessageBox.information(self, "Done", "You have finished your reviews.")
         self.current_card = None
+        self._current_card_transition = None
         self.review_mode = ""
         self._daily_review_history = []
         self._daily_queue_snapshot = []
@@ -627,7 +656,9 @@ class ReviewControllerMixin:
 
         # Session path: grade also leaves the current card behind (like Next).
         if self.review_mode == "daily":
-            self._daily_review_history.append((card_id, front, back, new_box))
+            self._daily_review_history.append(
+                ReviewHistoryEntry((card_id, front, back, new_box), "graded")
+            )
             # Reflect Previous availability immediately (before next card draw).
             self._update_button_visibility()
 

@@ -4,6 +4,8 @@ import datetime
 
 import pytest
 
+from kgb_srs.review_controller import ReviewHistoryEntry
+
 from .qt_helpers import qt_app as _qt_app
 
 
@@ -55,16 +57,21 @@ class TestReviewPresentationRegressions:
         window = SimpleNamespace(
             current_card=(1, "current", "back", 1),
             cards_due=[(2, "queued", "back", 2), (3, "other", "back", 1)],
-            _daily_review_history=[(2, "queued", "back", 2), (4, "graded", "back", 3)],
+            _daily_review_history=[
+                ReviewHistoryEntry((2, "queued", "back", 2), "skipped"),
+                ReviewHistoryEntry((4, "graded", "back", 3), "graded"),
+            ],
             _daily_queue_snapshot=[(2, "queued", "back", 2), (3, "other", "back", 1)],
             _paused_cards_due=[(2, "queued", "back", 2)],
             _paused_daily_queue=[(2, "queued", "back", 2), (5, "paused", "back", 1)],
-            _paused_review_history=[(2, "queued", "back", 2)],
+            _paused_review_history=[
+                ReviewHistoryEntry((2, "queued", "back", 2), "skipped")
+            ],
         )
         BarskyApp._remove_card_from_review_state(window, 2)
         assert [card[0] for card in window.cards_due] == [3]
         assert window.current_card[0] == 1
-        assert [card[0] for card in window._daily_review_history] == [4]
+        assert [entry.card[0] for entry in window._daily_review_history] == [4]
         assert [card[0] for card in window._daily_queue_snapshot] == [3]
         assert window._paused_cards_due == []
         assert [card[0] for card in window._paused_daily_queue] == [5]
@@ -576,7 +583,7 @@ class TestReviewControls:
         """Alt+X closes an active daily session after its final grade."""
         conn = self._db(1)
         w = self._win(conn=conn, mode="daily")
-        w._daily_review_history = [(1, "c1", "b1", 2)]
+        w._daily_review_history = [ReviewHistoryEntry((1, "c1", "b1", 2), "graded")]
         w._update_button_visibility()
         assert w.current_card is None
         assert w.close_review_btn.isEnabled()
@@ -585,7 +592,9 @@ class TestReviewControls:
 
         assert w.review_mode == ""
         assert w._paused_review_mode == "daily"
-        assert w._paused_review_history == [(1, "c1", "b1", 2)]
+        assert w._paused_review_history == [
+            ReviewHistoryEntry((1, "c1", "b1", 2), "graded")
+        ]
         assert "Resume Daily Review" in w.start_btn.text()
         conn.close()
         w.close()
@@ -1042,7 +1051,11 @@ class TestReviewControls:
         w.settings["database_root"] = str(db_root)
         # closeEvent saves settings; keep tests from polluting the real file.
         w._save_settings = lambda: None
-        w._daily_review_history = [(card_id, "He insists on speaking himself.", "", 1)]
+        w._daily_review_history = [
+            ReviewHistoryEntry(
+                (card_id, "He insists on speaking himself.", "", 1), "graded"
+            )
+        ]
         w._daily_queue_snapshot = list(w.cards_due)
         w._paused_cards_due = list(w.cards_due)
         w._paused_daily_queue = list(w.cards_due)
@@ -1085,8 +1098,8 @@ class TestReviewControls:
         )
         w._db_type = None  # knowledge-style path: no expression fetch
         w._daily_review_history = [
-            (1, "c1", "b1", 2),
-            (2, "c2", "b2", 2),
+            ReviewHistoryEntry((1, "c1", "b1", 2), "graded"),
+            ReviewHistoryEntry((2, "c2", "b2", 2), "graded"),
         ]
         # Delete the most recent graded card out from under history.
         conn.execute("DELETE FROM cards WHERE id=2")

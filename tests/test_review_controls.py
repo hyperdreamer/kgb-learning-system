@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 
 from kgb_srs.main_window import BarskyApp
+from kgb_srs.review_controller import ReviewHistoryEntry
 from kgb_srs.schema import init_db, ensure_unfamiliar_items_table
 from kgb_srs.catalog import DatabaseType, write_database_type
 
@@ -164,7 +165,9 @@ class TestIdleStateButtons:
         app, _, _ = app_with_db
         app._paused_review_card = None
         app._paused_review_mode = "daily"
-        app._paused_review_history = [(1, "test", "back", 1)]
+        app._paused_review_history = [
+            ReviewHistoryEntry((1, "test", "back", 1), "graded")
+        ]
         app._update_button_visibility()
         assert "Resume Daily Review" in app.start_btn.text()
 
@@ -682,7 +685,7 @@ class TestDailyReviewHistoryTracking:
         first = app.current_card
         app._advance_daily_queue()
         assert len(app._daily_review_history) == 1
-        assert app._daily_review_history[0][0] == first[0]
+        assert app._daily_review_history[0].card[0] == first[0]
         assert app.previous_review_btn.isEnabled()
 
     def test_grading_adds_to_history(self, app_with_db):
@@ -696,9 +699,90 @@ class TestDailyReviewHistoryTracking:
         assert len(app._daily_review_history) == 1, (
             "Grading a card must add it to the session path"
         )
-        assert app._daily_review_history[0][0] == graded_card[0], (
+        assert app._daily_review_history[0].card[0] == graded_card[0], (
             "History must contain the graded card"
         )
+
+
+class TestReviewNavigationProvenance:
+    """Previous restores whether a card was skipped or already graded."""
+
+    def test_grade_previous_next_does_not_requeue_restored_graded_card(
+        self, app_with_db
+    ):
+        app, _, conn = app_with_db
+        app.start_review()
+        graded_id = app.current_card[0]
+        box_before = app.current_card[3]
+
+        app.is_current_flipped = True
+        app.process_answer(correct=True)
+        next_id = app.current_card[0]
+        app._previous_daily_card()
+        assert app.current_card[0] == graded_id
+
+        app._advance_daily_queue()
+
+        assert app.current_card[0] == next_id
+        assert all(card[0] != graded_id for card in app.cards_due)
+        assert conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (graded_id,)
+        ).fetchone()[0] == min(box_before + 1, 5)
+
+    def test_grade_last_previous_next_does_not_show_graded_card_again(
+        self, app_with_db
+    ):
+        app, _, _ = app_with_db
+        app.start_review()
+        graded_id = app.current_card[0]
+        app.cards_due = []
+
+        app.is_current_flipped = True
+        app.process_answer(correct=True)
+        assert app.current_card is None
+
+        app._previous_daily_card()
+        assert app.current_card[0] == graded_id
+
+        app._advance_daily_queue()
+
+        assert app.current_card is None
+        assert all(card[0] != graded_id for card in app.cards_due)
+
+    def test_skip_previous_next_requeues_restored_ungraded_card(self, app_with_db):
+        app, _, _ = app_with_db
+        app.start_review()
+        skipped_id = app.current_card[0]
+
+        app._advance_daily_queue()
+        next_id = app.current_card[0]
+        app._previous_daily_card()
+        assert app.current_card[0] == skipped_id
+
+        app._advance_daily_queue()
+
+        assert app.current_card[0] == next_id
+        assert app.cards_due[-1][0] == skipped_id
+
+    def test_pause_resume_preserves_restored_graded_card_provenance(self, app_with_db):
+        app, _, _ = app_with_db
+        app.start_review()
+        graded_id = app.current_card[0]
+
+        app.is_current_flipped = True
+        app.process_answer(correct=True)
+        next_id = app.current_card[0]
+        app._previous_daily_card()
+        assert app.current_card[0] == graded_id
+
+        app.close_review()
+        app.start_review()
+        assert app.current_card[0] == graded_id
+
+        app._advance_daily_queue()
+
+        assert app.current_card[0] == next_id
+        assert all(card[0] != graded_id for card in app.cards_due)
 
 
 class TestQueueSnapshot:
@@ -761,7 +845,9 @@ class TestProcessAnswerFreshBox:
         cur = conn.cursor()
         cur.execute("SELECT box FROM cards WHERE id=?", (card_id,))
         assert cur.fetchone()[0] == 4
-        assert app._daily_review_history[-1] == (card_id, front, back, 4)
+        assert app._daily_review_history[-1] == ReviewHistoryEntry(
+            (card_id, front, back, 4), "graded"
+        )
 
     def test_previous_refetches_box_from_db(self, app_with_db):
         app, _, conn = app_with_db
@@ -771,7 +857,7 @@ class TestProcessAnswerFreshBox:
         assert app._daily_review_history
 
         # Mutate DB box after history was written with fresh tuple.
-        graded_id = app._daily_review_history[-1][0]
+        graded_id = app._daily_review_history[-1].card[0]
         conn.execute("UPDATE cards SET box=5 WHERE id=?", (graded_id,))
         conn.commit()
 

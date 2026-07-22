@@ -139,11 +139,13 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.current_db_path = None
         self._db_type = None
         self.current_card = None
+        self._current_card_transition = None
         self.cards_due = []
         self.is_current_flipped = False
         self.review_mode = ""
 
         self._paused_review_card = None
+        self._paused_current_card_transition = None
         self._paused_review_mode = ""
 
         # Daily-review session state
@@ -797,10 +799,12 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.current_lang = None
         self._db_type = None
         self.current_card = None
+        self._current_card_transition = None
         self.cards_due = []
         self.is_current_flipped = False
         self.review_mode = ""
         self._paused_review_card = None
+        self._paused_current_card_transition = None
         self._paused_review_mode = ""
         self._daily_review_history = []
         self._daily_queue_snapshot = []
@@ -897,9 +901,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             self.all_cards_checkbox.blockSignals(False)
 
         self.current_card = None
+        self._current_card_transition = None
         self.cards_due = []
         self.review_mode = ""
         self._paused_review_card = None
+        self._paused_current_card_transition = None
         self._paused_review_mode = ""
         self._daily_review_history = []
         self._daily_queue_snapshot = []
@@ -1464,11 +1470,16 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.cards_due = _without(self.cards_due)
         if self.current_card is not None and self.current_card[0] == card_id:
             self.current_card = None
-        self._daily_review_history = _without(self._daily_review_history)
+            self._current_card_transition = None
+        self._daily_review_history = [
+            entry for entry in self._daily_review_history if entry.card[0] != card_id
+        ]
         self._daily_queue_snapshot = _without(self._daily_queue_snapshot)
         self._paused_cards_due = _without(self._paused_cards_due)
         self._paused_daily_queue = _without(self._paused_daily_queue)
-        self._paused_review_history = _without(self._paused_review_history)
+        self._paused_review_history = [
+            entry for entry in self._paused_review_history if entry.card[0] != card_id
+        ]
 
     def _delete_card_by_id(self, card_id):
         """Execute DELETE + commit, clean review state, clear matching paused.
@@ -1492,6 +1503,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             and int(self._paused_review_card[0]) == card_id
         ):
             self._paused_review_card = None
+            self._paused_current_card_transition = None
             self._paused_review_mode = ""
         if (
             getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE
@@ -1535,6 +1547,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         # Explicit browse review starts a fresh one-card session.
         self._paused_review_card = None
+        self._paused_current_card_transition = None
         self._paused_review_mode = ""
         self._paused_cards_due = []
         self._paused_daily_queue = []
@@ -1549,6 +1562,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._daily_queue_snapshot = [card]
         self._daily_review_history = []
         self.current_card = None
+        self._current_card_transition = None
         self.show_next_card()
 
     # ------------------------------------------------------------------

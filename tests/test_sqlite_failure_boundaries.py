@@ -8,6 +8,8 @@ from unittest.mock import Mock
 import pytest
 from PyQt6.QtWidgets import QDialog, QMessageBox, QWidget
 
+from kgb_srs.review_controller import ReviewHistoryEntry
+
 from .qt_helpers import qt_app as _qt_app
 
 
@@ -293,11 +295,15 @@ def test_deletion_rolls_back_and_keeps_review_state_after_commit_failure(
         conn=conn,
         current_card=(1, "Question", "Answer", 1),
         cards_due=[(1, "Question", "Answer", 1)],
-        _daily_review_history=[(1, "Question", "Answer", 1)],
+        _daily_review_history=[
+            ReviewHistoryEntry((1, "Question", "Answer", 1), "graded")
+        ],
         _daily_queue_snapshot=[(1, "Question", "Answer", 1)],
         _paused_cards_due=[(1, "Question", "Answer", 1)],
         _paused_daily_queue=[(1, "Question", "Answer", 1)],
-        _paused_review_history=[(1, "Question", "Answer", 1)],
+        _paused_review_history=[
+            ReviewHistoryEntry((1, "Question", "Answer", 1), "graded")
+        ],
     )
     warnings = []
     monkeypatch.setattr(
