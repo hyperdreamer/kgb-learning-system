@@ -3,7 +3,7 @@
 A spaced-repetition learning application with Markdown + MathJax support.
 """
 
-__version__ = "2.2.1"
+__version__ = "2.2.1-dev"
 
 # Non-PyQt modules are safe to import eagerly.
 from .config import (
