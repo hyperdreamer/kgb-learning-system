@@ -183,6 +183,39 @@ class TestSenseInventory:
         assert len(senses) == 1
         assert senses[0].meaning == "a greeting"
 
+    def test_backfill_relinks_mismatched_existing_sense_id(self, conn):
+        wrong = create_or_get_sense(conn, "bank", "side of a river")
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES ('I went to the bank.', '', 1, date('now'))"
+        )
+        card_id = cur.lastrowid
+        cur.execute(
+            "INSERT INTO unfamiliar_items "
+            "(card_id, expression, meaning, sense_id) VALUES (?, ?, ?, ?)",
+            (card_id, "Bank", "financial institution", wrong.id),
+        )
+        conn.commit()
+
+        assert backfill_senses_from_items(conn) == 1
+
+        linked_sense_id = conn.execute(
+            "SELECT sense_id FROM unfamiliar_items WHERE card_id=?",
+            (card_id,),
+        ).fetchone()[0]
+        correct = find_sense_by_meaning(conn, "bank", "financial institution")
+        assert correct is not None
+        assert linked_sense_id == correct.id
+        assert linked_sense_id != wrong.id
+
+        entries = derive_word_phrase_entries(conn)
+        assert len(entries) == 1
+        _front, back, senses = entries[0]
+        assert [sense.id for sense in senses] == [correct.id]
+        assert "financial institution" in back
+        assert "side of a river" not in back
+
     def test_backfill_without_commit_rolls_back_outer_transaction(self, tmp_path):
         path = tmp_path / "backfill_transaction.db"
         transaction_conn = init_db(str(path))

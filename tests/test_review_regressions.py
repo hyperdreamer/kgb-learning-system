@@ -722,6 +722,62 @@ class TestReviewControls:
         conn.close()
         w.close()
 
+    def test_refresh_missing_current_card_clears_stale_display(self):
+        """Refreshing a deleted current card clears UI without advancing."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from kgb_srs.main_window import BarskyApp
+
+        conn = self._db(2)
+        card_ui = object()
+        scene = MagicMock()
+        draw_card_ui = MagicMock()
+        w = SimpleNamespace(
+            conn=conn,
+            current_card=(1, "stale", "back", 1),
+            cards_due=[(1, "stale", "back", 1), (2, "c2", "b2", 1)],
+            is_current_flipped=True,
+            card_ui=card_ui,
+            scene=scene,
+            draw_card_ui=draw_card_ui,
+        )
+
+        BarskyApp._refresh_current_card(w, 1)
+
+        assert w.cards_due == [(2, "c2", "b2", 1)]
+        assert w.current_card is None
+        assert w.is_current_flipped is False
+        assert w.card_ui is None
+        scene.removeItem.assert_called_once_with(card_ui)
+        draw_card_ui.assert_not_called()
+        conn.close()
+
+    def test_refresh_missing_queued_card_prunes_without_current(self):
+        """Refreshing a deleted queued card removes it even with no current card."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from kgb_srs.main_window import BarskyApp
+
+        conn = self._db(2)
+        w = SimpleNamespace(
+            conn=conn,
+            current_card=None,
+            cards_due=[(1, "stale", "back", 1), (2, "c2", "b2", 1)],
+            is_current_flipped=True,
+            card_ui=None,
+            scene=MagicMock(),
+            draw_card_ui=MagicMock(),
+        )
+
+        BarskyApp._refresh_current_card(w, 1)
+
+        assert w.cards_due == [(2, "c2", "b2", 1)]
+        assert w.current_card is None
+        assert w.card_ui is None
+        w.scene.removeItem.assert_not_called()
+        w.draw_card_ui.assert_not_called()
+        conn.close()
+
     def test_daily_start_without_pause_fresh_query(self):
         """No paused card → normal daily review with fresh DB query."""
         conn = self._db(1, 2)

@@ -1362,9 +1362,20 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         c.execute("SELECT id, front, back, box FROM cards WHERE id=?", (card_id,))
         fresh = c.fetchone()
         if not fresh:
-            # Card was deleted — remove from queue
-            if self.current_card is not None:
-                self.cards_due = [cf for cf in self.cards_due if cf[0] != card_id]
+            # Card was deleted — remove from queue and clear stale display.
+            self.cards_due = [cf for cf in self.cards_due if cf[0] != card_id]
+            if self.current_card is not None and self.current_card[0] == card_id:
+                self.current_card = None
+                self.is_current_flipped = False
+                card_ui = getattr(self, "card_ui", None)
+                try:
+                    scene = getattr(self, "scene", None)
+                    if card_ui is not None and scene is not None:
+                        scene.removeItem(card_ui)
+                except RuntimeError:
+                    pass
+                finally:
+                    self.card_ui = None
             return
 
         if self.current_card is not None and self.current_card[0] == card_id:

@@ -992,9 +992,17 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
         if not expr or not meaning_text:
             continue
         if sense_id:
-            # Keep existing link if still valid.
-            if get_sense(conn, int(sense_id), commit=commit) is not None:
-                continue
+            # Keep existing link only when it matches this item exactly by
+            # normalized expression and normalized meaning.
+            sense = get_sense(conn, int(sense_id), commit=commit)
+            if sense is not None:
+                expr_norm = normalize_sentence(expr)
+                meaning_norm = normalize_sentence(meaning_text)
+                if (
+                    sense.expression_norm == expr_norm
+                    and sense.meaning_norm == meaning_norm
+                ):
+                    continue
         sense = create_or_get_sense(conn, expr, meaning_text, commit=False)
         cur.execute(
             "UPDATE unfamiliar_items SET sense_id=? WHERE id=?",
