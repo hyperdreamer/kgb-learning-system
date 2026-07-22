@@ -4,6 +4,11 @@ All notable changes to the KGB 5-Box SRS System are documented here.
 
 ## [Unreleased]
 
+### Changes
+
+- Remember the **All cards** review selection separately for each database,
+  matching the existing **Shuffle** behavior.
+
 ### Security and Reliability
 
 - Made best-effort SQLite rollback, projection discovery, and optional

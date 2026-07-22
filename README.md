@@ -215,6 +215,7 @@ Click **Add Entry**. The dialog adapts to the database type:
 All shortcuts use **Alt** so they never steal plain typing.
 
 - **Start Daily Review** — begins a review of all cards due today. During an active review, this primary button becomes **Next** and skips the current card to the end of the same daily queue. Shortcut: **Alt+S**.
+- **Shuffle / All cards** — these review options are remembered separately for each database.
 - **Reveal Answer** — flips the card (shortcut: **Alt+R**).
 - **Incorrect / Correct** — grade after flip: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card onto the drop zones).
 - **Listen** — speak the card (shortcut: **Alt+L**).

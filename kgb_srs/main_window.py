@@ -880,7 +880,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         )
         return True
 
-    def _adopt_database(self, conn, path, display, db_type, is_random):
+    def _adopt_database(
+        self, conn, path, display, db_type, is_random, all_cards_review
+    ):
         """Replace the active database after its candidate has fully prepared."""
         old_conn = self.conn
         if old_conn is not None:
@@ -898,11 +900,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.random_checkbox.setEnabled(True)
         self.random_checkbox.blockSignals(False)
 
-        # All-cards mode is session-only (not persisted) — default off so
-        # normal Start Review stays due-only unless the user opts in.
         if hasattr(self, "all_cards_checkbox"):
             self.all_cards_checkbox.blockSignals(True)
-            self.all_cards_checkbox.setChecked(False)
+            self.all_cards_checkbox.setChecked(all_cards_review)
             self.all_cards_checkbox.setEnabled(True)
             self.all_cards_checkbox.blockSignals(False)
 
@@ -971,7 +971,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             # --- Restore random review ---
             c = candidate_conn.cursor()
             c.execute("SELECT value FROM settings WHERE key = 'random_review'")
-            res = c.fetchone()
+            random_review = c.fetchone()
+            c.execute("SELECT value FROM settings WHERE key = 'all_cards_review'")
+            all_cards_review = c.fetchone()
             self._randomize_box_five_for_connection(candidate_conn)
         except Exception as exc:
             if candidate_conn is not None:
@@ -984,9 +986,17 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 )
             return
 
-        is_random = res[0] == "1" if res else True
+        is_random = random_review[0] == "1" if random_review else True
+        is_all_cards_review = (
+            all_cards_review[0] == "1" if all_cards_review else False
+        )
         self._adopt_database(
-            candidate_conn, candidate_path, candidate_display, db_type, is_random
+            candidate_conn,
+            candidate_path,
+            candidate_display,
+            db_type,
+            is_random,
+            is_all_cards_review,
         )
 
         if projection_conflict is not None and not silent and offer_projection_adoption:
@@ -1023,13 +1033,20 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.conn.commit()
 
     def _on_all_cards_toggled(self, state):
-        """Session option only — applies on the next Start Review / Restart.
+        """Persist the review scope for the active database.
 
-        Does not rewrite the active queue mid-session; Restart re-reads it.
+        The active queue is unchanged; Start Review and Restart read the
+        current checkbox state when building a queue.
         """
-        # Intentionally no DB write: keep SRS default (due-only) unless the
-        # user opts in each time they open a database.
-        return
+        if not self.conn:
+            return
+        is_all_cards_review = self.all_cards_checkbox.isChecked()
+        c = self.conn.cursor()
+        c.execute(
+            "UPDATE settings SET value = ? WHERE key = 'all_cards_review'",
+            ("1" if is_all_cards_review else "0",),
+        )
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Canvas

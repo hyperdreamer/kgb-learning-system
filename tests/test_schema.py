@@ -63,6 +63,12 @@ class TestInitDb:
         cur = fresh_conn.execute("SELECT value FROM settings WHERE key='random_review'")
         assert cur.fetchone()[0] == "1"
 
+    def test_all_cards_review_default(self, fresh_conn):
+        cur = fresh_conn.execute(
+            "SELECT value FROM settings WHERE key='all_cards_review'"
+        )
+        assert cur.fetchone() == ("0",)
+
     def test_idempotent(self, fresh_conn):
         """Calling init_db on an already-initialized DB should not fail."""
         init_db(fresh_conn)

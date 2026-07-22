@@ -991,6 +991,21 @@ class TestAllCardsReviewMode:
         app._restart_daily_review()
         assert len(app._daily_queue_snapshot) == total
 
+    def test_all_cards_mode_is_restored_after_reloading_database(self, app_with_db):
+        """The selected All cards mode belongs to the active database."""
+        app, db_path, _ = app_with_db
+
+        app.all_cards_checkbox.setChecked(True)
+
+        saved_mode = app.conn.execute(
+            "SELECT value FROM settings WHERE key = 'all_cards_review'"
+        ).fetchone()
+        assert saved_mode == ("1",)
+
+        app.load_database(silent=True, db_path=db_path, display="test")
+
+        assert app.all_cards_checkbox.isChecked()
+
     def test_checkbox_enabled_after_db_load(self, app_with_db):
         app, _, _ = app_with_db
         assert app.all_cards_checkbox.isEnabled()

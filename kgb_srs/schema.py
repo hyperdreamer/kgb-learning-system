@@ -150,6 +150,9 @@ def init_db(db_path_or_conn):
         c.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('random_review', '1')"
         )
+        c.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('all_cards_review', '0')"
+        )
         conn.commit()
     except Exception:
         if owns_connection:
