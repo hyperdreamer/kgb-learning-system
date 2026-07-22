@@ -987,9 +987,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
 
         is_random = random_review[0] == "1" if random_review else True
-        is_all_cards_review = (
-            all_cards_review[0] == "1" if all_cards_review else False
-        )
+        is_all_cards_review = all_cards_review[0] == "1" if all_cards_review else False
         self._adopt_database(
             candidate_conn,
             candidate_path,

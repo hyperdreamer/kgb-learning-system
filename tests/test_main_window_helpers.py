@@ -84,7 +84,9 @@ def test_box_five_reset_uses_entropy_source_and_preserves_schedule(monkeypatch):
         conn.close()
 
 
-def test_projection_sync_failure_is_logged_and_nonblocking(tmp_path, monkeypatch, caplog):
+def test_projection_sync_failure_is_logged_and_nonblocking(
+    tmp_path, monkeypatch, caplog
+):
     pytest.importorskip("PyQt6")
     import kgb_srs.main_window as main_window
     import kgb_srs.senses as senses

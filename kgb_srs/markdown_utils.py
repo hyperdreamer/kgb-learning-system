@@ -97,10 +97,9 @@ def sanitize_review_html_fragment(fragment: str) -> str:
             safe_declarations.append("font-weight: 700")
         if _REVIEW_SAFE_ITALIC_STYLE_RE.search(style_value):
             safe_declarations.append("font-style: italic")
-        if (
-            _REVIEW_SAFE_QT_BLOCK_INDENT_RE.search(style_value)
-            and _REVIEW_SAFE_QT_INDENT_MARGIN_RE.search(style_value)
-        ):
+        if _REVIEW_SAFE_QT_BLOCK_INDENT_RE.search(
+            style_value
+        ) and _REVIEW_SAFE_QT_INDENT_MARGIN_RE.search(style_value):
             safe_declarations.extend(("margin-left: 40px", "-qt-block-indent: 1"))
         if not safe_declarations:
             return ""

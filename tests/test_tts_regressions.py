@@ -15,9 +15,10 @@ class TestTtsRegressions:
     def test_prepare_tts_text_adds_pauses_to_unpunctuated_segments(self):
         from kgb_srs.tts import prepare_tts_text
 
-        assert prepare_tts_text(
-            "A sentence without punctuation\nword\nmulti-word phrase"
-        ) == "A sentence without punctuation.\nword.\nmulti-word phrase."
+        assert (
+            prepare_tts_text("A sentence without punctuation\nword\nmulti-word phrase")
+            == "A sentence without punctuation.\nword.\nmulti-word phrase."
+        )
 
     def test_prepare_tts_text_keeps_punctuation_inside_closing_quotes(self):
         from kgb_srs.tts import prepare_tts_text
@@ -37,9 +38,10 @@ class TestTtsRegressions:
         _qt_app()
         from kgb_srs.review_controller import _card_speech_text
 
-        assert _card_speech_text(
-            "A sentence without punctuation", "word or phrase"
-        ) == "A sentence without punctuation\nword or phrase"
+        assert (
+            _card_speech_text("A sentence without punctuation", "word or phrase")
+            == "A sentence without punctuation\nword or phrase"
+        )
 
     def test_sentence_card_tts_pauses_between_sentence_and_each_expression(self):
         _qt_app()

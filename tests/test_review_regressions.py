@@ -191,9 +191,9 @@ class TestReviewPresentationRegressions:
 
             BarskyApp.flip_card(window)
 
-            assert card.display_text.index("1. **grievance**:") < card.display_text.index(
-                "2. **exact**:"
-            )
+            assert card.display_text.index(
+                "1. **grievance**:"
+            ) < card.display_text.index("2. **exact**:")
             assert card.speech_text.index("grievance:") < card.speech_text.index(
                 "exact:"
             )

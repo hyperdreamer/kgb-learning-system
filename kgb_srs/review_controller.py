@@ -39,9 +39,7 @@ def _ordered_sentence_card_items(conn, card_id, sentence):
 def _sentence_card_speech_text(conn, card_id, sentence) -> str:
     """Build sentence-card TTS text from the same order used for display."""
     ordered_items = _ordered_sentence_card_items(conn, card_id, sentence)
-    return _card_speech_text(
-        sentence, *_format_sentence_meaning_lines(ordered_items)
-    )
+    return _card_speech_text(sentence, *_format_sentence_meaning_lines(ordered_items))
 
 
 def _word_phrase_card_speech_text(front, back) -> str:

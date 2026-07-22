@@ -23,9 +23,7 @@ def prepare_tts_text(text):
     """End each non-empty speech segment so Edge TTS pauses after it."""
     segments = (line.strip() for line in text.splitlines())
     return "\n".join(
-        segment
-        if _ends_with_tts_terminal_punctuation(segment)
-        else f"{segment}."
+        segment if _ends_with_tts_terminal_punctuation(segment) else f"{segment}."
         for segment in segments
         if segment
     )
