@@ -38,7 +38,8 @@ _RE_ESCAPE_RE = re.compile(r"([.^$*+?{}[\]\\|()])")
 # Hyphen is intentionally NOT stripped here — compounds like non-staple stay
 # intact so we can match lemmas against individual hyphen segments.
 _PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…«»"
-_ASCII_WORD_SEGMENT_RE = r"[a-z]+(?:['’][a-z]+)*"
+_INTERNAL_APOSTROPHE_CHARS = "'’ʼ＇"
+_ASCII_WORD_SEGMENT_RE = rf"[a-z]+(?:[{_INTERNAL_APOSTROPHE_CHARS}][a-z]+)*"
 _ASCII_WORD_PHRASE_RE = re.compile(
     rf"{_ASCII_WORD_SEGMENT_RE}(?: {_ASCII_WORD_SEGMENT_RE})*"
 )
@@ -676,6 +677,17 @@ def validate_unfamiliar_items(
     )
 
 
+def _strip_unicode_edge_punctuation(text: str) -> str:
+    """Remove leading and trailing Unicode punctuation from *text*."""
+    start = 0
+    end = len(text)
+    while start < end and unicodedata.category(text[start]).startswith("P"):
+        start += 1
+    while end > start and unicodedata.category(text[end - 1]).startswith("P"):
+        end -= 1
+    return text[start:end]
+
+
 def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     """True if *surface* occurs in *sentence* as a real span.
 
@@ -687,10 +699,8 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     norm_surface = normalize_sentence(surface)
     if not norm_surface:
         return False
-    stripped_surface = norm_surface.strip(_PUNCT_STRIP)
-    if stripped_surface != norm_surface and _ASCII_WORD_PHRASE_RE.fullmatch(
-        stripped_surface
-    ):
+    stripped_surface = _strip_unicode_edge_punctuation(norm_surface)
+    if _ASCII_WORD_PHRASE_RE.fullmatch(stripped_surface):
         start = norm_sentence.find(norm_surface)
         while start != -1:
             end = start + len(norm_surface)
