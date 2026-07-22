@@ -1,10 +1,79 @@
 """Regression tests for text-to-speech temporary-file cleanup."""
 
+import asyncio
+import os
+import stat
+
+import pytest
+
 from .qt_helpers import qt_app as _qt_app
 
 
 class TestTtsTempCleanup:
     """R2-2: temp barsky_tts_*.mp3 files must not linger forever."""
+
+    def test_generate_audio_precreates_private_temp_file(self, tmp_path, monkeypatch):
+        _qt_app()
+        import kgb_srs.tts as tts
+
+        original_mkstemp = tts.tempfile.mkstemp
+
+        def mkstemp_in_test_dir(*args, **kwargs):
+            kwargs["dir"] = str(tmp_path)
+            return original_mkstemp(*args, **kwargs)
+
+        class FakeCommunicate:
+            saved_path = None
+
+            def __init__(self, *_args):
+                pass
+
+            async def save(self, path):
+                FakeCommunicate.saved_path = path
+                assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+                with open(path, "wb") as audio:
+                    audio.write(b"fake audio")
+
+        monkeypatch.setattr(tts.tempfile, "mkstemp", mkstemp_in_test_dir)
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+
+        path = asyncio.run(tts.TTSWorker("hello", "voice").generate_audio())
+
+        assert path == FakeCommunicate.saved_path
+        assert os.path.basename(path).startswith("barsky_tts_")
+        assert path.endswith(".mp3")
+        assert os.path.exists(path)
+        tts.unlink_tts_temp(path)
+
+    def test_generate_audio_removes_temp_file_when_save_fails(
+        self, tmp_path, monkeypatch
+    ):
+        _qt_app()
+        import kgb_srs.tts as tts
+
+        original_mkstemp = tts.tempfile.mkstemp
+
+        def mkstemp_in_test_dir(*args, **kwargs):
+            kwargs["dir"] = str(tmp_path)
+            return original_mkstemp(*args, **kwargs)
+
+        class FailingCommunicate:
+            saved_path = None
+
+            def __init__(self, *_args):
+                pass
+
+            async def save(self, path):
+                FailingCommunicate.saved_path = path
+                assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+                raise RuntimeError("save failed")
+
+        monkeypatch.setattr(tts.tempfile, "mkstemp", mkstemp_in_test_dir)
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FailingCommunicate)
+
+        with pytest.raises(RuntimeError, match="save failed"):
+            asyncio.run(tts.TTSWorker("hello", "voice").generate_audio())
+        assert not os.path.exists(FailingCommunicate.saved_path)
 
     def test_unlink_tts_temp_removes_file(self, tmp_path):
         from kgb_srs.tts import unlink_tts_temp

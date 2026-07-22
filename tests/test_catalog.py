@@ -179,6 +179,34 @@ class TestBuildCatalogTree:
             )
         }
 
+    def test_colliding_word_phrase_leaves_use_flat_relative_labels(self):
+        entries = [
+            (
+                "Language-based\\Word-Phrase-based\\English\\A1",
+                "/db/Language-based/Word-Phrase-based/English/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            (
+                "Language-based/Word-Phrase-based/French/A1",
+                "/db/Language-based/Word-Phrase-based/French/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        ]
+
+        branch = build_catalog_tree(entries)["Language-based"]["Word/Phrase-based"]
+
+        assert branch == {
+            "English/A1": (
+                "/db/Language-based/Word-Phrase-based/English/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+            "French/A1": (
+                "/db/Language-based/Word-Phrase-based/French/A1_barsky.db",
+                DatabaseType.LANGUAGE_WORD_PHRASE,
+            ),
+        }
+        assert all(not isinstance(value, dict) for value in branch.values())
+
     def test_single_language_sentence(self):
         entry = (
             "Language-based/Sentence-based/French",

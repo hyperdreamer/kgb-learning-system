@@ -270,14 +270,13 @@ def build_catalog_tree(
         "Knowledge-based": {},
     }
 
+    word_phrase_entries = []
     for display, db_path, db_type in entries:
         parts = [p for p in display.replace("\\", "/").split("/") if p]
         leaf = os.path.basename(db_path).removesuffix("_barsky.db")
 
         if db_type == DatabaseType.LANGUAGE_WORD_PHRASE:
-            # Word/Phrase databases are deliberately flat.  In particular,
-            # do not reproduce legacy directory components such as Languages.
-            tree["Language-based"]["Word/Phrase-based"][leaf] = (db_path, db_type)
+            word_phrase_entries.append((display, db_path, db_type, leaf))
             continue
 
         if db_type == DatabaseType.LANGUAGE_SENTENCE:
@@ -296,5 +295,23 @@ def build_catalog_tree(
         for part in relative_parts[:-1]:
             node = node.setdefault(part, {})
         node[relative_parts[-1]] = (db_path, db_type)
+
+    word_phrase_leaf_counts: dict[str, int] = {}
+    for _display, _db_path, _db_type, leaf in word_phrase_entries:
+        word_phrase_leaf_counts[leaf] = word_phrase_leaf_counts.get(leaf, 0) + 1
+
+    word_phrase_branch = tree["Language-based"]["Word/Phrase-based"]
+    for display, db_path, db_type, leaf in word_phrase_entries:
+        # Word/Phrase databases are deliberately flat.  In particular, do not
+        # reproduce legacy directory components such as Languages.  Only
+        # expand colliding leaf labels so every projected database is visible.
+        label = leaf
+        if word_phrase_leaf_counts[leaf] > 1:
+            normalized_display = display.replace("\\", "/")
+            for marker in ("Word-Phrase-based/", "Word/Phrase-based/"):
+                if marker in normalized_display:
+                    label = normalized_display.split(marker, 1)[1]
+                    break
+        word_phrase_branch[label] = (db_path, db_type)
 
     return tree

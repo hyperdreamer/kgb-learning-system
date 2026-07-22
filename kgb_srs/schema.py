@@ -644,6 +644,8 @@ def find_databases(base_dir=None):
         for f in files:
             if f.endswith(DB_SUFFIX):
                 full_path = os.path.join(root, f)
+                if os.path.islink(full_path):
+                    continue
                 db_name = f[: -len(DB_SUFFIX)]
                 rel_dir = os.path.relpath(root, base_dir)
                 if rel_dir == ".":

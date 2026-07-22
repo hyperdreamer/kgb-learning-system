@@ -2,6 +2,7 @@
 
 import os
 import json
+import sqlite3
 
 import pytest
 
@@ -147,6 +148,41 @@ class TestFindDatabasesUsesRoot:
         display, path = results[0]
         assert display.endswith("French")
         assert path == str(db_path)
+
+    def test_skips_symlinked_database_without_startup_mutation(self, tmp_path):
+        from kgb_srs.senses import ensure_all_sentence_databases_linked
+
+        root = tmp_path / "dbs"
+        sentence_dir = root / "Language-based" / "Sentence-based"
+        sentence_dir.mkdir(parents=True)
+        external_db = tmp_path / "external_barsky.db"
+        external = sqlite3.connect(external_db)
+        try:
+            external.execute("CREATE TABLE external_marker (value TEXT)")
+            external.commit()
+        finally:
+            external.close()
+
+        linked_db = sentence_dir / "External_barsky.db"
+        try:
+            linked_db.symlink_to(external_db)
+        except (NotImplementedError, OSError) as exc:
+            pytest.skip(f"symlinks unavailable: {exc}")
+
+        assert find_databases(str(root)) == []
+        assert ensure_all_sentence_databases_linked(str(root)) == []
+
+        external = sqlite3.connect(external_db)
+        try:
+            tables = {
+                row[0]
+                for row in external.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        finally:
+            external.close()
+        assert tables == {"external_marker"}
 
 
 class TestPathUnderRoot:

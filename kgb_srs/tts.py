@@ -3,7 +3,6 @@
 import os
 import asyncio
 import tempfile
-import uuid
 
 import edge_tts
 
@@ -33,15 +32,15 @@ class TTSWorker(QThread):
         self.voice = voice
 
     async def generate_audio(self):
-        unique_name = f"barsky_tts_{uuid.uuid4().hex[:8]}.mp3"
-        temp_file = os.path.join(tempfile.gettempdir(), unique_name)
+        fd, temp_file = tempfile.mkstemp(prefix="barsky_tts_", suffix=".mp3")
+        os.close(fd)
 
         communicate = edge_tts.Communicate(self.text, self.voice)
-        await communicate.save(temp_file)
         try:
-            os.chmod(temp_file, 0o600)
-        except OSError:
-            pass
+            await communicate.save(temp_file)
+        except Exception:
+            unlink_tts_temp(temp_file)
+            raise
         return temp_file
 
     def run(self):
