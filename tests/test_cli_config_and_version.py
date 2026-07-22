@@ -31,7 +31,9 @@ def test_selected_config_file_is_used_for_load_and_save(tmp_path):
     assert json.loads(selected.read_text(encoding="utf-8"))["font_size"] == 21
 
 
-def test_version_marks_only_development_branches(monkeypatch):
+def test_version_marks_development_branches_with_a_single_hyphenated_suffix(
+    monkeypatch,
+):
     from kgb_srs import __version__
     from kgb_srs.version import get_app_version, is_development_branch
 
@@ -40,7 +42,8 @@ def test_version_marks_only_development_branches(monkeypatch):
     assert not is_development_branch("develop")
     assert not is_development_branch("feature/dev-tools")
     assert not is_development_branch(None)
-    assert get_app_version(lambda: "dev-feature") == f"{__version__}.dev"
+    expected_dev_version = f"{__version__.removesuffix('-dev')}-dev"
+    assert get_app_version(lambda: "dev-feature") == expected_dev_version
     assert get_app_version(lambda: None) == __version__
 
     import kgb_srs.version as version
@@ -71,8 +74,6 @@ def test_git_branch_reads_normal_and_linked_worktree_metadata(tmp_path):
         "ref: refs/heads/dev-worktree\n", encoding="utf-8"
     )
     gitdir_reference = os.path.relpath(worktree_git_directory, worktree)
-    (worktree / ".git").write_text(
-        f"gitdir: {gitdir_reference}\n", encoding="utf-8"
-    )
+    (worktree / ".git").write_text(f"gitdir: {gitdir_reference}\n", encoding="utf-8")
 
     assert get_git_branch(worktree) == "dev-worktree"

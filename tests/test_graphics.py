@@ -168,7 +168,10 @@ def test_word_phrase_example_is_indented_below_its_sense(flashcard):
 
     meaning_block = blocks["a metal fastener"]
     example_block = blocks["A bolt secures the door."]
-    assert example_block.blockFormat().leftMargin() > meaning_block.blockFormat().leftMargin()
+    assert (
+        example_block.blockFormat().leftMargin()
+        > meaning_block.blockFormat().leftMargin()
+    )
 
 
 def test_word_phrase_example_is_italic_without_losing_surface_bold(flashcard):
@@ -257,7 +260,9 @@ def test_review_card_uses_proxy_safe_text_renderer_when_webengine_is_available(
 
     class WebEngineMustNotBeEmbedded:
         def __init__(self, *_args, **_kwargs):
-            raise AssertionError("QWebEngineView must not be embedded in QGraphicsProxyWidget")
+            raise AssertionError(
+                "QWebEngineView must not be embedded in QGraphicsProxyWidget"
+            )
 
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(graphics_mod, "HAS_WEBENGINE", True)
