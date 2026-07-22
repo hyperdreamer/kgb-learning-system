@@ -3,6 +3,8 @@
 These are QGraphicsItem subclasses for the canvas-based review UI.
 """
 
+import logging
+
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -39,6 +41,9 @@ except ImportError:
     HAS_WEBENGINE = False
 
 from .markdown_utils import build_review_html
+
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewCardNavigationPolicy:
@@ -114,6 +119,16 @@ def configure_review_web_view(web_view) -> None:
         QWebEngineSettings.WebAttribute.JavascriptEnabled,
         False,
     )
+
+
+def _set_transparent_web_view_background(web_view) -> None:
+    """Apply optional WebEngine styling without disrupting card rendering."""
+    try:
+        web_view.page().setBackgroundColor(QColor("transparent"))
+    except Exception:
+        logger.warning(
+            "Could not set the review-card WebEngine background.", exc_info=True
+        )
 
 
 # ── Reusable button stylesheet helper ────────────────────────────────────────
@@ -240,10 +255,7 @@ class FlashCardItem(QGraphicsRectItem):
                 self.text_widget.setPage(ReviewCardWebPage(self.text_widget))
             configure_review_web_view(self.text_widget)
 
-            try:
-                self.text_widget.page().setBackgroundColor(QColor("transparent"))
-            except Exception:
-                pass
+            _set_transparent_web_view_background(self.text_widget)
         else:
             self.text_widget = QTextEdit()
             self.text_widget.setReadOnly(True)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 
@@ -1029,6 +1030,31 @@ class TestLinkedWordPhraseSync:
             assert get_linked_word_phrase_db(reopened) is not None
         finally:
             reopened.close()
+
+    def test_startup_backfill_logs_unopenable_database_and_keeps_scanning(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from kgb_srs import schema, senses
+
+        db_root = tmp_path / "db"
+        db_root.mkdir()
+        broken_path = db_root / "broken_barsky.db"
+        monkeypatch.setattr(
+            schema, "find_databases", lambda _root: [("Broken", str(broken_path))]
+        )
+        monkeypatch.setattr(
+            schema,
+            "init_db",
+            lambda _path: (_ for _ in ()).throw(
+                sqlite3.OperationalError("database is unavailable")
+            ),
+        )
+
+        with caplog.at_level(logging.WARNING, logger="kgb_srs.senses"):
+            assert senses.ensure_all_sentence_databases_linked(str(db_root)) == []
+
+        assert str(broken_path) in caplog.text
+        assert "database is unavailable" in caplog.text
 
     def test_sync_without_link_returns_none(self, conn):
         from kgb_srs.senses import sync_linked_word_phrase_database

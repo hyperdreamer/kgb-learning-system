@@ -4,6 +4,16 @@ All notable changes to the KGB 5-Box SRS System are documented here.
 
 ## [Unreleased]
 
+### Security and Reliability
+
+- Made best-effort SQLite rollback, projection discovery, and optional
+  WebEngine styling failures diagnosable through standard logging without
+  blocking the original user operation.
+- Switched the Box 5 review lottery to `secrets`, renamed the Markdown math
+  placeholder sentinel, and preserved collision-safe rendering behavior.
+- Replaced development-branch subprocess detection with direct `.git/HEAD`
+  metadata parsing that supports normal and linked worktrees.
+
 ### Compatibility
 
 - Deprecated private form-helper aliases from `kgb_srs.forms`; dialogs and

@@ -1,5 +1,6 @@
 """Tests for interactive flashcard action-button styles and content fonts."""
 
+import logging
 import os
 import re
 
@@ -127,16 +128,36 @@ def test_set_text_uses_content_font_not_ui_font_plus_four(monkeypatch):
 
 def test_math_placeholder_collision_preserves_literal_and_math():
     from kgb_srs.markdown_utils import (
+        MATH_PLACEHOLDER_PREFIX,
         markdown_to_html_fragment,
         markdown_to_plain_text,
     )
 
-    source = "BARSKYMATHPLACEHOLDER0TOKEN plus $x$"
+    source = f"{MATH_PLACEHOLDER_PREFIX}0PLACEHOLDER plus $x$"
     html = markdown_to_html_fragment(source)
 
-    assert "BARSKYMATHPLACEHOLDER0TOKEN" in html
+    assert f"{MATH_PLACEHOLDER_PREFIX}0PLACEHOLDER" in html
     assert "$x$" in html
-    assert markdown_to_plain_text(source) == "BARSKYMATHPLACEHOLDER0TOKEN plus x"
+    assert markdown_to_plain_text(source) == (
+        f"{MATH_PLACEHOLDER_PREFIX}0PLACEHOLDER plus x"
+    )
+
+
+def test_webengine_background_failure_is_logged_and_nonfatal(caplog):
+    from kgb_srs.graphics import _set_transparent_web_view_background
+
+    class _Page:
+        def setBackgroundColor(self, _color):
+            raise RuntimeError("background unavailable")
+
+    class _View:
+        def page(self):
+            return _Page()
+
+    with caplog.at_level(logging.WARNING, logger="kgb_srs.graphics"):
+        assert _set_transparent_web_view_background(_View()) is None
+
+    assert "background unavailable" in caplog.text
 
 
 def test_review_html_is_offline_and_sanitizes_resource_markup():

@@ -1,6 +1,8 @@
 """Focused tests for main-window helpers that do not require a window."""
 
+import logging
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,6 +56,58 @@ class _NewDatabaseWindow:
 
     def load_database(self, silent=False):
         raise AssertionError(f"load_database unexpectedly called: {silent=}")
+
+
+def test_box_five_reset_uses_entropy_source_and_preserves_schedule(monkeypatch):
+    pytest.importorskip("PyQt6")
+    import kgb_srs.main_window as main_window
+    from kgb_srs.schema import init_db
+
+    conn = init_db(":memory:")
+    try:
+        conn.execute(
+            "INSERT INTO cards (front, back, box, next_review) "
+            "VALUES ('Mastered', 'answer', 5, '2099-01-01')"
+        )
+        conn.commit()
+        monkeypatch.setattr(main_window.secrets, "randbelow", lambda upper: 0)
+        monkeypatch.setattr(main_window.secrets, "choice", lambda cards: cards[0])
+
+        main_window.BarskyApp._randomize_box_five_for_connection(None, conn)
+
+        box, next_review = conn.execute(
+            "SELECT box, next_review FROM cards WHERE front='Mastered'"
+        ).fetchone()
+        assert box == 1
+        assert next_review != "2099-01-01"
+    finally:
+        conn.close()
+
+
+def test_projection_sync_failure_is_logged_and_nonblocking(tmp_path, monkeypatch, caplog):
+    pytest.importorskip("PyQt6")
+    import kgb_srs.main_window as main_window
+    import kgb_srs.senses as senses
+    from kgb_srs.catalog import DatabaseType
+
+    window = SimpleNamespace(
+        conn=object(),
+        _db_type=DatabaseType.LANGUAGE_SENTENCE,
+        current_db_path=str(tmp_path / "sentence_barsky.db"),
+        settings={"database_root": str(tmp_path)},
+    )
+    monkeypatch.setattr(
+        senses,
+        "ensure_linked_word_phrase_database",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("projection unavailable")
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="kgb_srs.main_window"):
+        assert main_window.BarskyApp._sync_linked_word_phrase_quiet(window) is None
+
+    assert "projection unavailable" in caplog.text
 
 
 def _accepted_creation_dialog(db_type):

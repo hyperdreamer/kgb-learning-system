@@ -10,6 +10,7 @@ expression, using source sentences as examples.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import sqlite3
@@ -21,6 +22,9 @@ from typing import Iterable
 
 from .schema import create_database_exclusively
 from .validation import normalize_sentence
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1224,31 +1228,43 @@ def ensure_all_sentence_databases_linked(db_root: str) -> list[dict]:
         try:
             conn = init_db(path)
         except Exception:
-            continue
-        try:
-            db_type = read_database_type(conn)
-            if db_type is None:
-                db_type = infer_database_type(path)
-            if db_type != DatabaseType.LANGUAGE_SENTENCE:
-                continue
-            ensure_sentence_schema(conn)
-            wp_path, stats = ensure_linked_word_phrase_database(
-                conn, path, db_root, sync=True
+            logger.warning(
+                "Could not open %s during word/phrase projection discovery.",
+                path,
+                exc_info=True,
             )
-            results.append(
-                {
-                    "sentence_path": path,
-                    "word_phrase_path": wp_path,
-                    "stats": stats,
-                }
-            )
-        except Exception:
-            continue
-        finally:
+        else:
             try:
-                conn.close()
+                db_type = read_database_type(conn)
+                if db_type is None:
+                    db_type = infer_database_type(path)
+                if db_type == DatabaseType.LANGUAGE_SENTENCE:
+                    ensure_sentence_schema(conn)
+                    wp_path, stats = ensure_linked_word_phrase_database(
+                        conn, path, db_root, sync=True
+                    )
+                    results.append(
+                        {
+                            "sentence_path": path,
+                            "word_phrase_path": wp_path,
+                            "stats": stats,
+                        }
+                    )
             except Exception:
-                pass
+                logger.warning(
+                    "Could not synchronize %s during word/phrase projection discovery.",
+                    path,
+                    exc_info=True,
+                )
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    logger.warning(
+                        "Could not close %s after word/phrase projection discovery.",
+                        path,
+                        exc_info=True,
+                    )
     return results
 
 

@@ -1,9 +1,10 @@
 """Main application window – BarskyApp."""
 
-import os
-import sqlite3
 import datetime
-import random
+import logging
+import os
+import secrets
+import sqlite3
 import sys
 
 from PyQt6.QtWidgets import (
@@ -42,7 +43,7 @@ from .config import (
     resolve_default_database,
     relative_db_path,
 )
-from .db import init_db, find_databases
+from .db import find_databases, init_db, rollback_after_failure
 from .senses import ProjectionOwnershipConflictError
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
@@ -89,6 +90,9 @@ from .validation import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def _open_and_infer_type(db_path):
     """Compatibility wrapper for database-menu type discovery.
 
@@ -105,10 +109,7 @@ def _open_and_infer_type(db_path):
 
 def _rollback_quietly(conn):
     """Rollback without hiding the SQLite failure being handled."""
-    try:
-        conn.rollback()
-    except Exception:
-        pass
+    rollback_after_failure(conn, "main-window card write")
 
 
 # ---------------------------------------------------------------------------
@@ -821,8 +822,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         c = conn.cursor()
         c.execute("SELECT id FROM cards WHERE box = 5")
         mastered_cards = c.fetchall()
-        if mastered_cards and random.random() < 0.05:
-            target = random.choice(mastered_cards)[0]
+        if mastered_cards and secrets.randbelow(20) == 0:
+            target = secrets.choice(mastered_cards)[0]
             today_str = datetime.date.today().isoformat()
             c.execute(
                 "UPDATE cards SET box = 1, next_review = ? WHERE id = ?",
@@ -960,7 +961,12 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                     projection_conflict = conflict
                 except Exception:
                     # Projection failures must not block sentence-database use.
-                    pass
+                    logger.warning(
+                        "Could not synchronize the linked word/phrase projection "
+                        "while loading %s; sentence database remains usable.",
+                        candidate_path,
+                        exc_info=True,
+                    )
 
             # --- Restore random review ---
             c = candidate_conn.cursor()
@@ -1342,7 +1348,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             )
         except Exception:
             # Never block sentence save on projection failure.
-            pass
+            logger.warning(
+                "Could not synchronize the linked word/phrase projection after "
+                "a sentence save; the sentence change remains saved.",
+                exc_info=True,
+            )
 
     def _ensure_all_word_phrase_projections(self) -> None:
         """Startup: link + sync W/P for every sentence DB under the root."""

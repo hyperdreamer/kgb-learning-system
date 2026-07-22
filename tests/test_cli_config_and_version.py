@@ -1,6 +1,7 @@
 """Focused tests for launcher config selection and displayed version."""
 
 import json
+import os
 
 
 def test_config_option_is_normalized_and_used_by_launcher(tmp_path, monkeypatch):
@@ -46,3 +47,32 @@ def test_version_marks_only_development_branches(monkeypatch):
 
     monkeypatch.setattr(version, "get_git_branch", lambda: "main")
     assert version.get_app_version() == __version__
+
+
+def test_git_branch_reads_normal_and_linked_worktree_metadata(tmp_path):
+    from kgb_srs.version import get_git_branch
+
+    repository = tmp_path / "repository"
+    nested_directory = repository / "src" / "module"
+    git_directory = repository / ".git"
+    nested_directory.mkdir(parents=True)
+    git_directory.mkdir()
+    (git_directory / "HEAD").write_text(
+        "ref: refs/heads/dev-feature\n", encoding="utf-8"
+    )
+
+    assert get_git_branch(nested_directory) == "dev-feature"
+
+    worktree = tmp_path / "linked-worktree"
+    worktree.mkdir()
+    worktree_git_directory = tmp_path / "git-metadata" / "worktrees" / "lesson"
+    worktree_git_directory.mkdir(parents=True)
+    (worktree_git_directory / "HEAD").write_text(
+        "ref: refs/heads/dev-worktree\n", encoding="utf-8"
+    )
+    gitdir_reference = os.path.relpath(worktree_git_directory, worktree)
+    (worktree / ".git").write_text(
+        f"gitdir: {gitdir_reference}\n", encoding="utf-8"
+    )
+
+    assert get_git_branch(worktree) == "dev-worktree"

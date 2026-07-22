@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from .browse_dialog import _fetch_expressions_for_card
 from .catalog import DatabaseType
+from .db import rollback_after_failure
 from .graphics import FlashCardItem
 from .markdown_utils import markdown_to_plain_text
 from .validation import (
@@ -645,10 +646,7 @@ class ReviewControllerMixin:
             )
             self.conn.commit()
         except sqlite3.Error:
-            try:
-                self.conn.rollback()
-            except Exception:
-                pass
+            rollback_after_failure(self.conn, "review card grading")
             QMessageBox.warning(
                 self, "Could not grade card", "The card could not be graded."
             )

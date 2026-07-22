@@ -1,6 +1,7 @@
 """Regression tests for SQLite write-failure UI boundaries."""
 
 import datetime
+import logging
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -11,6 +12,20 @@ from PyQt6.QtWidgets import QDialog, QMessageBox, QWidget
 from kgb_srs.review_controller import ReviewHistoryEntry
 
 from .qt_helpers import qt_app as _qt_app
+
+
+def test_failed_rollback_is_logged_without_masking_the_operation_failure(caplog):
+    from kgb_srs.db import rollback_after_failure
+
+    class _RollbackFailure:
+        def rollback(self):
+            raise sqlite3.OperationalError("rollback unavailable")
+
+    with caplog.at_level(logging.WARNING, logger="kgb_srs.db"):
+        assert rollback_after_failure(_RollbackFailure(), "card update") is None
+
+    assert "card update" in caplog.text
+    assert "rollback unavailable" in caplog.text
 
 
 class _FailingCommitConnection(sqlite3.Connection):

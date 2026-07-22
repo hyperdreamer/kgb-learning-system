@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .catalog import DatabaseType
+from .db import rollback_after_failure
 from .dialogs import DynamicInputDialog
 from .search import search_sentence_cards, search_word_phrase_cards
 
@@ -237,10 +238,7 @@ class BrowseCardsDialog(QDialog):
                     (front_dialog.text_value, card_id),
                 ).fetchone()
             except sqlite3.Error:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+                rollback_after_failure(conn, "browse card update")
                 QMessageBox.warning(
                     self, "Could not update card", "The card could not be updated."
                 )
@@ -265,10 +263,7 @@ class BrowseCardsDialog(QDialog):
             )
             conn.commit()
         except sqlite3.Error:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+            rollback_after_failure(conn, "browse card update")
             QMessageBox.warning(
                 self, "Could not update card", "The card could not be updated."
             )

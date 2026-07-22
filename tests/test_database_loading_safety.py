@@ -1,5 +1,6 @@
 """Focused safety tests for candidate database loading and adoption."""
 
+import logging
 import sqlite3
 
 import pytest
@@ -413,7 +414,7 @@ def test_projection_ownership_conflict_does_not_block_sentence_database_create(
 
 
 def test_projection_failure_does_not_block_candidate_adoption(
-    window, tmp_path, monkeypatch
+    window, tmp_path, monkeypatch, caplog
 ):
     """Projection maintenance remains best-effort while opening sentence databases."""
     import kgb_srs.senses as senses
@@ -430,14 +431,16 @@ def test_projection_failure_does_not_block_candidate_adoption(
         ),
     )
 
-    window.load_database(
-        silent=True,
-        db_path=str(candidate_path),
-        display="Language-based/Sentence/Candidate",
-    )
+    with caplog.at_level(logging.WARNING, logger="kgb_srs.main_window"):
+        window.load_database(
+            silent=True,
+            db_path=str(candidate_path),
+            display="Language-based/Sentence/Candidate",
+        )
 
     assert window.current_db_path == str(candidate_path)
     assert window.conn is not None
+    assert "projection down" in caplog.text
 
 
 def test_created_database_candidate_failure_keeps_old_session_and_publishes_valid_file(

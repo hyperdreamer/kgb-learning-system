@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 from PyQt6.QtGui import QTextDocument
 
 # --- Constants ---
-MATH_TOKEN_PREFIX = "BARSKYMATHPLACEHOLDER"
+MATH_PLACEHOLDER_PREFIX = "BARSKYMATHPLACEHOLDER"
 
 
 # Review cards render user-authored Markdown in either QTextEdit or a web view.
@@ -85,19 +85,19 @@ def _protect_math_segments(text):
     Supports $inline$, $$display$$, \\(inline\\), \\[display\\].
     """
     text = text or ""
-    token_map = {}
-    token_prefix = MATH_TOKEN_PREFIX
-    while token_prefix in text:
-        token_prefix += "X"
+    placeholder_map = {}
+    placeholder_prefix = MATH_PLACEHOLDER_PREFIX
+    while placeholder_prefix in text:
+        placeholder_prefix += "X"
 
-    def make_token():
-        return f"{token_prefix}{len(token_map)}TOKEN"
+    def make_placeholder():
+        return f"{placeholder_prefix}{len(placeholder_map)}PLACEHOLDER"
 
     def replace_pattern(pattern, source):
         def repl(match):
-            token = make_token()
-            token_map[token] = match.group(0)
-            return token
+            placeholder = make_placeholder()
+            placeholder_map[placeholder] = match.group(0)
+            return placeholder
 
         return re.sub(pattern, repl, source, flags=re.DOTALL)
 
@@ -107,14 +107,14 @@ def _protect_math_segments(text):
     text = replace_pattern(r"\\\((.*?)\\\)", text)
     text = replace_pattern(r"(?<!\\)\$(?!\$)(?:\\.|[^\n$\\])+(?<!\\)\$", text)
 
-    return text, token_map
+    return text, placeholder_map
 
 
-def _restore_math_segments(rendered_html, token_map):
+def _restore_math_segments(rendered_html, placeholder_map):
     """Restore protected math segments into rendered HTML."""
-    for token, math_text in token_map.items():
+    for placeholder, math_text in placeholder_map.items():
         rendered_html = rendered_html.replace(
-            token, html_lib.escape(math_text, quote=False)
+            placeholder, html_lib.escape(math_text, quote=False)
         )
     return rendered_html
 
@@ -142,13 +142,13 @@ def _set_qtextdocument_markdown(doc, markdown_text):
 def markdown_to_html_fragment(markdown_text):
     """Convert Markdown to an HTML fragment, preserving MathJax delimiters."""
     markdown_text = (markdown_text or "").replace("\r\n", "\n").replace("\r", "\n")
-    protected_text, token_map = _protect_math_segments(markdown_text)
+    protected_text, placeholder_map = _protect_math_segments(markdown_text)
 
     doc = QTextDocument()
     _set_qtextdocument_markdown(doc, protected_text)
 
     fragment = _extract_body_fragment(doc.toHtml())
-    fragment = _restore_math_segments(fragment, token_map)
+    fragment = _restore_math_segments(fragment, placeholder_map)
     return fragment
 
 
@@ -168,14 +168,14 @@ def _strip_math_delimiters(math_text):
 def markdown_to_plain_text(markdown_text):
     """Convert Markdown to plain text for TTS, stripping all formatting."""
     markdown_text = markdown_text or ""
-    protected_text, token_map = _protect_math_segments(markdown_text)
+    protected_text, placeholder_map = _protect_math_segments(markdown_text)
 
     doc = QTextDocument()
     _set_qtextdocument_markdown(doc, protected_text)
     plain = doc.toPlainText()
 
-    for token, math_text in token_map.items():
-        plain = plain.replace(token, _strip_math_delimiters(math_text))
+    for placeholder, math_text in placeholder_map.items():
+        plain = plain.replace(placeholder, _strip_math_delimiters(math_text))
 
     plain = re.sub(r"\s+", " ", plain).strip()
     return plain
