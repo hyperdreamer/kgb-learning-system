@@ -51,6 +51,7 @@ from .config import (
 from .db import DB_SUFFIX
 from .secret_line_edit import SecretLineEdit
 from .tts import TTSWorker, VoiceListWorker
+from .version import get_app_version
 
 _PREVIEW_SAMPLE = "Hello. This is a preview of the selected voice."
 
@@ -109,13 +110,15 @@ class SettingsDialog(QDialog):
         "Appearance",
         "Audio & Speech",
         "AI Providers",
+        "About",
     )
 
-    def __init__(self, settings, parent=None, current_size=None):
+    def __init__(self, settings, parent=None, current_size=None, settings_file=None):
         super().__init__(parent)
         if parent is not None:
             self.setFont(parent.font())
         self.settings = settings
+        self.settings_file = settings_file
         # Staged AI provider bag (mutated by switch/add/rename/delete before Save).
         self._ai_stage = {
             "ai_active_provider": settings.get(
@@ -185,6 +188,7 @@ class SettingsDialog(QDialog):
         self._build_appearance_page()
         self._build_audio_page()
         self._build_ai_page()
+        self._build_about_page()
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -380,6 +384,13 @@ class SettingsDialog(QDialog):
             self._on_voice_selection_changed
         )
 
+        self.pages.addWidget(page)
+
+    def _build_about_page(self):
+        page, layout = self._page()
+        version_label = QLabel(f"KGB 5-Box SRS System {get_app_version()}")
+        version_label.setObjectName("aboutVersionLabel")
+        layout.addRow("Version:", version_label)
         self.pages.addWidget(page)
 
     def _build_ai_page(self):
@@ -1202,7 +1213,10 @@ class SettingsDialog(QDialog):
             )
             return
         try:
-            save_settings(staged)
+            if self.settings_file is None:
+                save_settings(staged)
+            else:
+                save_settings(staged, self.settings_file)
         except OSError as exc:
             QMessageBox.critical(self, "Settings Not Saved", str(exc))
             return

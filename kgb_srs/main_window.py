@@ -27,6 +27,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from .config import (
     load_settings,
     save_settings,
+    normalize_settings_path,
     get_database_root,
     ensure_database_root_structure,
     resolve_default_database,
@@ -93,11 +94,16 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         icon = QIcon.fromTheme(name)
         return icon if not icon.isNull() else QIcon()
 
-    def __init__(self):
+    def __init__(self, settings_file=None):
         super().__init__()
         self.setWindowTitle("KGB 5-Box SRS System")
 
-        self.settings = load_settings()
+        self.settings_file = (
+            normalize_settings_path(settings_file)
+            if settings_file is not None
+            else None
+        )
+        self.settings = load_settings(self.settings_file)
         self.resize(self.settings["width"], self.settings["height"])
 
         self.current_lang = None
@@ -168,7 +174,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # Settings
     # ------------------------------------------------------------------
     def _save_settings(self):
-        save_settings(self.settings)
+        if self.settings_file is None:
+            save_settings(self.settings)
+        else:
+            save_settings(self.settings, self.settings_file)
 
     def closeEvent(self, event):
         worker = self.tts_worker
@@ -1126,11 +1135,13 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             dialog = SentenceCardDialog(
                 self, "Edit Sentence Card", front, items, back,
                 settings=self.settings,
+                settings_file=self.settings_file,
                 conn=self.conn,
             )
         else:
             dialog = SentenceCardDialog(
                 self, "Add Sentence Card", settings=self.settings,
+                settings_file=self.settings_file,
                 conn=self.conn,
             )
 
@@ -1426,9 +1437,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # Settings Dialog
     # ------------------------------------------------------------------
     def open_settings_window(self):
-        dialog = SettingsDialog(
-            self.settings, self, current_size=(self.width(), self.height())
-        )
+        dialog_kwargs = {"current_size": (self.width(), self.height())}
+        settings_file = getattr(self, "settings_file", None)
+        if settings_file is not None:
+            dialog_kwargs["settings_file"] = settings_file
+        dialog = SettingsDialog(self.settings, self, **dialog_kwargs)
         # Keep the background voice-list thread alive even if the modal dialog
         # is closed before the request completes, matching the previous
         # MainWindow-owned worker lifetime.

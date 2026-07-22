@@ -19,7 +19,15 @@ pip install 'PyQt6-WebEngine>=6.6,<7'
 
 # Run
 python main.py
+
+# Use a separate settings file (keeps its preferences and API keys isolated)
+python main.py --config ~/my-kgb-settings.json
+# Short form: python main.py -c ~/my-kgb-settings.json
 ```
+
+Without `--config`, settings continue to use the project-root `barsky_settings.json`.
+The current build version is shown in **Settings → About**; development builds on
+`dev` or `dev-*` branches are labeled with a `.dev` suffix.
 
 Package version:
 

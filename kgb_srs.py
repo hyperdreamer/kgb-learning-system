@@ -8,14 +8,8 @@ kgb_srs/ package.  To run the application:
     python main.py             # entry point
 """
 
-import sys
+from main import main
 
-from PyQt6.QtWidgets import QApplication
-
-from kgb_srs.main_window import BarskyApp
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = BarskyApp()
-    window.show()
-    sys.exit(app.exec())
+    raise SystemExit(main())

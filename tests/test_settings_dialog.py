@@ -12,6 +12,7 @@ from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
+    QLabel,
     QListWidget,
     QMainWindow,
     QPushButton,
@@ -248,9 +249,9 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
     sidebar = dialog.findChild(QListWidget, "settingsCategoryList")
     pages = dialog.findChild(QStackedWidget, "settingsPages")
     assert [sidebar.item(i).text() for i in range(sidebar.count())] == [
-        "General", "Appearance", "Audio & Speech", "AI Providers"
+        "General", "Appearance", "Audio & Speech", "AI Providers", "About"
     ]
-    assert pages.count() == 4
+    assert pages.count() == 5
     expected_pages = {
         "databaseRootInput": 0,
         "databaseRootBrowseButton": 0,
@@ -289,6 +290,18 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch,
     assert dialog.findChild(QObject, "cancelSettingsButton") is not None
     assert worker.started
     assert dialog.voice_worker is worker
+    dialog.close()
+
+
+def test_about_page_reports_application_version(monkeypatch, settings):
+    import kgb_srs.settings_dialog as module
+
+    monkeypatch.setattr(module, "get_app_version", lambda: "2.1.0.dev")
+    dialog, _ = _dialog(monkeypatch, settings)
+    label = dialog.findChild(QLabel, "aboutVersionLabel")
+
+    assert label is not None
+    assert "2.1.0.dev" in label.text()
     dialog.close()
 
 

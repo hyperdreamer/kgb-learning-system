@@ -60,7 +60,8 @@ class SentenceCardDialog(QDialog):
     def __init__(self, parent=None, title="Add Sentence Card",
                  sentence="", items=None, back="",
                  settings: dict | None = None,
-                 conn=None):
+                 conn=None,
+                 settings_file=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(560, 520)
@@ -70,6 +71,7 @@ class SentenceCardDialog(QDialog):
         # Lemma → surface accepted by residual AI membership (re-verified at insert).
         self._result_verified_surfaces: dict[str, str] = {}
         self._settings = settings or {}
+        self._settings_file = settings_file
         self._geometry_persisted = False
         self._conn = conn  # optional: sentence DB for sense inventory
         _apply_ui_font(self, self._settings, parent)
@@ -1038,7 +1040,10 @@ class SentenceCardDialog(QDialog):
         try:
             from .config import save_settings
 
-            save_settings(self._settings)
+            if self._settings_file is None:
+                save_settings(self._settings)
+            else:
+                save_settings(self._settings, self._settings_file)
         except OSError:
             pass
 
