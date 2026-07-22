@@ -61,7 +61,7 @@ def is_development_branch(branch: str | None) -> bool:
 
 
 def get_app_version(branch_getter=None) -> str:
-    """Return the package version, marked for development branches.
+    """Return the package version with one ``-dev`` suffix on dev branches.
 
     Git is consulted only when this function is called, not while importing
     the package.  ``branch_getter`` keeps the branch-dependent behavior easy
@@ -70,4 +70,6 @@ def get_app_version(branch_getter=None) -> str:
     from . import __version__
 
     branch = (branch_getter or get_git_branch)()
-    return f"{__version__}.dev" if is_development_branch(branch) else __version__
+    if not is_development_branch(branch):
+        return __version__
+    return f"{__version__.removesuffix('-dev')}-dev"

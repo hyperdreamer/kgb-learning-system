@@ -1,6 +1,6 @@
 # KGB 5-Box SRS System
 
-**Version 2.2.0**
+**Version 2.2.0-dev**
 
 A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
@@ -24,7 +24,7 @@ python main.py --config ~/my-kgb-settings.json
 
 Without `--config`, settings continue to use the project-root `barsky_settings.json`.
 The current build version is shown in **Settings → About**; development builds on
-`dev` or `dev-*` branches are labeled with a `.dev` suffix.
+`dev` or `dev-*` branches are labeled with a `-dev` suffix.
 
 Package version:
 
@@ -275,7 +275,7 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package (__version__ = 2.2.0)
+kgb_srs/                    # Python package (__version__ = 2.2.0-dev)
 ├── __init__.py
 ├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference

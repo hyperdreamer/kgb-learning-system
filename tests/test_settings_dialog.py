@@ -300,12 +300,12 @@ def test_settings_dialog_has_ordered_categories_and_mapped_controls(
 def test_about_page_reports_application_version(monkeypatch, settings):
     import kgb_srs.settings_dialog as module
 
-    monkeypatch.setattr(module, "get_app_version", lambda: "2.1.0.dev")
+    monkeypatch.setattr(module, "get_app_version", lambda: "2.1.0-dev")
     dialog, _ = _dialog(monkeypatch, settings)
     label = dialog.findChild(QLabel, "aboutVersionLabel")
 
     assert label is not None
-    assert "2.1.0.dev" in label.text()
+    assert "2.1.0-dev" in label.text()
     dialog.close()
 
 
