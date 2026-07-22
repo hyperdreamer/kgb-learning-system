@@ -1590,3 +1590,46 @@ def test_preview_cleanup_unlinks_temp_on_next_preview_and_close(
         assert dialog._tts_temp_path is None
     finally:
         dialog.close()
+
+
+def test_deferred_close_discards_preview_audio_and_suppresses_error(
+    tmp_path, monkeypatch, settings
+):
+    """Late preview signals cannot restart playback or show a modal on close."""
+    from unittest.mock import MagicMock
+
+    dialog, _worker = _dialog(monkeypatch, settings)
+    preview = tmp_path / "late-preview.mp3"
+    preview.write_bytes(b"audio")
+    dialog.preview_player.setSource = MagicMock()
+    dialog.preview_player.play = MagicMock()
+    dialog._deferred_close_action = "close"
+
+    dialog._on_preview_finished(str(preview))
+
+    assert not preview.exists()
+    assert dialog._tts_temp_path is None
+    dialog.preview_player.setSource.assert_not_called()
+    dialog.preview_player.play.assert_not_called()
+
+    warning = MagicMock()
+    monkeypatch.setattr("kgb_srs.settings_dialog.QMessageBox.warning", warning)
+    dialog._on_preview_error("late failure")
+    warning.assert_not_called()
+    dialog._deferred_close_action = None
+    dialog.reject()
+
+
+@pytest.mark.parametrize("action", ["close", "accept", "reject"])
+def test_dialog_exit_stops_preview_before_temp_cleanup(monkeypatch, settings, action):
+    """Every immediate dialog exit stops preview playback before cleanup."""
+    from unittest.mock import MagicMock
+
+    dialog, _worker = _dialog(monkeypatch, settings)
+    calls = []
+    dialog.preview_player.stop = MagicMock(side_effect=lambda: calls.append("stop"))
+    monkeypatch.setattr(dialog, "_cleanup_tts_temp", lambda: calls.append("cleanup"))
+
+    getattr(dialog, action)()
+
+    assert calls[:2] == ["stop", "cleanup"]
