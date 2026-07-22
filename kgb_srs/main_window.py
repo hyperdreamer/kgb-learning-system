@@ -1098,7 +1098,6 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 BarskyApp._tts_is_closing(self)
                 or self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
-                or getattr(self, "card_ui", None) is not request_card_ui
             ):
                 from .tts import unlink_tts_temp
 
@@ -1107,20 +1106,21 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             self._tts_temp_path = file_path
             self.player.setSource(QUrl.fromLocalFile(file_path))
             self.player.play()
-            btn.setEnabled(True)
-            btn.setText("🔊 Listen")
+            if getattr(self, "card_ui", None) is request_card_ui:
+                btn.setEnabled(True)
+                btn.setText("🔊 Listen")
 
         def on_error(err):
             if (
                 BarskyApp._tts_is_closing(self)
                 or self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
-                or getattr(self, "card_ui", None) is not request_card_ui
             ):
                 return
             QMessageBox.warning(self, "TTS Error", f"Audio Error: {err}")
-            btn.setEnabled(True)
-            btn.setText("🔊 Listen")
+            if getattr(self, "card_ui", None) is request_card_ui:
+                btn.setEnabled(True)
+                btn.setText("🔊 Listen")
 
         def on_thread_finished():
             BarskyApp._on_tts_worker_finished(self, worker)

@@ -490,3 +490,127 @@ class TestTtsTempCleanup:
 
         assert warnings == []
         assert button.updates == []
+
+    def test_late_tts_audio_for_redrawn_same_card_plays_without_old_button_update(
+        self, tmp_path, monkeypatch
+    ):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+
+        audio = tmp_path / "barsky_tts_redrawn_same_card.mp3"
+        audio.write_bytes(b"audio")
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            instance = None
+
+            def __init__(self, *_args):
+                super().__init__()
+                FakeWorker.instance = self
+
+            def start(self):
+                return None
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        class FakePlayer:
+            source_calls = 0
+            play_calls = 0
+
+            def setSource(self, *_args):
+                self.source_calls += 1
+
+            def play(self):
+                self.play_calls += 1
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+        card = object()
+        player = FakePlayer()
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=None,
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            player=player,
+            current_card=card,
+            card_ui=object(),
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        button = SimpleNamespace(updates=[])
+        button.setEnabled = lambda value: button.updates.append(("enabled", value))
+        button.setText = lambda value: button.updates.append(("text", value))
+
+        mw.BarskyApp.speak_text(window, "card A", button)
+        button.updates.clear()
+        window.card_ui = object()  # resize redraw
+        FakeWorker.instance.audio_ready.emit(str(audio))
+
+        assert window._tts_temp_path == str(audio)
+        assert audio.exists()
+        assert player.source_calls == 1
+        assert player.play_calls == 1
+        assert button.updates == []
+
+    def test_late_tts_error_for_redrawn_same_card_warns_without_old_button_update(
+        self, monkeypatch
+    ):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            instance = None
+
+            def __init__(self, *_args):
+                super().__init__()
+                FakeWorker.instance = self
+
+            def start(self):
+                return None
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        warnings = []
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+        monkeypatch.setattr(
+            mw.QMessageBox, "warning", lambda *args: warnings.append(args)
+        )
+        card = object()
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=None,
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            current_card=card,
+            card_ui=object(),
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        button = SimpleNamespace(updates=[])
+        button.setEnabled = lambda value: button.updates.append(("enabled", value))
+        button.setText = lambda value: button.updates.append(("text", value))
+
+        mw.BarskyApp.speak_text(window, "card A", button)
+        button.updates.clear()
+        window.card_ui = object()  # resize redraw
+        FakeWorker.instance.error.emit("generation failed")
+
+        assert len(warnings) == 1
+        assert button.updates == []

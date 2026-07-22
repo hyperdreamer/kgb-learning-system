@@ -22,6 +22,10 @@ Toolbar font styling uses guarded widget access because controls are created inc
 
 `BarskyApp.create_database()` validates that a requested database path does not exist and subsequently opens it with SQLite. A concurrent local process could create or replace that pathname in the gap. The simple `O_CREAT | O_EXCL` reservation suggested by audit is insufficient because another process can still replace the pathname after the reservation descriptor is closed and before SQLite opens it. A correct cross-platform repair needs an ownership-safe creation/open design and explicit failure semantics; it is deferred to avoid shipping a partial guarantee that could regress database creation.
 
+### Projection target ownership conflict
+
+`ensure_linked_word_phrase_database()` can currently adopt a pre-existing database at the canonical Word/Phrase projection pathname while linking a sentence database, then sync/prune it as though it were that sentence database's projection. If the target is an unrelated populated database, its type and cards can be overwritten or removed. A safe repair needs persistent source-identity ownership metadata plus an explicit migration/conflict policy for existing markerless projections; a simple type/path guard cannot distinguish a valid legacy projection from an unrelated W/P database. This is deferred to avoid data loss or breaking existing links until that migration design and conflict UI/behavior are specified and tested.
+
 ### `kgb_srs.forms` private legacy exports
 
 `_AIGenerateWorker` and `_apply_ui_font` remain available through `kgb_srs.forms` for existing callers and monkeypatch-based tests. New code should import them from `kgb_srs.form_helpers`. Removing the facade exports requires a documented deprecation cycle and compatibility migration.
