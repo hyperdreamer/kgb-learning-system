@@ -466,48 +466,36 @@ class TestNoDatabaseLoaded:
 
 
 class TestDatabaseLoadFailure:
-    def test_corrupt_load_clears_active_review_state(self, app_with_db, tmp_path):
-        app, _, _ = app_with_db
+    def test_corrupt_candidate_load_preserves_active_review_state(
+        self, app_with_db, tmp_path
+    ):
+        app, active_path, _ = app_with_db
         app.start_review()
         assert app.current_card is not None
         assert app.card_ui is not None
+        active_conn = app.conn
+        active_card = app.current_card
+        active_queue = app.cards_due
+        active_card_ui = app.card_ui
 
         corrupt_db = tmp_path / "corrupt.db"
         corrupt_db.write_bytes(b"not a sqlite database")
-        app.current_db_path = str(corrupt_db)
-        app.current_lang = "Corrupt"
-        app.load_database(silent=True)
+        app.load_database(
+            silent=True, db_path=str(corrupt_db), display="Knowledge-based/Corrupt"
+        )
 
-        assert app.conn is None
-        assert app.current_db_path is None
-        assert app.current_lang is None
-        assert app._db_type is None
-        assert app.current_card is None
-        assert app.cards_due == []
-        assert app.review_mode == ""
-        assert app._paused_review_card is None
-        assert app._paused_review_mode == ""
-        assert app._daily_review_history == []
-        assert app._daily_queue_snapshot == []
-        assert app._paused_cards_due == []
-        assert app._paused_daily_queue == []
-        assert app._paused_review_history == []
-        assert app.card_ui is None
-        assert app.scene.items() == []
-        assert app.db_btn.text() == "📂 Select Database"
-        assert not app.start_btn.isEnabled()
-        assert not app.restart_review_btn.isEnabled()
-        assert not app.previous_review_btn.isEnabled()
-        assert not app.close_review_btn.isEnabled()
-        assert not app.random_checkbox.isEnabled()
-        assert not app.all_cards_checkbox.isEnabled()
-        assert not app.browse_btn.isEnabled()
+        assert app.conn is active_conn
+        assert app.current_db_path == active_path
+        assert app.current_card is active_card
+        assert app.cards_due is active_queue
+        assert app.review_mode == "daily"
+        assert app.card_ui is active_card_ui
+        assert app.start_btn.isEnabled()
+        assert app.random_checkbox.isEnabled()
+        assert app.all_cards_checkbox.isEnabled()
 
-        # Previously active actions are now no-ops rather than operating on
-        # the closed database or stale card.
-        app.flip_card()
-        app.process_answer(correct=True)
-        assert app.current_card is None
+        # The old connection remains usable after candidate validation fails.
+        assert app.conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] > 0
 
 
 class TestCloseEventSettingsFailure:

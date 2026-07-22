@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import datetime
+import tempfile
 
 from .validation import normalize_sentence
 
@@ -155,6 +156,49 @@ def init_db(db_path_or_conn):
             conn.close()
         raise
     return conn
+
+
+def create_database_exclusively(db_path, initializer=None, *, init_database=None):
+    """Build a database in a sibling staging file and publish it without clobbering.
+
+    ``initializer`` receives the initialized staging connection and may add
+    database-specific schema or metadata. ``init_database`` is an optional
+    connection initializer, primarily for callers that provide a local
+    failure boundary. Publication uses a hard link, whose destination creation
+    is atomic and fails if another creator won the race. The final target is
+    never unlinked or replaced by this helper.
+    """
+    target_path = os.fspath(db_path)
+    parent_dir = os.path.dirname(os.path.abspath(target_path))
+    filename = os.path.basename(target_path)
+    staging_fd, staging_path = tempfile.mkstemp(
+        prefix=f".{filename}.staging-", dir=parent_dir
+    )
+    os.close(staging_fd)
+
+    conn = None
+    try:
+        conn = (init_database or init_db)(staging_path)
+        if initializer is not None:
+            initializer(conn)
+        conn.commit()
+        conn.close()
+        conn = None
+
+        # os.link creates the destination only when it does not already exist.
+        # Unlike os.replace(), it cannot overwrite a competitor's database.
+        os.link(staging_path, target_path)
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        finally:
+            try:
+                os.unlink(staging_path)
+            except FileNotFoundError:
+                pass
+
+    return target_path
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,7 @@ from .schema import (
     find_duplicate_sentence_card,
     validate_db_name,
     resolve_db_path,
+    create_database_exclusively,
 )
 from .catalog import (
     DatabaseType,
@@ -193,10 +194,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         if default_db and os.path.exists(default_db):
             for display, path in find_databases(get_database_root(self.settings)):
                 if path == default_db:
-                    self.current_db_path = default_db
-                    self.current_lang = display
-                    self.db_btn.setText(f"📂 {self._leaf_name(display)}")
-                    self.load_database(silent=True)
+                    self.load_database(silent=True, db_path=default_db, display=display)
                     break
 
     # ------------------------------------------------------------------
@@ -692,11 +690,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
         for display, path in find_databases(get_database_root(self.settings)):
             if path == db_path:
-                self.current_db_path = db_path
-                self.current_lang = display
-                self.db_btn.setText(f"📂 {self._leaf_name(display)}")
-                self.load_database(silent=False)
+                self.load_database(silent=False, db_path=db_path, display=display)
                 return
+
+        display = action.text() if hasattr(action, "text") else self._leaf_name(db_path)
+        self.load_database(silent=False, db_path=db_path, display=display or db_path)
 
     def create_new_database(self):
         """Show category/subtype selection dialog, then create DB with metadata."""
@@ -741,34 +739,26 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
 
         target_dir = os.path.dirname(path)
-        conn = None
-        try:
-            os.makedirs(target_dir, exist_ok=True)
 
-            if os.path.exists(path):
-                QMessageBox.warning(
-                    self,
-                    "Exists",
-                    f"A database named '{name}' already exists in this location.",
-                )
-                return
-
-            conn = init_db(path)
+        def initialize_database(conn):
             write_database_type(conn, db_type)
             if db_type == DatabaseType.LANGUAGE_SENTENCE:
                 from .schema import ensure_sentence_schema
-                from .senses import ensure_linked_word_phrase_database
 
                 ensure_sentence_schema(conn)
-                try:
-                    ensure_linked_word_phrase_database(conn, path, db_root, sync=True)
-                except Exception as exc:
-                    # The word/phrase database is a derived projection.  Its
-                    # failure must not prevent opening the newly created source DB.
-                    print(
-                        f"Word/phrase projection creation failed: {exc}",
-                        file=sys.stderr,
-                    )
+
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            create_database_exclusively(
+                path, initialize_database, init_database=init_db
+            )
+        except FileExistsError:
+            QMessageBox.warning(
+                self,
+                "Exists",
+                f"A database named '{name}' already exists in this location.",
+            )
+            return
         except (OSError, sqlite3.Error) as exc:
             QMessageBox.warning(
                 self,
@@ -776,28 +766,15 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 f"Could not create database '{name}':\n{path}\n\n{exc}",
             )
             return
-        finally:
-            if conn is not None:
-                conn.close()
 
         display = os.path.join(subdir, name)
-
-        self.current_db_path = path
-        self.current_lang = display
-        self.db_btn.setText(f"📂 {name}")
-        self.load_database(silent=False)
+        self.load_database(silent=False, db_path=path, display=display)
 
     # ------------------------------------------------------------------
     # Database open / close
     # ------------------------------------------------------------------
-    def _clear_database_state(self):
-        """Clear all UI and session state tied to the current database."""
-        if self.conn:
-            self.conn.close()
-        self.conn = None
-        self.current_db_path = None
-        self.current_lang = None
-        self._db_type = None
+    def _reset_review_session(self):
+        """Reset state that belongs to one database review session."""
         self.current_card = None
         self._current_card_transition = None
         self.cards_due = []
@@ -811,6 +788,16 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._paused_cards_due = []
         self._paused_daily_queue = []
         self._paused_review_history = []
+
+    def _clear_database_state(self):
+        """Clear all UI and session state tied to the current database."""
+        if self.conn:
+            self.conn.close()
+        self.conn = None
+        self.current_db_path = None
+        self.current_lang = None
+        self._db_type = None
+        self._reset_review_session()
         self.db_btn.setText("📂 Select Database")
 
         for checkbox in (self.random_checkbox, self.all_cards_checkbox):
@@ -823,69 +810,32 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.card_ui = None
         self._update_button_visibility()
 
-    def load_database(self, silent=False):
-        """Open the database, ensure metadata, and initialize review state."""
-        if not self.current_db_path:
-            if not silent:
-                QMessageBox.warning(self, "Error", "Load a database first.")
-            return
+    def _randomize_box_five_for_connection(self, conn):
+        """Apply the occasional Box 5 reset while preparing a connection."""
+        c = conn.cursor()
+        c.execute("SELECT id FROM cards WHERE box = 5")
+        mastered_cards = c.fetchall()
+        if mastered_cards and random.random() < 0.05:
+            target = random.choice(mastered_cards)[0]
+            today_str = datetime.date.today().isoformat()
+            c.execute(
+                "UPDATE cards SET box = 1, next_review = ? WHERE id = ?",
+                (today_str, target),
+            )
+            conn.commit()
 
-        if not os.path.exists(self.current_db_path):
-            failed_path = self.current_db_path
-            self._clear_database_state()
-            if not silent:
-                QMessageBox.warning(
-                    self, "Error", f"Database file not found:\n{failed_path}"
-                )
-            return
+    def _adopt_database(self, conn, path, display, db_type, is_random):
+        """Replace the active database after its candidate has fully prepared."""
+        old_conn = self.conn
+        if old_conn is not None:
+            old_conn.close()
 
-        if self.conn:
-            self.conn.close()
-            self.conn = None
-
-        try:
-            self.conn = init_db(self.current_db_path)
-
-            # --- Metadata inference / persistence ---
-            db_type = read_database_type(self.conn)
-            if db_type is None:
-                db_type = infer_database_type(self.current_db_path)
-                write_database_type(self.conn, db_type)
-
-            self._db_type = db_type
-
-            if db_type == DatabaseType.LANGUAGE_SENTENCE:
-                from .schema import ensure_sentence_schema
-                from .senses import ensure_linked_word_phrase_database
-
-                ensure_sentence_schema(self.conn)
-                # Old sentence DBs without a link get one automatically.
-                try:
-                    ensure_linked_word_phrase_database(
-                        self.conn,
-                        self.current_db_path,
-                        get_database_root(self.settings),
-                        sync=True,
-                    )
-                except Exception:
-                    pass
-
-            # --- Restore random review ---
-            c = self.conn.cursor()
-            c.execute("SELECT value FROM settings WHERE key = 'random_review'")
-            res = c.fetchone()
-        except Exception as e:
-            failed_path = self.current_db_path
-            self._clear_database_state()
-            if not silent:
-                QMessageBox.warning(
-                    self, "Error", f"Failed to open database:\n{failed_path}\n\n{e}"
-                )
-            return
-
-        is_random = True
-        if res:
-            is_random = res[0] == "1"
+        self.conn = conn
+        self.current_db_path = path
+        self.current_lang = display
+        self._db_type = db_type
+        self.db_btn.setText(f"📂 {self._leaf_name(display)}")
+        self._reset_review_session()
 
         self.random_checkbox.blockSignals(True)
         self.random_checkbox.setChecked(is_random)
@@ -900,29 +850,77 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             self.all_cards_checkbox.setEnabled(True)
             self.all_cards_checkbox.blockSignals(False)
 
-        self.current_card = None
-        self._current_card_transition = None
-        self.cards_due = []
-        self.review_mode = ""
-        self._paused_review_card = None
-        self._paused_current_card_transition = None
-        self._paused_review_mode = ""
-        self._daily_review_history = []
-        self._daily_queue_snapshot = []
-        self._paused_cards_due = []
-        self._paused_daily_queue = []
-        self._paused_review_history = []
-
-        self.randomize_box_five()
-
+        self.scene.clear()
+        self.card_ui = None
         self._update_button_visibility()
 
+    def load_database(self, silent=False, *, db_path=None, display=None):
+        """Prepare a candidate database, then atomically adopt it on success."""
+        candidate_path = db_path or self.current_db_path
+        candidate_display = display or self.current_lang
+        if not candidate_path:
+            if not silent:
+                QMessageBox.warning(self, "Error", "Load a database first.")
+            return
+
+        if not os.path.exists(candidate_path):
+            if not silent:
+                QMessageBox.warning(
+                    self, "Error", f"Database file not found:\n{candidate_path}"
+                )
+            return
+
+        candidate_conn = None
+        try:
+            candidate_conn = init_db(candidate_path)
+
+            # --- Metadata inference / persistence ---
+            db_type = read_database_type(candidate_conn)
+            if db_type is None:
+                db_type = infer_database_type(candidate_path)
+                write_database_type(candidate_conn, db_type)
+
+            if db_type == DatabaseType.LANGUAGE_SENTENCE:
+                from .schema import ensure_sentence_schema
+                from .senses import ensure_linked_word_phrase_database
+
+                ensure_sentence_schema(candidate_conn)
+                # Old sentence DBs without a link get one automatically.
+                try:
+                    ensure_linked_word_phrase_database(
+                        candidate_conn,
+                        candidate_path,
+                        get_database_root(self.settings),
+                        sync=True,
+                    )
+                except Exception:
+                    pass
+
+            # --- Restore random review ---
+            c = candidate_conn.cursor()
+            c.execute("SELECT value FROM settings WHERE key = 'random_review'")
+            res = c.fetchone()
+            self._randomize_box_five_for_connection(candidate_conn)
+        except Exception as exc:
+            if candidate_conn is not None:
+                candidate_conn.close()
+            if not silent:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Failed to open database:\n{candidate_path}\n\n{exc}",
+                )
+            return
+
+        is_random = res[0] == "1" if res else True
+        self._adopt_database(
+            candidate_conn, candidate_path, candidate_display, db_type, is_random
+        )
+
         if not silent:
-            QMessageBox.information(
-                self, "Success", f"Loaded database: {self.current_lang}"
-            )
+            QMessageBox.information(self, "Success", f"Loaded database: {display}")
             if not HAS_WEBENGINE:
-                if "Math" in self.current_lang or "LaTeX" in self.current_lang:
+                if "Math" in display or "LaTeX" in display:
                     QMessageBox.warning(
                         self,
                         "Notice",
@@ -930,22 +928,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                         "pip install PyQt6-WebEngine",
                     )
 
-        self.scene.clear()
         if self.isVisible():
             self.redraw_canvas()
 
     def randomize_box_five(self):
-        c = self.conn.cursor()
-        c.execute("SELECT id FROM cards WHERE box = 5")
-        mastered_cards = c.fetchall()
-        if mastered_cards and random.random() < 0.05:
-            target = random.choice(mastered_cards)[0]
-            today_str = datetime.date.today().isoformat()
-            c.execute(
-                "UPDATE cards SET box = 1, next_review = ? WHERE id = ?",
-                (today_str, target),
-            )
-            self.conn.commit()
+        self._randomize_box_five_for_connection(self.conn)
 
     def on_random_toggled(self, state):
         if not self.conn:

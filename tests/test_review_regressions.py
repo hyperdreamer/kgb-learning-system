@@ -826,26 +826,30 @@ class TestReviewControls:
         conn.close()
         w.close()
 
-    def test_missing_db_load_clears_active_review_state(self, tmp_path):
-        """A missing selected database clears the review it replaces."""
+    def test_missing_candidate_load_preserves_active_review_state(self, tmp_path):
+        """A missing selection leaves the active review untouched."""
         conn = self._db(1)
         w = self._win(conn=conn)
+        w.current_db_path = "active_barsky.db"
+        w.current_lang = "Active"
         w.start_review()
         assert w.current_card is not None
         assert w.review_mode == "daily"
-        w.current_db_path = str(tmp_path / "missing_barsky.db")
-        w.current_lang = "Missing"
+        card = w.current_card
+        due = w.cards_due
 
-        w.load_database(silent=True)
+        w.load_database(
+            silent=True,
+            db_path=str(tmp_path / "missing_barsky.db"),
+            display="Missing",
+        )
 
-        assert w.conn is None
-        assert w.current_db_path is None
-        assert w.current_lang is None
-        assert w.current_card is None
-        assert w.cards_due == []
-        assert w.review_mode == ""
-        assert w._paused_review_card is None
-        assert w._paused_review_mode == ""
+        assert w.conn is conn
+        assert w.current_db_path == "active_barsky.db"
+        assert w.current_lang == "Active"
+        assert w.current_card is card
+        assert w.cards_due is due
+        assert w.review_mode == "daily"
         w.close()
 
     def test_create_sentence_db_survives_projection_failure(
