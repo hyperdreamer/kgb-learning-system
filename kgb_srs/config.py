@@ -2,7 +2,11 @@
 
 import os
 import json
+import logging
 import tempfile
+
+
+logger = logging.getLogger(__name__)
 
 # --- Paths ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -230,8 +234,12 @@ def load_settings(settings_file=None):
                         # Preserve extension keys, but never let an invalid
                         # value replace a known default setting.
                         settings[key] = value
-        except Exception as e:
-            print(f"Error loading settings: {e}")
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Could not load settings from %s; using defaults: %s",
+                settings_file,
+                exc,
+            )
     # With no usable profile mapping, drop the default bag so
     # ensure_ai_provider_profiles migrates legacy flat keys. Otherwise an
     # empty Default profile would clobber a real ai_api_key.

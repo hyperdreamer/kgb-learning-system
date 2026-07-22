@@ -73,6 +73,22 @@ def test_load_settings_ignores_invalid_scalar_values_and_starts_app(
         app.processEvents()
 
 
+def test_load_settings_logs_corrupt_json_and_uses_defaults(tmp_path, caplog):
+    """A broken settings file must remain non-fatal but be diagnosable."""
+    import logging
+    import kgb_srs.config as config
+
+    settings_path = tmp_path / "corrupt.json"
+    settings_path.write_text("{ not valid json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="kgb_srs.config"):
+        loaded = config.load_settings(settings_path)
+
+    assert loaded["width"] == config.DEFAULT_SETTINGS["width"]
+    assert "Could not load settings" in caplog.text
+    assert str(settings_path) in caplog.text
+
+
 class TestGetDatabaseRoot:
     def test_empty_settings_falls_back_to_project_db(self):
         assert get_database_root({}) == DIR_DB
