@@ -9,8 +9,103 @@ import pytest
 from .qt_helpers import qt_app as _qt_app
 
 
-class TestTtsTempCleanup:
-    """R2-2: temp barsky_tts_*.mp3 files must not linger forever."""
+class TestTtsRegressions:
+    """TTS payload formatting and temporary-file lifecycle regressions."""
+
+    def test_prepare_tts_text_adds_pauses_to_unpunctuated_segments(self):
+        from kgb_srs.tts import prepare_tts_text
+
+        assert prepare_tts_text(
+            "A sentence without punctuation\nword\nmulti-word phrase"
+        ) == "A sentence without punctuation.\nword.\nmulti-word phrase."
+
+    def test_prepare_tts_text_keeps_punctuation_inside_closing_quotes(self):
+        from kgb_srs.tts import prepare_tts_text
+
+        assert prepare_tts_text('"Finished."\n(What?)\n「終わり。」') == (
+            '"Finished."\n(What?)\n「終わり。」'
+        )
+
+    def test_prepare_tts_text_keeps_common_non_latin_terminal_punctuation(self):
+        from kgb_srs.tts import prepare_tts_text
+
+        assert prepare_tts_text("هل انتهيت؟\nयह समाप्त है।") == (
+            "هل انتهيت؟\nयह समाप्त है।"
+        )
+
+    def test_card_speech_text_keeps_card_fields_as_tts_segments(self):
+        _qt_app()
+        from kgb_srs.review_controller import _card_speech_text
+
+        assert _card_speech_text(
+            "A sentence without punctuation", "word or phrase"
+        ) == "A sentence without punctuation\nword or phrase"
+
+    def test_sentence_card_tts_pauses_between_sentence_and_each_expression(self):
+        _qt_app()
+        import sqlite3
+
+        from kgb_srs.review_controller import _sentence_card_speech_text
+        from kgb_srs.schema import init_db, insert_sentence_card
+        from kgb_srs.tts import prepare_tts_text
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            init_db(conn)
+            sentence = "A river flows through a valley"
+            card_id = insert_sentence_card(
+                conn,
+                sentence,
+                [
+                    ("river", "a natural stream"),
+                    ("valley", "a low area"),
+                ],
+            )
+
+            assert prepare_tts_text(
+                _sentence_card_speech_text(conn, card_id, sentence)
+            ) == (
+                "A river flows through a valley.\n"
+                "river: a natural stream.\n"
+                "valley: a low area."
+            )
+        finally:
+            conn.close()
+
+    def test_generate_audio_sends_paused_segments_to_edge_tts(
+        self, tmp_path, monkeypatch
+    ):
+        _qt_app()
+        import kgb_srs.tts as tts
+
+        original_mkstemp = tts.tempfile.mkstemp
+
+        def mkstemp_in_test_dir(*args, **kwargs):
+            kwargs["dir"] = str(tmp_path)
+            return original_mkstemp(*args, **kwargs)
+
+        class FakeCommunicate:
+            text = None
+
+            def __init__(self, text, _voice):
+                FakeCommunicate.text = text
+
+            async def save(self, path):
+                with open(path, "wb") as audio:
+                    audio.write(b"fake audio")
+
+        monkeypatch.setattr(tts.tempfile, "mkstemp", mkstemp_in_test_dir)
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+
+        worker = tts.TTSWorker(
+            "A sentence without punctuation\nword\nmulti-word phrase", "voice"
+        )
+        path = asyncio.run(worker.generate_audio())
+
+        assert FakeCommunicate.text == (
+            "A sentence without punctuation.\nword.\nmulti-word phrase."
+        )
+        tts.unlink_tts_temp(path)
 
     def test_generate_audio_precreates_private_temp_file(self, tmp_path, monkeypatch):
         _qt_app()

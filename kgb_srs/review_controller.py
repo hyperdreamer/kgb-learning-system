@@ -20,6 +20,30 @@ from .validation import (
 )
 
 
+def _card_speech_text(*segments) -> str:
+    """Return plain-text card fields as distinct TTS speech segments."""
+    spoken_segments = []
+    for segment in segments:
+        spoken_segment = markdown_to_plain_text(segment)
+        if spoken_segment:
+            spoken_segments.append(spoken_segment)
+    return "\n".join(spoken_segments)
+
+
+def _ordered_sentence_card_items(conn, card_id, sentence):
+    """Fetch a sentence card's expressions in their displayed order."""
+    items = _fetch_expressions_for_card(conn, card_id)
+    return _sort_items_by_sentence_order(sentence, items)
+
+
+def _sentence_card_speech_text(conn, card_id, sentence) -> str:
+    """Build sentence-card TTS text from the same order used for display."""
+    ordered_items = _ordered_sentence_card_items(conn, card_id, sentence)
+    return _card_speech_text(
+        sentence, *_format_sentence_meaning_lines(ordered_items)
+    )
+
+
 class ReviewHistoryEntry(NamedTuple):
     """A card left behind during review and the transition that left it."""
 
@@ -495,14 +519,13 @@ class ReviewControllerMixin:
         metadata_md = f"**Box {box}** | ID: `{card_id}`"
 
         if self.is_current_flipped:
-            spoken_front = markdown_to_plain_text(front)
-            spoken_back = markdown_to_plain_text(back)
-            spoken_text = f"{spoken_front}. {spoken_back}".strip()
+            spoken_text = _card_speech_text(front, back)
 
             if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
                 display_md = self._build_sentence_card_display(
                     card_id, front, back, flipped=True, metadata=metadata_md
                 )
+                spoken_text = _sentence_card_speech_text(self.conn, card_id, front)
             elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
                 display_md = self._build_word_phrase_card_display(
                     front, back, flipped=True, metadata=metadata_md
@@ -542,8 +565,7 @@ class ReviewControllerMixin:
         sentence. Multiple items are numbered and separated as distinct
         blocks so Markdown keeps them on separate lines.
         """
-        items = _fetch_expressions_for_card(self.conn, card_id)
-        ordered = _sort_items_by_sentence_order(sentence, items)
+        ordered = _ordered_sentence_card_items(self.conn, card_id, sentence)
         highlighted = _highlight_sentence_for_items(sentence, ordered)
 
         if flipped:
@@ -583,20 +605,18 @@ class ReviewControllerMixin:
 
         metadata_md = f"**Box {box}** | ID: `{card_id}`"
 
+        spoken_text = _card_speech_text(front, back)
         if getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE:
             display_md = self._build_sentence_card_display(
                 card_id, front, back, flipped=True, metadata=metadata_md
             )
+            spoken_text = _sentence_card_speech_text(self.conn, card_id, front)
         elif getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE:
             display_md = self._build_word_phrase_card_display(
                 front, back, flipped=True, metadata=metadata_md
             )
         else:
             display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
-
-        spoken_front = markdown_to_plain_text(front)
-        spoken_back = markdown_to_plain_text(back)
-        spoken_text = f"{spoken_front}. {spoken_back}".strip()
 
         self.card_ui.set_text(display_md, True, spoken_text)
 

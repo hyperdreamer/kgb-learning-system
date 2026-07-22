@@ -9,6 +9,28 @@ import edge_tts
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
+_TTS_TERMINAL_PUNCTUATION = frozenset(".!?…。！？؟۔।॥")
+_TTS_TRAILING_CLOSERS = "\"'”’»›）)]}】〕〉》」』"
+
+
+def _ends_with_tts_terminal_punctuation(segment):
+    """Return whether terminal punctuation precedes closing delimiters."""
+    content = segment.rstrip(_TTS_TRAILING_CLOSERS)
+    return bool(content) and content[-1] in _TTS_TERMINAL_PUNCTUATION
+
+
+def prepare_tts_text(text):
+    """End each non-empty speech segment so Edge TTS pauses after it."""
+    segments = (line.strip() for line in text.splitlines())
+    return "\n".join(
+        segment
+        if _ends_with_tts_terminal_punctuation(segment)
+        else f"{segment}."
+        for segment in segments
+        if segment
+    )
+
+
 def unlink_tts_temp(path):
     """Best-effort delete of a TTS temp MP3. Returns None."""
     if not path:
@@ -35,7 +57,7 @@ class TTSWorker(QThread):
         fd, temp_file = tempfile.mkstemp(prefix="barsky_tts_", suffix=".mp3")
         os.close(fd)
 
-        communicate = edge_tts.Communicate(self.text, self.voice)
+        communicate = edge_tts.Communicate(prepare_tts_text(self.text), self.voice)
         try:
             await communicate.save(temp_file)
         except Exception:

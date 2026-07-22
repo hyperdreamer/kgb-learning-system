@@ -135,6 +135,126 @@ class TestReviewPresentationRegressions:
         assert "\n\n" in between
         conn.close()
 
+    @staticmethod
+    def _legacy_sentence_card():
+        """Create a card whose cached back preserves its former add order."""
+        import sqlite3
+
+        from kgb_srs.schema import init_db, insert_sentence_card
+
+        sentence = (
+            "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        )
+        legacy_back = (
+            "1. **exact**: to demand and obtain (revenge) from someone\n\n"
+            "2. **grievance**: a real or imagined wrong or injustice"
+        )
+        conn = sqlite3.connect(":memory:")
+        init_db(conn)
+        card_id = insert_sentence_card(
+            conn,
+            sentence,
+            [
+                ("exact", "to demand and obtain (revenge) from someone"),
+                ("grievance", "a real or imagined wrong or injustice"),
+            ],
+            back=legacy_back,
+        )
+        return conn, card_id, sentence, legacy_back
+
+    def test_sentence_card_tts_uses_sentence_order_after_reveal(self):
+        """TTS must follow the displayed sentence order, not a stale back cache."""
+        _qt_app()
+        from types import SimpleNamespace
+
+        from kgb_srs.catalog import DatabaseType
+        from kgb_srs.main_window import BarskyApp
+
+        class CapturingCard:
+            def set_text(self, display_text, is_flipped, speech_text):
+                self.display_text = display_text
+                self.is_flipped = is_flipped
+                self.speech_text = speech_text
+
+        conn, card_id, sentence, legacy_back = self._legacy_sentence_card()
+        try:
+            card = CapturingCard()
+            window = SimpleNamespace(
+                conn=conn,
+                current_card=(card_id, sentence, legacy_back, 1),
+                _db_type=DatabaseType.LANGUAGE_SENTENCE,
+                card_ui=card,
+            )
+            window._build_sentence_card_display = (
+                BarskyApp._build_sentence_card_display.__get__(window)
+            )
+
+            BarskyApp.flip_card(window)
+
+            assert card.display_text.index("1. **grievance**:") < card.display_text.index(
+                "2. **exact**:"
+            )
+            assert card.speech_text.index("grievance:") < card.speech_text.index(
+                "exact:"
+            )
+        finally:
+            conn.close()
+
+    def test_redrawn_sentence_card_tts_uses_sentence_order(self, monkeypatch):
+        """A flipped redraw must retain the same sentence-ordered TTS input."""
+        _qt_app()
+        from types import SimpleNamespace
+
+        import kgb_srs.review_controller as review_controller
+        from kgb_srs.catalog import DatabaseType
+        from kgb_srs.main_window import BarskyApp
+
+        class CapturingCard:
+            def __init__(self, *args):
+                self.display_text = ""
+                self.speech_text = ""
+
+            def set_text(self, display_text, is_flipped, speech_text):
+                self.display_text = display_text
+                self.speech_text = speech_text
+
+        class FakeScene:
+            def width(self):
+                return 900
+
+            def height(self):
+                return 700
+
+            def addItem(self, item):
+                self.item = item
+
+        conn, card_id, sentence, legacy_back = self._legacy_sentence_card()
+        try:
+            window = SimpleNamespace(
+                conn=conn,
+                current_card=(card_id, sentence, legacy_back, 1),
+                is_current_flipped=True,
+                _db_type=DatabaseType.LANGUAGE_SENTENCE,
+                scene=FakeScene(),
+                _zone_y=600,
+                _update_button_visibility=lambda: None,
+            )
+            window._build_sentence_card_display = (
+                BarskyApp._build_sentence_card_display.__get__(window)
+            )
+            monkeypatch.setattr(review_controller, "FlashCardItem", CapturingCard)
+
+            BarskyApp.draw_card_ui(window)
+
+            assert window.card_ui.display_text.index(
+                "1. **grievance**:"
+            ) < window.card_ui.display_text.index("2. **exact**:")
+            assert window.card_ui.speech_text.index(
+                "grievance:"
+            ) < window.card_ui.speech_text.index("exact:")
+        finally:
+            conn.close()
+
 
 class TestReviewControls:
     """Button visibility (#1), close-preserves-queue (#2), resume semantics
