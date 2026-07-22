@@ -35,11 +35,26 @@ _REVIEW_STYLE_ATTRIBUTE_RE = re.compile(
     r"\s+style\s*=\s*(?P<value>\"[^\"]*\"|'[^']*'|[^\s>]+)",
     flags=re.IGNORECASE,
 )
-# QTextDocument emits Markdown bold as ``<span style="font-weight:700">``.
-# Retain only that presentation semantic, in canonical form; every other CSS
-# declaration remains untrusted and is discarded.
+# QTextDocument emits Markdown bold/italic as span styles. Retain only those
+# presentation semantics in canonical form; every other CSS declaration remains
+# untrusted and is discarded.
 _REVIEW_SAFE_BOLD_STYLE_RE = re.compile(
     r"(?:^|;)\s*font-weight\s*:\s*(?:bold|[6-9]00)\s*(?:;|$)",
+    flags=re.IGNORECASE,
+)
+_REVIEW_SAFE_ITALIC_STYLE_RE = re.compile(
+    r"(?:^|;)\s*font-style\s*:\s*italic\s*(?:;|$)",
+    flags=re.IGNORECASE,
+)
+# QTextDocument emits a nested Markdown quote with this fixed pair of
+# properties. Keeping only the canonical pair gives word/phrase examples a
+# wrapping block indent while arbitrary user-provided CSS remains discarded.
+_REVIEW_SAFE_QT_BLOCK_INDENT_RE = re.compile(
+    r"(?:^|;)\s*-qt-block-indent\s*:\s*1\s*(?:;|$)",
+    flags=re.IGNORECASE,
+)
+_REVIEW_SAFE_QT_INDENT_MARGIN_RE = re.compile(
+    r"(?:^|;)\s*margin-left\s*:\s*40px\s*(?:;|$)",
     flags=re.IGNORECASE,
 )
 _REVIEW_URL_ATTRIBUTE_RE = re.compile(
@@ -76,9 +91,20 @@ def sanitize_review_html_fragment(fragment: str) -> str:
     def replace_style_attribute(match):
         raw_value = match.group("value")
         style_value = raw_value[1:-1] if raw_value[:1] in {'"', "'"} else raw_value
-        if _REVIEW_SAFE_BOLD_STYLE_RE.search(html_lib.unescape(style_value)):
-            return ' style="font-weight: 700;"'
-        return ""
+        style_value = html_lib.unescape(style_value)
+        safe_declarations = []
+        if _REVIEW_SAFE_BOLD_STYLE_RE.search(style_value):
+            safe_declarations.append("font-weight: 700")
+        if _REVIEW_SAFE_ITALIC_STYLE_RE.search(style_value):
+            safe_declarations.append("font-style: italic")
+        if (
+            _REVIEW_SAFE_QT_BLOCK_INDENT_RE.search(style_value)
+            and _REVIEW_SAFE_QT_INDENT_MARGIN_RE.search(style_value)
+        ):
+            safe_declarations.extend(("margin-left: 40px", "-qt-block-indent: 1"))
+        if not safe_declarations:
+            return ""
+        return f' style="{"; ".join(safe_declarations)};"'
 
     cleaned = _REVIEW_STYLE_ATTRIBUTE_RE.sub(replace_style_attribute, cleaned)
 

@@ -400,9 +400,12 @@ def _highlight_expression_in_example(example: str, expression: str) -> str:
     return highlight_unfamiliar_in_sentence(text, [expr])
 
 
-# Em spaces used for example indent. ASCII spaces / Qt block-indent are not
-# reliable in the review WebEngine view (Chromium ignores -qt-block-indent).
-_EXAMPLE_INDENT = "\u2003\u2003"  # two em spaces ≈ 2em left indent
+# A nested Markdown quote gives examples a real block-level indent, including
+# wrapped lines, when QTextDocument renders the review card.
+_EXAMPLE_MARKDOWN_PREFIX = "    > "
+# An empty quote makes QTextDocument close each ordered list before the next
+# sense, preventing later examples from losing the first example's indent.
+_SENSE_SEPARATOR = "\n\n> \n\n"
 
 
 def build_word_phrase_back_from_senses(
@@ -415,10 +418,10 @@ def build_word_phrase_back_from_senses(
 
         1. <meaning>
 
-        <example with **surface form** bolded>
+            > *<example with **surface form** bolded>*
 
-    The example sits on its own line under the meaning, indented with em
-    spaces so both QTextDocument and WebEngine show a clear hierarchy.
+    The nested quote makes the italic example a subordinate, block-indented
+    line under its meaning, including when the sentence wraps.
     """
     parts: list[str] = []
     for i, sense in enumerate(senses, 1):
@@ -430,9 +433,9 @@ def build_word_phrase_back_from_senses(
         block = f"{i}. {meaning}" if meaning else f"{i}."
         if example:
             highlighted = _highlight_expression_in_example(example, sense.expression)
-            block = f"{block}\n\n{_EXAMPLE_INDENT}{highlighted}"
+            block = f"{block}\n\n{_EXAMPLE_MARKDOWN_PREFIX}*{highlighted}*"
         parts.append(block)
-    return "\n\n".join(parts)
+    return _SENSE_SEPARATOR.join(parts)
 
 
 def derive_word_phrase_entries(conn) -> list[tuple[str, str, list[Sense]]]:

@@ -144,6 +144,109 @@ def test_set_text_renders_unfamiliar_sentence_terms_in_bold(flashcard):
         assert cursor.charFormat().fontWeight() >= QFont.Weight.Bold.value
 
 
+def test_word_phrase_example_is_indented_below_its_sense(flashcard):
+    """A word/phrase example remains nested under its numbered meaning."""
+    from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
+
+    sense = Sense(
+        id=1,
+        expression="bolt",
+        meaning="a metal fastener",
+        expression_norm="bolt",
+        meaning_norm="a metal fastener",
+    )
+    back = build_word_phrase_back_from_senses(
+        [sense], {sense.id: ["A bolt secures the door."]}
+    )
+    flashcard.set_text(f"**bolt**\n\n---\n\n{back}", is_flipped=True)
+
+    blocks = {}
+    block = flashcard.text_widget.document().begin()
+    while block.isValid():
+        blocks[block.text().strip()] = block
+        block = block.next()
+
+    meaning_block = blocks["a metal fastener"]
+    example_block = blocks["A bolt secures the door."]
+    assert example_block.blockFormat().leftMargin() > meaning_block.blockFormat().leftMargin()
+
+
+def test_word_phrase_example_is_italic_without_losing_surface_bold(flashcard):
+    """Example text is italic while its highlighted learning target stays bold."""
+    from PyQt6.QtGui import QFont
+    from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
+
+    sense = Sense(
+        id=1,
+        expression="bolt",
+        meaning="a metal fastener",
+        expression_norm="bolt",
+        meaning_norm="a metal fastener",
+    )
+    back = build_word_phrase_back_from_senses(
+        [sense], {sense.id: ["A bolt secures the door."]}
+    )
+    flashcard.set_text(f"**bolt**\n\n---\n\n{back}", is_flipped=True)
+
+    document = flashcard.text_widget.document()
+    example_cursor = document.find("A bolt secures")
+
+    assert not example_cursor.isNull()
+    assert example_cursor.charFormat().fontItalic()
+
+    target_cursor = document.find("bolt", example_cursor.selectionStart())
+    assert not target_cursor.isNull()
+    assert target_cursor.charFormat().fontItalic()
+    assert target_cursor.charFormat().fontWeight() >= QFont.Weight.Bold.value
+
+
+def test_word_phrase_examples_keep_the_same_indent_for_each_sense(flashcard):
+    """Every example in a multi-sense word/phrase card aligns consistently."""
+    from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
+
+    senses = [
+        Sense(
+            id=1,
+            expression="bank",
+            meaning="a financial institution",
+            expression_norm="bank",
+            meaning_norm="a financial institution",
+        ),
+        Sense(
+            id=2,
+            expression="bank",
+            meaning="the side of a river",
+            expression_norm="bank",
+            meaning_norm="the side of a river",
+        ),
+    ]
+    back = build_word_phrase_back_from_senses(
+        senses,
+        {
+            senses[0].id: ["I visited the bank."],
+            senses[1].id: ["The bank slopes steeply."],
+        },
+    )
+    flashcard.set_text(f"**bank**\n\n---\n\n{back}", is_flipped=True)
+
+    blocks = {}
+    block = flashcard.text_widget.document().begin()
+    while block.isValid():
+        blocks[block.text().strip()] = block
+        block = block.next()
+
+    first_meaning = blocks["a financial institution"]
+    second_meaning = blocks["the side of a river"]
+    first_example = blocks["I visited the bank."]
+    second_example = blocks["The bank slopes steeply."]
+    first_example_margin = first_example.blockFormat().leftMargin()
+    second_example_margin = second_example.blockFormat().leftMargin()
+
+    assert first_example_margin > first_meaning.blockFormat().leftMargin()
+    assert second_example_margin > second_meaning.blockFormat().leftMargin()
+    assert first_example_margin == second_example_margin
+
+
 def test_review_card_uses_proxy_safe_text_renderer_when_webengine_is_available(
     monkeypatch,
 ):
@@ -228,16 +331,18 @@ def test_review_html_is_offline_and_sanitizes_resource_markup():
     assert "$x^2$" in document  # safe, visible offline math fallback
 
 
-def test_review_html_preserves_only_safe_bold_inline_style():
-    """Markdown's bold style survives while unrelated CSS remains stripped."""
+def test_review_html_preserves_only_safe_emphasis_inline_styles():
+    """Markdown emphasis survives while unrelated CSS remains stripped."""
     from kgb_srs.markdown_utils import sanitize_review_html_fragment
 
     fragment = sanitize_review_html_fragment(
-        '<span style="color: red; font-weight: 700; '
+        '<span style="color: red; font-weight: 700; font-style: italic; '
         'background: url(https://bad.test/style)">target</span>'
     )
 
-    assert fragment == '<span style="font-weight: 700;">target</span>'
+    assert fragment == (
+        '<span style="font-weight: 700; font-style: italic;">target</span>'
+    )
 
 
 @pytest.mark.parametrize(
