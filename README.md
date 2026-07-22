@@ -335,3 +335,12 @@ python -m pytest tests/test_ai_provider.py -v
 ```bash
 pip install -r requirements.txt
 ```
+
+---
+
+## License
+
+Copyright © 2026 hyperdreamer.
+
+KGB 5-Box SRS System is licensed under the GNU General Public License,
+version 3.0 only (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full text.
