@@ -1,6 +1,7 @@
 """Browse and search dialog for card databases."""
 
 import datetime
+import sqlite3
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
@@ -227,16 +228,52 @@ class BrowseCardsDialog(QDialog):
             or not back_dialog.text_value
         ):
             return
-        self.controller.conn.execute(
-            "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-            (
-                front_dialog.text_value,
-                back_dialog.text_value,
-                datetime.date.today().isoformat(),
-                card_id,
-            ),
-        )
-        self.controller.conn.commit()
+        conn = self.controller.conn
+        if self.controller._db_type == DatabaseType.KNOWLEDGE:
+            try:
+                duplicate = conn.execute(
+                    "SELECT front FROM cards "
+                    "WHERE front = ? COLLATE NOCASE AND id != ?",
+                    (front_dialog.text_value, card_id),
+                ).fetchone()
+            except sqlite3.Error:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                QMessageBox.warning(
+                    self, "Could not update card", "The card could not be updated."
+                )
+                return
+            if duplicate is not None:
+                QMessageBox.information(
+                    self,
+                    "Already Exists",
+                    f"'{duplicate[0]}' is already in your database.",
+                )
+                return
+
+        try:
+            conn.execute(
+                "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
+                (
+                    front_dialog.text_value,
+                    back_dialog.text_value,
+                    datetime.date.today().isoformat(),
+                    card_id,
+                ),
+            )
+            conn.commit()
+        except sqlite3.Error:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            QMessageBox.warning(
+                self, "Could not update card", "The card could not be updated."
+            )
+            return
+
         self.refresh_list()
         QMessageBox.information(
             self,
@@ -270,7 +307,8 @@ class BrowseCardsDialog(QDialog):
             self.controller.current_card is not None
             and self.controller.current_card[0] == card_id
         )
-        self.controller._delete_card_by_id(card_id)
+        if self.controller._delete_card_by_id(card_id) is None:
+            return
         self.refresh_list()
         if deleted_current:
             self.controller.show_next_card()

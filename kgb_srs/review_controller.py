@@ -2,6 +2,7 @@
 
 import datetime
 import random
+import sqlite3
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
@@ -307,7 +308,8 @@ class ReviewControllerMixin:
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self._delete_card_by_id(card_id)
+        if self._delete_card_by_id(card_id) is None:
+            return
 
         QMessageBox.information(
             self, "Deleted", f"Card #{card_id} has been permanently deleted."
@@ -607,11 +609,21 @@ class ReviewControllerMixin:
             today + datetime.timedelta(days=intervals[new_box])
         ).isoformat()
 
-        c.execute(
-            "UPDATE cards SET box = ?, next_review = ? WHERE id = ?",
-            (new_box, next_review_str, card_id),
-        )
-        self.conn.commit()
+        try:
+            c.execute(
+                "UPDATE cards SET box = ?, next_review = ? WHERE id = ?",
+                (new_box, next_review_str, card_id),
+            )
+            self.conn.commit()
+        except sqlite3.Error:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+            QMessageBox.warning(
+                self, "Could not grade card", "The card could not be graded."
+            )
+            return
 
         # Session path: grade also leaves the current card behind (like Next).
         if self.review_mode == "daily":

@@ -26,6 +26,10 @@ Toolbar font styling uses guarded widget access because controls are created inc
 
 `ensure_linked_word_phrase_database()` can currently adopt a pre-existing database at the canonical Word/Phrase projection pathname while linking a sentence database, then sync/prune it as though it were that sentence database's projection. If the target is an unrelated populated database, its type and cards can be overwritten or removed. A safe repair needs persistent source-identity ownership metadata plus an explicit migration/conflict policy for existing markerless projections; a simple type/path guard cannot distinguish a valid legacy projection from an unrelated W/P database. This is deferred to avoid data loss or breaking existing links until that migration design and conflict UI/behavior are specified and tested.
 
+### Failed database selection replaces an active session
+
+Selecting a missing, unreadable, or corrupt database currently replaces the selected path and closes the active connection before candidate initialization completes. A failure then clears the working database and review state. A safe fix needs a two-phase candidate-open/adopt design so the old connection, labels, and review session remain intact until the candidate is fully initialized; this crosses migration and session ownership and is deferred to avoid state mixing or connection leaks.
+
 ### `kgb_srs.forms` private legacy exports
 
 `_AIGenerateWorker` and `_apply_ui_font` remain available through `kgb_srs.forms` for existing callers and monkeypatch-based tests. New code should import them from `kgb_srs.form_helpers`. Removing the facade exports requires a documented deprecation cycle and compatibility migration.

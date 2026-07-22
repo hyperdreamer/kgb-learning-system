@@ -101,6 +101,14 @@ def _open_and_infer_type(db_path):
     )
 
 
+def _rollback_quietly(conn):
+    """Rollback without hiding the SQLite failure being handled."""
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # BarskyApp
 # ---------------------------------------------------------------------------
@@ -1241,11 +1249,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 )
                 QMessageBox.information(self, "Added", "Card added to Box 1.")
                 self._show_new_card(card_id, sentence, back)
-        except ValueError as e:
+        except (ValueError, sqlite3.Error) as exc:
             # Dialog validation passed, but insert/update still rejected
-            # (e.g. residual surface not re-verified). Show a dialog instead
-            # of an uncaught traceback from the Alt+ shortcut path.
-            QMessageBox.warning(self, "Could not save card", str(e))
+            # (e.g. residual surface not re-verified). Sentence-card helpers
+            # own their transaction rollback.
+            QMessageBox.warning(self, "Could not save card", str(exc))
             return
 
         # Shared catalog → auto-sync linked word/phrase projection.
@@ -1302,11 +1310,18 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         c = self.conn.cursor()
         if edit_card_id is None:
-            c.execute(
-                "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
-                (front,),
-            )
-            existing_card = c.fetchone()
+            try:
+                c.execute(
+                    "SELECT id, front, back, box FROM cards WHERE front = ? COLLATE NOCASE",
+                    (front,),
+                )
+                existing_card = c.fetchone()
+            except sqlite3.Error:
+                _rollback_quietly(self.conn)
+                QMessageBox.warning(
+                    self, "Could not save card", "The card could not be saved."
+                )
+                return
             if existing_card:
                 card_id, ex_front, ex_back, ex_box = existing_card
                 QMessageBox.information(
@@ -1322,8 +1337,15 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         today_str = datetime.date.today().isoformat()
 
         if edit_card_id is not None:
-            c.execute("SELECT back FROM cards WHERE id=?", (edit_card_id,))
-            row = c.fetchone()
+            try:
+                c.execute("SELECT back FROM cards WHERE id=?", (edit_card_id,))
+                row = c.fetchone()
+            except sqlite3.Error:
+                _rollback_quietly(self.conn)
+                QMessageBox.warning(
+                    self, "Could not save card", "The card could not be saved."
+                )
+                return
             ex_back = row[0] if row else ""
 
             back_dialog = DynamicInputDialog(
@@ -1336,11 +1358,18 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 back_dialog.exec() == QDialog.DialogCode.Accepted
                 and back_dialog.text_value
             ):
-                c.execute(
-                    "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-                    (front, back_dialog.text_value, today_str, edit_card_id),
-                )
-                self.conn.commit()
+                try:
+                    c.execute(
+                        "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
+                        (front, back_dialog.text_value, today_str, edit_card_id),
+                    )
+                    self.conn.commit()
+                except sqlite3.Error:
+                    _rollback_quietly(self.conn)
+                    QMessageBox.warning(
+                        self, "Could not save card", "The card could not be saved."
+                    )
+                    return
                 QMessageBox.information(
                     self, "Updated", "Card updated and moved to Box 1."
                 )
@@ -1355,12 +1384,19 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 back_dialog.exec() == QDialog.DialogCode.Accepted
                 and back_dialog.text_value
             ):
-                c.execute(
-                    "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
-                    (front, back_dialog.text_value, today_str),
-                )
-                card_id = c.lastrowid
-                self.conn.commit()
+                try:
+                    c.execute(
+                        "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
+                        (front, back_dialog.text_value, today_str),
+                    )
+                    card_id = c.lastrowid
+                    self.conn.commit()
+                except sqlite3.Error:
+                    _rollback_quietly(self.conn)
+                    QMessageBox.warning(
+                        self, "Could not save card", "The card could not be saved."
+                    )
+                    return
                 QMessageBox.information(self, "Added", "Knowledge card added to Box 1.")
                 self._show_new_card(card_id, front, back_dialog.text_value)
 
@@ -1441,8 +1477,15 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         UI responsibilities.  Returns the integer card_id.
         """
         card_id = int(card_id)
-        self.conn.cursor().execute("DELETE FROM cards WHERE id = ?", (card_id,))
-        self.conn.commit()
+        try:
+            self.conn.cursor().execute("DELETE FROM cards WHERE id = ?", (card_id,))
+            self.conn.commit()
+        except sqlite3.Error:
+            _rollback_quietly(self.conn)
+            QMessageBox.warning(
+                self, "Could not delete card", "The card could not be deleted."
+            )
+            return None
         self._remove_card_from_review_state(card_id)
         if (
             self._paused_review_card is not None
