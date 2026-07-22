@@ -311,6 +311,33 @@ class TestValidateUnfamiliarItems:
 
         assert not surface_form_in_sentence("2go.", "go.")
 
+    def test_punctuated_apostrophe_surface_rejects_embedded_substring(self):
+        from kgb_srs.ai_parser import MembershipClaim
+        from kgb_srs.validation import (
+            apply_ai_membership_claims,
+            surface_form_in_sentence,
+        )
+
+        assert not surface_form_in_sentence("cargo's.", "go's.")
+        assert not surface_form_in_sentence("cargo’s.", "go’s.")
+        assert surface_form_in_sentence("Go's score improved.", "Go's")
+        assert surface_form_in_sentence("Go’s score improved.", "Go’s")
+
+        result = apply_ai_membership_claims(
+            "cargo's.",
+            ["go"],
+            [MembershipClaim("go", True, "go's.")],
+        )
+
+        assert result.valid is False
+        assert result.missing == ["go"]
+
+    def test_punctuated_ascii_surface_allows_mixed_script_adjacency(self):
+        from kgb_srs.validation import surface_form_in_sentence
+
+        assert surface_form_in_sentence("我go.", "go.")
+        assert surface_form_in_sentence("漢go home.", "go home.")
+
     def test_punctuated_ai_surface_accepts_whole_token(self):
         from kgb_srs.ai_parser import MembershipClaim
         from kgb_srs.validation import (

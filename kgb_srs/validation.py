@@ -38,6 +38,10 @@ _RE_ESCAPE_RE = re.compile(r"([.^$*+?{}[\]\\|()])")
 # Hyphen is intentionally NOT stripped here — compounds like non-staple stay
 # intact so we can match lemmas against individual hyphen segments.
 _PUNCT_STRIP = ".,!?;:\"'“”‘’()[]{}…«»"
+_ASCII_WORD_SEGMENT_RE = r"[a-z]+(?:['’][a-z]+)*"
+_ASCII_WORD_PHRASE_RE = re.compile(
+    rf"{_ASCII_WORD_SEGMENT_RE}(?: {_ASCII_WORD_SEGMENT_RE})*"
+)
 # Hyphen-like characters that split English compounds (non-staple, well–known).
 _HYPHEN_CHARS = frozenset("-–—")
 
@@ -684,15 +688,19 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     if not norm_surface:
         return False
     stripped_surface = norm_surface.strip(_PUNCT_STRIP)
-    if stripped_surface != norm_surface and re.fullmatch(
-        r"[a-z]+(?: [a-z]+)*", stripped_surface
+    if stripped_surface != norm_surface and _ASCII_WORD_PHRASE_RE.fullmatch(
+        stripped_surface
     ):
         start = norm_sentence.find(norm_surface)
         while start != -1:
             end = start + len(norm_surface)
-            left_is_alphanumeric = start > 0 and norm_sentence[start - 1].isalnum()
+            left_is_alphanumeric = (
+                start > 0
+                and norm_sentence[start - 1] in "abcdefghijklmnopqrstuvwxyz0123456789"
+            )
             right_is_alphanumeric = (
-                end < len(norm_sentence) and norm_sentence[end].isalnum()
+                end < len(norm_sentence)
+                and norm_sentence[end] in "abcdefghijklmnopqrstuvwxyz0123456789"
             )
             if not left_is_alphanumeric and not right_is_alphanumeric:
                 return True
