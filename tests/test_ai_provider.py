@@ -11,6 +11,7 @@ from kgb_srs.ai_provider import (
     AIProviderConfig,
     build_sentence_prompt,
     build_word_phrase_prompt,
+    http_request,
     AIMissingConfigError,
 )
 
@@ -252,6 +253,23 @@ class TestAIClientBuildRequest:
         assert msgs[1]["role"] == "user"
         assert msgs[1]["content"] == "Hello, AI!"
         assert "temperature" in body
+
+
+# ---------------------------------------------------------------------------
+# HTTP transport
+# ---------------------------------------------------------------------------
+
+
+def test_http_request_rejects_file_urls_before_opening(monkeypatch):
+    import kgb_srs.ai_provider as module
+
+    def fail_if_opened(*_args, **_kwargs):
+        pytest.fail("A non-HTTP URL reached the network transport")
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fail_if_opened)
+
+    with pytest.raises(ValueError, match="http or https"):
+        http_request("file:///tmp/not-an-ai-provider", {}, timeout=5)
 
 
 # ---------------------------------------------------------------------------

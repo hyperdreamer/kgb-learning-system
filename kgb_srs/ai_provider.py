@@ -8,8 +8,9 @@ Non-secret defaults come from a template; API keys are never committed.
 
 import json
 import time
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 
@@ -392,6 +393,26 @@ def build_membership_prompt(sentence: str, missing_items: list[str]) -> str:
 # HTTP helper (stdlib only — no extra dependency)
 # ---------------------------------------------------------------------------
 
+_ALLOWED_HTTP_SCHEMES = frozenset({"http", "https"})
+
+
+def _validate_http_url(url: str) -> None:
+    """Require an absolute HTTP(S) URL for AI provider requests."""
+    if not isinstance(url, str):
+        raise ValueError("AI provider URL must use an absolute http or https URL")
+
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.casefold() not in _ALLOWED_HTTP_SCHEMES or not parsed.netloc:
+        raise ValueError("AI provider URL must use an absolute http or https URL")
+
+
+class _HTTPOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Reject redirects that leave the HTTP(S) transport boundary."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_http_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
 
 def http_request(
     url: str,
@@ -402,8 +423,13 @@ def http_request(
     method: str = "GET",
 ) -> str:
     """Synchronous HTTP request via stdlib urllib (GET or POST)."""
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    _validate_http_url(url)
+    # The initial URL and every redirect are constrained to HTTP(S) above.
+    req = urllib.request.Request(  # noqa: S310
+        url, data=body, headers=headers, method=method
+    )
+    opener = urllib.request.build_opener(_HTTPOnlyRedirectHandler())
+    with opener.open(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
 
 
