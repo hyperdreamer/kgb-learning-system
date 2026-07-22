@@ -222,9 +222,7 @@ def _dialog(
             "create_ai_models_worker",
             lambda config: FakeAIModelsWorker(config),
         )
-    return module.SettingsDialog(
-        settings, current_size=current_size
-    ), worker
+    return module.SettingsDialog(settings, current_size=current_size), worker
 
 
 def _voice_names(dialog):
@@ -242,14 +240,20 @@ def _emit_voices(dialog, worker, voices=None):
     _app().processEvents()
 
 
-def test_settings_dialog_has_ordered_categories_and_mapped_controls(monkeypatch, settings):
+def test_settings_dialog_has_ordered_categories_and_mapped_controls(
+    monkeypatch, settings
+):
 
     dialog, worker = _dialog(monkeypatch, settings)
 
     sidebar = dialog.findChild(QListWidget, "settingsCategoryList")
     pages = dialog.findChild(QStackedWidget, "settingsPages")
     assert [sidebar.item(i).text() for i in range(sidebar.count())] == [
-        "General", "Appearance", "Audio & Speech", "AI Providers", "About"
+        "General",
+        "Appearance",
+        "Audio & Speech",
+        "AI Providers",
+        "About",
     ]
     assert pages.count() == 5
     expected_pages = {
@@ -332,7 +336,9 @@ def test_switching_categories_does_not_save_or_mutate_settings(monkeypatch, sett
 
 def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, settings):
     saved = []
-    dialog, _ = _dialog(monkeypatch, settings, save=lambda staged: saved.append(dict(staged)))
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
     dialog.window_width_input.setValue(1024)
     # Outside the database root → normalized to empty on save.
     dialog.default_database_input.setText(" /tmp/test.barsky ")
@@ -344,7 +350,9 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     assert len(saved) == 1
     assert saved[0]["width"] == 1024
     assert saved[0]["default_database"] == ""
-    assert saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["api_key"] == "new-key"
+    assert (
+        saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["api_key"] == "new-key"
+    )
     assert "ai_api_key" not in saved[0]
     assert saved[0]["explanation_language"] == "German"
     assert settings == saved[0]
@@ -386,7 +394,8 @@ def test_save_failure_keeps_live_settings_and_dialog_open(monkeypatch, settings)
 
     dialog, _ = _dialog(monkeypatch, settings, save=fail)
     monkeypatch.setattr(
-        module.QMessageBox, "critical",
+        module.QMessageBox,
+        "critical",
         lambda parent, title, message: errors.append((parent, title, message)),
     )
     dialog.window_width_input.setValue(1234)
@@ -421,9 +430,7 @@ def test_database_browser_stages_relative_path_under_root(
 
     dialog.database_browse_button.click()
 
-    expected_rel = os.path.normpath(
-        os.path.join("Language-based", "English_barsky.db")
-    )
+    expected_rel = os.path.normpath(os.path.join("Language-based", "English_barsky.db"))
     assert dialog.default_database_input.text() == expected_rel
     assert not os.path.isabs(dialog.default_database_input.text())
     assert settings["default_database"] == ""
@@ -440,9 +447,7 @@ def test_database_browser_rejects_path_outside_root(monkeypatch, settings):
     monkeypatch.setattr(
         module.QMessageBox,
         "warning",
-        lambda parent, title, message: warnings.append(
-            (parent, title, message)
-        ),
+        lambda parent, title, message: warnings.append((parent, title, message)),
     )
     monkeypatch.setattr(
         dialog,
@@ -561,9 +566,7 @@ def test_save_stores_relative_default_database_under_root(
     dialog.save_button.click()
 
     assert len(saved) == 1
-    expected_rel = os.path.normpath(
-        os.path.join("Language-based", "English_barsky.db")
-    )
+    expected_rel = os.path.normpath(os.path.join("Language-based", "English_barsky.db"))
     assert saved[0]["default_database"] == expected_rel
     assert not os.path.isabs(saved[0]["default_database"])
     assert saved[0]["database_root"] == str(root)
@@ -580,9 +583,7 @@ def test_database_root_browser_stages_selected_directory(monkeypatch, settings):
     monkeypatch.setattr(
         module.QFileDialog,
         "getExistingDirectory",
-        lambda *args, **kwargs: (
-            calls.append(args) or "/tmp/my-databases"
-        ),
+        lambda *args, **kwargs: calls.append(args) or "/tmp/my-databases",
     )
 
     dialog.database_root_browse_button.click()
@@ -593,7 +594,9 @@ def test_database_root_browser_stages_selected_directory(monkeypatch, settings):
     dialog.reject()
 
 
-def test_save_creates_canonical_database_root_structure(monkeypatch, settings, tmp_path):
+def test_save_creates_canonical_database_root_structure(
+    monkeypatch, settings, tmp_path
+):
     from kgb_srs.config import CANONICAL_DB_SUBDIRS
 
     saved = []
@@ -628,19 +631,24 @@ def test_save_stores_empty_database_root_for_project_default(monkeypatch, settin
     assert dialog.result() == dialog.DialogCode.Accepted
 
 
-def test_voice_results_preserve_configured_selection_and_worker_lifetime(monkeypatch, settings):
+def test_voice_results_preserve_configured_selection_and_worker_lifetime(
+    monkeypatch, settings
+):
     dialog, worker = _dialog(monkeypatch, settings)
-    worker.voices_ready.emit([
-        ("other", "en-US", "Female", "Other"),
-        (settings["tts_voice"], "en-US", "Female", "Ava"),
-    ])
+    worker.voices_ready.emit(
+        [
+            ("other", "en-US", "Female", "Other"),
+            (settings["tts_voice"], "en-US", "Female", "Ava"),
+        ]
+    )
     _app().processEvents()
 
     assert dialog.current_voice == settings["tts_voice"]
     assert settings["tts_voice"] in _voice_names(dialog)
-    assert dialog.tts_voice_list.currentItem().data(
-        Qt.ItemDataRole.UserRole
-    ) == settings["tts_voice"]
+    assert (
+        dialog.tts_voice_list.currentItem().data(Qt.ItemDataRole.UserRole)
+        == settings["tts_voice"]
+    )
     worker.finished.emit()
     assert worker.deleted
     assert dialog.voice_worker is None
@@ -694,9 +702,7 @@ def test_close_waits_for_running_workers_before_destroying_dialog(
     monkeypatch.setattr(module, "TTSWorker", BlockingTTSWorker)
     dialog = module.SettingsDialog(settings)
     cleanup_calls = []
-    monkeypatch.setattr(
-        dialog, "_cleanup_tts_temp", lambda: cleanup_calls.append(True)
-    )
+    monkeypatch.setattr(dialog, "_cleanup_tts_temp", lambda: cleanup_calls.append(True))
     preview_worker = None
     voice_finished = False
     preview_finished = False
@@ -786,7 +792,10 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
     import kgb_srs.main_window as module
 
     class FakeDialog:
-        results = [module.QDialog.DialogCode.Rejected, module.QDialog.DialogCode.Accepted]
+        results = [
+            module.QDialog.DialogCode.Rejected,
+            module.QDialog.DialogCode.Accepted,
+        ]
         current_sizes = []
 
         def __init__(self, settings, parent=None, current_size=None):
@@ -830,7 +839,9 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
     assert FakeDialog.current_sizes == [(1111, 888), (1111, 888)]
 
 
-def test_font_settings_are_scoped_to_main_window_and_owned_dialog(monkeypatch, settings):
+def test_font_settings_are_scoped_to_main_window_and_owned_dialog(
+    monkeypatch, settings
+):
     app = _app()
     original_font = QFont(app.font())
     baseline = QFont("Sans Serif", 9)
@@ -846,21 +857,21 @@ def test_font_settings_are_scoped_to_main_window_and_owned_dialog(monkeypatch, s
     try:
         child = QWidget(window)
         for name in (
-            "start_btn", "restart_review_btn", "previous_review_btn",
+            "start_btn",
+            "restart_review_btn",
+            "previous_review_btn",
             "delete_entry_btn",
         ):
             setattr(window, name, QPushButton(window))
         window.settings = {"font_family": "Arial", "font_size": 23}
         window._button_style = BarskyApp._button_style
         window._toolbar_button_style = BarskyApp._toolbar_button_style
-        window._apply_toolbar_font_styles = (
-            lambda ff, fs: BarskyApp._apply_toolbar_font_styles(window, ff, fs)
+        window._apply_toolbar_font_styles = lambda ff, fs: (
+            BarskyApp._apply_toolbar_font_styles(window, ff, fs)
         )
 
         BarskyApp.apply_font_settings(window)
-        dialog = module.SettingsDialog(
-            settings, parent=window, current_size=(900, 700)
-        )
+        dialog = module.SettingsDialog(settings, parent=window, current_size=(900, 700))
 
         assert (app.font().family(), app.font().pointSize()) == baseline_font
         assert window.font().pointSize() == 23
@@ -932,8 +943,10 @@ def test_content_font_settings_are_staged_and_saved(monkeypatch, settings):
         dialog.content_font_family_input.itemText(i)
         for i in range(dialog.content_font_family_input.count())
     ]
-    target_family = "Courier New" if "Courier New" in families else (
-        families[1] if len(families) > 1 else families[0]
+    target_family = (
+        "Courier New"
+        if "Courier New" in families
+        else (families[1] if len(families) > 1 else families[0])
     )
     dialog.content_font_family_input.setCurrentText(target_family)
     dialog.content_font_size_input.setValue(24)
@@ -956,7 +969,9 @@ def test_default_settings_include_content_font_keys():
     assert DEFAULT_SETTINGS["tts_language"] == ""
 
 
-def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatch, settings):
+def test_ai_test_button_uses_staged_values_and_disables_while_running(
+    monkeypatch, settings
+):
     saved = []
     dialog, _ = _dialog(
         monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
@@ -979,7 +994,9 @@ def test_ai_test_button_uses_staged_values_and_disables_while_running(monkeypatc
     assert worker.config.api_key == "staged-key"
     assert worker.config.timeout_seconds == 12
     assert saved == []
-    assert settings["ai_providers"][settings["ai_active_provider"]]["api_key"] == "secret"
+    assert (
+        settings["ai_providers"][settings["ai_active_provider"]]["api_key"] == "secret"
+    )
     dialog.reject()
 
 
@@ -1099,7 +1116,9 @@ def test_ai_provider_profiles_saved_on_apply(monkeypatch, settings):
     assert len(saved) == 1
     assert saved[0]["ai_active_provider"] == "TokenHub"
     assert "ai_model" not in saved[0]
-    assert saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["model"] == "flash-2"
+    assert (
+        saved[0]["ai_providers"][saved[0]["ai_active_provider"]]["model"] == "flash-2"
+    )
     assert saved[0]["ai_providers"]["TokenHub"]["model"] == "flash-2"
     assert saved[0]["ai_providers"]["OpenAI"]["model"] == "gpt-4o-mini"
     assert settings["ai_active_provider"] == "TokenHub"
@@ -1113,8 +1132,9 @@ def test_ai_provider_delete_disabled_for_last_profile(monkeypatch, settings):
     dialog.reject()
 
 
-
-def test_ai_models_refresh_uses_staged_values_and_disables_while_running(monkeypatch, settings):
+def test_ai_models_refresh_uses_staged_values_and_disables_while_running(
+    monkeypatch, settings
+):
     saved = []
     dialog, _ = _dialog(
         monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
@@ -1139,7 +1159,9 @@ def test_ai_models_refresh_uses_staged_values_and_disables_while_running(monkeyp
     dialog.reject()
 
 
-def test_ai_models_refresh_success_populates_combo_and_keeps_current(monkeypatch, settings):
+def test_ai_models_refresh_success_populates_combo_and_keeps_current(
+    monkeypatch, settings
+):
     dialog, _ = _dialog(monkeypatch, settings)
     dialog.ai_model_input.setEditText("my-custom-model")
     dialog.ai_models_refresh_btn.click()
@@ -1154,8 +1176,7 @@ def test_ai_models_refresh_success_populates_combo_and_keeps_current(monkeypatch
     _app().processEvents()
 
     items = [
-        dialog.ai_model_input.itemText(i)
-        for i in range(dialog.ai_model_input.count())
+        dialog.ai_model_input.itemText(i) for i in range(dialog.ai_model_input.count())
     ]
     assert "deepseek-v4-flash-202605" in items
     assert "gpt-4o-mini" in items
@@ -1190,8 +1211,7 @@ def test_ai_models_refresh_discards_result_after_provider_switch(monkeypatch, se
     dialog.ai_provider_combo.setCurrentText("Profile B")
     _app().processEvents()
     before_items = [
-        dialog.ai_model_input.itemText(i)
-        for i in range(dialog.ai_model_input.count())
+        dialog.ai_model_input.itemText(i) for i in range(dialog.ai_model_input.count())
     ]
     assert dialog.ai_model_input.currentText() == "b-model"
 
@@ -1200,8 +1220,7 @@ def test_ai_models_refresh_discards_result_after_provider_switch(monkeypatch, se
     _app().processEvents()
 
     after_items = [
-        dialog.ai_model_input.itemText(i)
-        for i in range(dialog.ai_model_input.count())
+        dialog.ai_model_input.itemText(i) for i in range(dialog.ai_model_input.count())
     ]
     assert after_items == before_items == ["b-model"]
     assert dialog.ai_model_input.currentText() == "b-model"
@@ -1263,6 +1282,7 @@ def test_ai_models_refresh_failure_updates_status_and_reenables(monkeypatch, set
 # ---------------------------------------------------------------------------
 # Voice picker: filters, selection, preview, empty/error states
 # ---------------------------------------------------------------------------
+
 
 def test_gender_filter_narrows_voice_list(monkeypatch, settings):
     dialog, worker = _dialog(monkeypatch, settings)
@@ -1361,9 +1381,10 @@ def test_initial_configured_voice_remains_selected_after_voices_ready(
     _emit_voices(dialog, worker)
 
     assert dialog.current_voice == "zh-CN-YunxiNeural"
-    assert dialog.tts_voice_list.currentItem().data(
-        Qt.ItemDataRole.UserRole
-    ) == "zh-CN-YunxiNeural"
+    assert (
+        dialog.tts_voice_list.currentItem().data(Qt.ItemDataRole.UserRole)
+        == "zh-CN-YunxiNeural"
+    )
     dialog.reject()
 
 
@@ -1489,7 +1510,9 @@ def test_voice_error_still_allows_save_of_current_voice(monkeypatch, settings):
     assert saved[0]["tts_voice"] == settings["tts_voice"]
 
 
-def test_preview_cleanup_unlinks_temp_on_next_preview_and_close(tmp_path, monkeypatch, settings):
+def test_preview_cleanup_unlinks_temp_on_next_preview_and_close(
+    tmp_path, monkeypatch, settings
+):
     """R2-2: settings preview unlinks previous temp MP3 and cleans on close."""
     _app()
     from kgb_srs import settings_dialog as module

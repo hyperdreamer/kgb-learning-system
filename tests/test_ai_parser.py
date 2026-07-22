@@ -16,11 +16,15 @@ from kgb_srs.ai_parser import (
 # parse_sentence_meanings
 # ---------------------------------------------------------------------------
 
+
 class TestParseSentenceMeanings:
     def test_valid_response(self):
         response = {
             "items": [
-                {"expression": "suis", "contextual_meaning": "am (1st person singular of être)"},
+                {
+                    "expression": "suis",
+                    "contextual_meaning": "am (1st person singular of être)",
+                },
                 {"expression": "ici", "contextual_meaning": "here"},
             ]
         }
@@ -72,9 +76,7 @@ class TestParseSentenceMeanings:
             ]
         }
         with pytest.raises(AIValidationError, match="'expression'"):
-            parse_sentence_meanings(
-                json.dumps(response), expected_expressions=["test"]
-            )
+            parse_sentence_meanings(json.dumps(response), expected_expressions=["test"])
 
     def test_missing_contextual_meaning_field(self):
         response = {
@@ -83,9 +85,7 @@ class TestParseSentenceMeanings:
             ]
         }
         with pytest.raises(AIValidationError, match="'contextual_meaning'"):
-            parse_sentence_meanings(
-                json.dumps(response), expected_expressions=["test"]
-            )
+            parse_sentence_meanings(json.dumps(response), expected_expressions=["test"])
 
     def test_empty_items(self):
         result = parse_sentence_meanings(
@@ -94,17 +94,19 @@ class TestParseSentenceMeanings:
         assert result == []
 
     def test_whitespace_tolerance(self):
-        response = "  \n  " + json.dumps({
-            "items": [{"expression": "x", "contextual_meaning": "y"}]
-        })
+        response = "  \n  " + json.dumps(
+            {"items": [{"expression": "x", "contextual_meaning": "y"}]}
+        )
         result = parse_sentence_meanings(response, expected_expressions=["x"])
         assert len(result) == 1
 
     def test_markdown_code_fence_stripping(self):
         """AI sometimes wraps JSON in ```json ... ```."""
-        response = '```json\n' + json.dumps({
-            "items": [{"expression": "x", "contextual_meaning": "y"}]
-        }) + '\n```'
+        response = (
+            "```json\n"
+            + json.dumps({"items": [{"expression": "x", "contextual_meaning": "y"}]})
+            + "\n```"
+        )
         result = parse_sentence_meanings(response, expected_expressions=["x"])
         assert len(result) == 1
 
@@ -120,6 +122,7 @@ class TestParseSentenceMeanings:
 # ---------------------------------------------------------------------------
 # parse_word_phrase_meanings
 # ---------------------------------------------------------------------------
+
 
 class TestParseWordPhraseMeanings:
     def test_valid_two_meanings(self):
@@ -190,15 +193,17 @@ class TestParseWordPhraseMeanings:
                 for i in range(1, MAX_WORD_PHRASE_MEANINGS + 2)
             ]
         }
-        with pytest.raises(
-            AIValidationError, match=str(MAX_WORD_PHRASE_MEANINGS)
-        ):
+        with pytest.raises(AIValidationError, match=str(MAX_WORD_PHRASE_MEANINGS)):
             parse_word_phrase_meanings(json.dumps(response))
 
     def test_code_fence_stripping(self):
-        response = '```json\n' + json.dumps({
-            "meanings": [{"meaning": "Test", "example": "This is a test."}]
-        }) + '\n```'
+        response = (
+            "```json\n"
+            + json.dumps(
+                {"meanings": [{"meaning": "Test", "example": "This is a test."}]}
+            )
+            + "\n```"
+        )
         result = parse_word_phrase_meanings(response)
         assert len(result) == 1
 
@@ -215,9 +220,11 @@ class TestParseWordPhraseMeanings:
 # parse_membership_claims
 # ---------------------------------------------------------------------------
 
+
 class TestParseMembershipClaims:
     def test_valid_response(self):
         from kgb_srs.ai_parser import parse_membership_claims
+
         response = {
             "items": [
                 {"expression": "go", "found": True, "surface": "gone"},
@@ -236,6 +243,7 @@ class TestParseMembershipClaims:
 
     def test_found_true_requires_surface(self):
         from kgb_srs.ai_parser import parse_membership_claims
+
         response = {
             "items": [
                 {"expression": "go", "found": True, "surface": ""},
@@ -246,6 +254,7 @@ class TestParseMembershipClaims:
 
     def test_wrong_order_rejected(self):
         from kgb_srs.ai_parser import parse_membership_claims
+
         response = {
             "items": [
                 {"expression": "b", "found": False, "surface": ""},
@@ -257,6 +266,7 @@ class TestParseMembershipClaims:
 
     def test_found_must_be_bool(self):
         from kgb_srs.ai_parser import parse_membership_claims
+
         response = {
             "items": [
                 {"expression": "go", "found": "yes", "surface": "gone"},

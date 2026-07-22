@@ -54,7 +54,9 @@ class BrowseCardsDialog(QDialog):
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("Search:"))
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("Type to search; use AND or OR to combine terms")
+        self.filter_input.setPlaceholderText(
+            "Type to search; use AND or OR to combine terms"
+        )
         filter_row.addWidget(self.filter_input)
         layout.addLayout(filter_row)
 
@@ -83,9 +85,7 @@ class BrowseCardsDialog(QDialog):
             button_row.addWidget(button)
         layout.addLayout(button_row)
 
-        self._is_word_phrase = (
-            controller._db_type == DatabaseType.LANGUAGE_WORD_PHRASE
-        )
+        self._is_word_phrase = controller._db_type == DatabaseType.LANGUAGE_WORD_PHRASE
         if self._is_word_phrase:
             self.edit_btn.setEnabled(False)
             self.delete_btn.setEnabled(False)
@@ -110,8 +110,13 @@ class BrowseCardsDialog(QDialog):
             shortcut.activated.connect(slot)
 
         add("Alt+R", self.review_selected)
-        add("Alt+E", lambda: self.edit_selected() if self.edit_btn.isEnabled() else None)
-        add("Alt+D", lambda: self.delete_selected() if self.delete_btn.isEnabled() else None)
+        add(
+            "Alt+E", lambda: self.edit_selected() if self.edit_btn.isEnabled() else None
+        )
+        add(
+            "Alt+D",
+            lambda: self.delete_selected() if self.delete_btn.isEnabled() else None,
+        )
 
     def _search_logic(self):
         text = self.filter_input.text().strip()
@@ -138,24 +143,33 @@ class BrowseCardsDialog(QDialog):
                 results = search_sentence_cards(conn, search_text, logic)
                 for result in results:
                     self._add_row(
-                        result["id"], result["front"], result["box"],
-                        result["next_review"], result.get("expressions", ()),
+                        result["id"],
+                        result["front"],
+                        result["box"],
+                        result["next_review"],
+                        result.get("expressions", ()),
                     )
             else:
                 results = search_word_phrase_cards(conn, search_text, logic)
                 for result in results:
                     self._add_row(
-                        result["id"], result["front"], result["box"],
+                        result["id"],
+                        result["front"],
+                        result["box"],
                         result["next_review"],
                     )
             return
 
         cursor = conn.cursor()
-        cursor.execute("SELECT id, front, back, box, next_review FROM cards ORDER BY id")
+        cursor.execute(
+            "SELECT id, front, back, box, next_review FROM cards ORDER BY id"
+        )
         for card_id, front, _back, box, next_review in cursor.fetchall():
             expressions = ()
             if db_type == DatabaseType.LANGUAGE_SENTENCE:
-                expressions = _expression_labels(_fetch_expressions_for_card(conn, card_id))
+                expressions = _expression_labels(
+                    _fetch_expressions_for_card(conn, card_id)
+                )
             self._add_row(card_id, front, box, next_review, expressions)
 
     def _selected_card_id(self):
@@ -165,7 +179,9 @@ class BrowseCardsDialog(QDialog):
     def review_selected(self):
         card_id = self._selected_card_id()
         if card_id is None:
-            QMessageBox.information(self, "Nothing Selected", "Select a card to review.")
+            QMessageBox.information(
+                self, "Nothing Selected", "Select a card to review."
+            )
             return
         self.close()
         self.controller._start_selected_card_review(card_id)
@@ -180,7 +196,8 @@ class BrowseCardsDialog(QDialog):
             return
         if self._is_word_phrase:
             QMessageBox.information(
-                self, "Read-only Word/Phrase Card",
+                self,
+                "Read-only Word/Phrase Card",
                 "This dictionary is derived from the shared sense catalog.\n\n"
                 "Edit the expression/sense via sentence cards; the dictionary "
                 "updates automatically. Manual edit is disabled.",
@@ -193,25 +210,37 @@ class BrowseCardsDialog(QDialog):
         if card is None:
             return
         front_dialog = DynamicInputDialog(self, "Edit Word", "Front:", card[0])
-        if front_dialog.exec() != QDialog.DialogCode.Accepted or not front_dialog.text_value:
+        if (
+            front_dialog.exec() != QDialog.DialogCode.Accepted
+            or not front_dialog.text_value
+        ):
             return
         back_dialog = DynamicInputDialog(
-            self, "Edit Translation",
+            self,
+            "Edit Translation",
             "Enter the translation, meanings, or sample sentences. "
             "Markdown and MathJax are supported during review:",
             card[1],
         )
-        if back_dialog.exec() != QDialog.DialogCode.Accepted or not back_dialog.text_value:
+        if (
+            back_dialog.exec() != QDialog.DialogCode.Accepted
+            or not back_dialog.text_value
+        ):
             return
         self.controller.conn.execute(
             "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
-            (front_dialog.text_value, back_dialog.text_value,
-             datetime.date.today().isoformat(), card_id),
+            (
+                front_dialog.text_value,
+                back_dialog.text_value,
+                datetime.date.today().isoformat(),
+                card_id,
+            ),
         )
         self.controller.conn.commit()
         self.refresh_list()
         QMessageBox.information(
-            self, "Updated",
+            self,
+            "Updated",
             "Card has been updated and moved back to Box 1 for review today.",
         )
         self.controller._refresh_current_card(card_id)
@@ -219,7 +248,8 @@ class BrowseCardsDialog(QDialog):
     def delete_selected(self):
         if self._is_word_phrase:
             QMessageBox.information(
-                self, "Read-only Word/Phrase Card",
+                self,
+                "Read-only Word/Phrase Card",
                 "This dictionary is derived from the shared sense catalog.\n\n"
                 "Remove senses via sentence cards; the dictionary updates "
                 "automatically. Manual delete is disabled.",
@@ -229,7 +259,9 @@ class BrowseCardsDialog(QDialog):
         if card_id is None:
             return
         reply = QMessageBox.question(
-            self, "Confirm", "Delete this card?",
+            self,
+            "Confirm",
+            "Delete this card?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

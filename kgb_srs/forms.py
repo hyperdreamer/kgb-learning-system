@@ -9,7 +9,10 @@ from :mod:`kgb_srs.form_helpers` instead.
 """
 
 from .database_creation_dialog import DBCreationDialog
-from .form_helpers import _AIGenerateWorker, _apply_ui_font  # Private compatibility exports.
+from .form_helpers import (
+    _AIGenerateWorker,
+    _apply_ui_font,
+)  # Private compatibility exports.
 from .sentence_card_dialog import SentenceCardDialog
 from .word_phrase_dialog import WordPhraseCardDialog
 

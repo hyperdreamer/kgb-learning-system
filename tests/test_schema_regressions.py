@@ -36,6 +36,7 @@ class TestMigrationMeaningColumn:
         ensure_unfamiliar_items_table(conn)
         # Call the migration function (will be created later)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(conn)
         conn.commit()
         yield conn
@@ -44,6 +45,7 @@ class TestMigrationMeaningColumn:
     def test_migration_adds_meaning_column(self, legacy_conn):
         """After migration, the meaning column must exist."""
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(legacy_conn)
         cur = legacy_conn.execute("PRAGMA table_info(unfamiliar_items)")
         cols = {row[1]: row[2] for row in cur.fetchall()}
@@ -53,10 +55,10 @@ class TestMigrationMeaningColumn:
         """Existing expression data must survive the migration."""
         cid = insert_sentence_card(legacy_conn, "Hello world", [("world", "the earth")])
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(legacy_conn)
         cur = legacy_conn.execute(
-            "SELECT expression, meaning FROM unfamiliar_items WHERE card_id=?",
-            (cid,)
+            "SELECT expression, meaning FROM unfamiliar_items WHERE card_id=?", (cid,)
         )
         rows = cur.fetchall()
         assert len(rows) == 1
@@ -66,6 +68,7 @@ class TestMigrationMeaningColumn:
     def test_migration_idempotent(self, legacy_conn):
         """Calling migration twice must not fail."""
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(legacy_conn)
         migrate_unfamiliar_items_meaning(legacy_conn)  # second call
 
@@ -81,24 +84,28 @@ class TestMigrationMeaningColumn:
     def test_fk_cascade_still_works(self, conn_with_meaning):
         """FK cascade must still work after migration."""
         from kgb_srs.schema import insert_sentence_card as isc
+
         # Use the updated insert that supports meanings
-        cid = isc(conn_with_meaning, "Hello world",
-                  [("world", "the earth")])
+        cid = isc(conn_with_meaning, "Hello world", [("world", "the earth")])
         conn_with_meaning.execute("DELETE FROM cards WHERE id=?", (cid,))
         conn_with_meaning.commit()
         cur = conn_with_meaning.execute(
-            "SELECT COUNT(*) FROM unfamiliar_items WHERE card_id=?", (cid,))
+            "SELECT COUNT(*) FROM unfamiliar_items WHERE card_id=?", (cid,)
+        )
         assert cur.fetchone()[0] == 0
 
     def test_unique_still_enforced(self, conn_with_meaning):
         """UNIQUE(card_id, expression) still enforced at DB level."""
         from kgb_srs.schema import insert_sentence_card as isc
+
         cid = isc(conn_with_meaning, "a test", [("a", "m1")])
         # Direct insert of duplicate expression at DB level still fails
         with pytest.raises(sqlite3.IntegrityError):
             conn_with_meaning.execute(
                 "INSERT INTO unfamiliar_items (card_id, expression, meaning) "
-                "VALUES (?, ?, ?)", (cid, "a", "m2"))
+                "VALUES (?, ?, ?)",
+                (cid, "a", "m2"),
+            )
 
 
 class TestSentenceCRUDWithMeanings:
@@ -110,6 +117,7 @@ class TestSentenceCRUDWithMeanings:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         yield c
         c.close()
@@ -117,12 +125,13 @@ class TestSentenceCRUDWithMeanings:
     def test_insert_with_meanings(self, conn):
         """insert_sentence_card must accept (expression, meaning) pairs."""
         cid = insert_sentence_card(
-            conn, "Je suis ici",
-            [("suis", "am"), ("ici", "here")]
+            conn, "Je suis ici", [("suis", "am"), ("ici", "here")]
         )
         cur = conn.execute(
             "SELECT expression, meaning FROM unfamiliar_items "
-            "WHERE card_id=? ORDER BY id", (cid,))
+            "WHERE card_id=? ORDER BY id",
+            (cid,),
+        )
         rows = cur.fetchall()
         assert len(rows) == 2
         assert rows[0] == ("suis", "am")
@@ -153,8 +162,11 @@ class TestSentenceCRUDWithMeanings:
         """update_sentence_card must accept (expression, meaning) pairs."""
         cid = insert_sentence_card(conn, "Old sentence", [("old", "old meaning")])
         update_sentence_card(
-            conn, cid, front="New sentence", back="Rendered",
-            items=[("new", "new meaning")]
+            conn,
+            cid,
+            front="New sentence",
+            back="Rendered",
+            items=[("new", "new meaning")],
         )
         result = get_sentence_card(conn, cid)
         assert result[0] == "New sentence"
@@ -182,6 +194,7 @@ class TestSentenceDuplicateDetection:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         yield c
         c.close()
@@ -189,42 +202,45 @@ class TestSentenceDuplicateDetection:
     def test_duplicate_detected(self, conn):
         """Same sentence + same expressions -> duplicate."""
         from kgb_srs.schema import find_duplicate_sentence_card
+
         insert_sentence_card(conn, "Hello world", [("world", "the earth")])
         dup = find_duplicate_sentence_card(
-            conn, "Hello world", [("world", "the earth")])
+            conn, "Hello world", [("world", "the earth")]
+        )
         assert dup is not None
 
     def test_different_expressions_not_duplicate(self, conn):
         """Same sentence, different expressions -> not duplicate."""
         from kgb_srs.schema import find_duplicate_sentence_card
+
         insert_sentence_card(conn, "Hello world", [("world", "the earth")])
-        dup = find_duplicate_sentence_card(
-            conn, "Hello world", [("hello", "greeting")])
+        dup = find_duplicate_sentence_card(conn, "Hello world", [("hello", "greeting")])
         assert dup is None
 
     def test_different_sentence_not_duplicate(self, conn):
         """Different sentence, same expressions -> not duplicate."""
         from kgb_srs.schema import find_duplicate_sentence_card
+
         insert_sentence_card(conn, "Hello world", [("world", "the earth")])
         dup = find_duplicate_sentence_card(
-            conn, "Goodbye world", [("world", "the earth")])
+            conn, "Goodbye world", [("world", "the earth")]
+        )
         assert dup is None
 
     def test_case_insensitive_duplicate(self, conn):
         """Case differences in sentence -> still duplicate."""
         from kgb_srs.schema import find_duplicate_sentence_card
+
         insert_sentence_card(conn, "Hello world", [("world", "earth")])
-        dup = find_duplicate_sentence_card(
-            conn, "HELLO WORLD", [("world", "earth")])
+        dup = find_duplicate_sentence_card(conn, "HELLO WORLD", [("world", "earth")])
         assert dup is not None
 
     def test_subset_expressions_not_duplicate(self, conn):
         """Same sentence, subset of expressions -> not duplicate."""
         from kgb_srs.schema import find_duplicate_sentence_card
-        insert_sentence_card(conn, "Hello world",
-                            [("hello", "g"), ("world", "e")])
-        dup = find_duplicate_sentence_card(
-            conn, "Hello world", [("world", "earth")])
+
+        insert_sentence_card(conn, "Hello world", [("hello", "g"), ("world", "e")])
+        dup = find_duplicate_sentence_card(conn, "Hello world", [("world", "earth")])
         assert dup is None
 
 
@@ -237,6 +253,7 @@ class TestAtomicOperations:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         yield c
         c.close()
@@ -244,24 +261,24 @@ class TestAtomicOperations:
     def test_rollback_on_duplicate_expression(self, conn):
         """Duplicate expressions are deduplicated - no partial state left."""
         from kgb_srs.schema import insert_sentence_card as isc
-        card_count_before = conn.execute(
-            "SELECT COUNT(*) FROM cards").fetchone()[0]
+
+        card_count_before = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
 
         # Insert with duplicate expressions — should deduplicate gracefully
         cid = isc(conn, "Test sentence with dup", [("dup", "m1"), ("dup", "m2")])
-        card_count_after = conn.execute(
-            "SELECT COUNT(*) FROM cards").fetchone()[0]
+        card_count_after = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
         assert card_count_after == card_count_before + 1
 
         # Should have exactly 1 child (the duplicate was deduplicated)
         child_count = conn.execute(
-            "SELECT COUNT(*) FROM unfamiliar_items WHERE card_id=?",
-            (cid,)).fetchone()[0]
+            "SELECT COUNT(*) FROM unfamiliar_items WHERE card_id=?", (cid,)
+        ).fetchone()[0]
         assert child_count == 1
 
     def test_empty_sentence_rejected(self, conn):
         """Empty sentence must be rejected before any DB operation."""
         from kgb_srs.schema import insert_sentence_card as isc
+
         with pytest.raises(ValueError):
             isc(conn, "", [("test", "meaning")])
         with pytest.raises(ValueError):
@@ -270,6 +287,7 @@ class TestAtomicOperations:
     def test_no_expressions_rejected(self, conn):
         """At least one expression must be provided."""
         from kgb_srs.schema import insert_sentence_card as isc
+
         with pytest.raises(ValueError):
             isc(conn, "Hello", [])
         with pytest.raises(ValueError):
@@ -286,6 +304,7 @@ class TestDuplicateOrdered:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         yield c
         c.close()
@@ -293,17 +312,21 @@ class TestDuplicateOrdered:
     def test_same_order_is_duplicate(self, conn):
         """Same expressions in same order -> duplicate."""
         from kgb_srs.schema import find_duplicate_sentence_card
+
         insert_sentence_card(conn, "A B C", [("A", "m1"), ("B", "m2"), ("C", "m3")])
         dup = find_duplicate_sentence_card(
-            conn, "A B C", [("A", "m1"), ("B", "m2"), ("C", "m3")])
+            conn, "A B C", [("A", "m1"), ("B", "m2"), ("C", "m3")]
+        )
         assert dup is not None
 
     def test_different_order_not_duplicate(self, conn):
         """Same expressions in different order -> NOT duplicate (ordered list)."""
         from kgb_srs.schema import find_duplicate_sentence_card
+
         insert_sentence_card(conn, "A B C", [("A", "m1"), ("B", "m2"), ("C", "m3")])
         dup = find_duplicate_sentence_card(
-            conn, "A B C", [("C", "m3"), ("B", "m2"), ("A", "m1")])
+            conn, "A B C", [("C", "m3"), ("B", "m2"), ("A", "m1")]
+        )
         assert dup is None
 
     def test_matches_legacy_normalized_semantics_for_legacy_rows(self, conn):
@@ -312,16 +335,16 @@ class TestDuplicateOrdered:
         from kgb_srs.validation import normalize_sentence
 
         def add_card(front, expressions):
-            card_id = conn.execute("INSERT INTO cards (front) VALUES (?)", (front,)).lastrowid
+            card_id = conn.execute(
+                "INSERT INTO cards (front) VALUES (?)", (front,)
+            ).lastrowid
             conn.executemany(
                 "INSERT INTO unfamiliar_items (card_id, expression) VALUES (?, ?)",
                 [(card_id, expression) for expression in expressions],
             )
             return card_id
 
-        first_match = add_card(
-            "Straße\nCAFE\u0301", ["  ALPHA  ", "BETA\u0301"]
-        )
+        first_match = add_card("Straße\nCAFE\u0301", ["  ALPHA  ", "BETA\u0301"])
         add_card("STRASSE café", ["beta\u0301", "alpha"])
         add_card("STRASSE café", ["", "alpha", "beta\u0301"])
         add_card("unrelated", ["alpha", "beta\u0301"])
@@ -367,9 +390,10 @@ class TestDuplicateOrdered:
             assert find_duplicate_sentence_card(conn, sentence, items) == legacy_match(
                 sentence, items
             )
-        assert find_duplicate_sentence_card(
-            conn, "STRASSE café", ["alpha", "beta\u0301"]
-        ) == first_match
+        assert (
+            find_duplicate_sentence_card(conn, "STRASSE café", ["alpha", "beta\u0301"])
+            == first_match
+        )
 
     def test_fetches_matching_cards_and_children_in_one_query(self, conn):
         """Candidate child rows are fetched once, never once per card."""
@@ -395,9 +419,10 @@ class TestDuplicateOrdered:
         statements = []
         conn.set_trace_callback(statements.append)
         try:
-            assert find_duplicate_sentence_card(
-                conn, "  SAME\nsentence ", ["TARGET"]
-            ) == matching_id
+            assert (
+                find_duplicate_sentence_card(conn, "  SAME\nsentence ", ["TARGET"])
+                == matching_id
+            )
         finally:
             conn.set_trace_callback(None)
 
@@ -424,7 +449,9 @@ class TestDBPathHardening:
     def test_normal_resolution(self, tmp_path):
         base = str(tmp_path)
         result = resolve_db_path(base, "Knowledge-based", "Math")
-        expected = os.path.realpath(os.path.join(base, "Knowledge-based", "Math_barsky.db"))
+        expected = os.path.realpath(
+            os.path.join(base, "Knowledge-based", "Math_barsky.db")
+        )
         assert result == expected
 
 
@@ -437,6 +464,7 @@ class TestPersistenceInvariants:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         yield c
         c.close()
@@ -444,16 +472,17 @@ class TestPersistenceInvariants:
     def test_expression_not_in_sentence_rejected_insert(self, conn):
         """Insert rejects expressions not found in sentence."""
         with pytest.raises(ValueError, match="not found"):
-            insert_sentence_card(
-                conn, "Hello world", [("not_there", "meaning")]
-            )
+            insert_sentence_card(conn, "Hello world", [("not_there", "meaning")])
 
     def test_expression_not_in_sentence_rejected_update(self, conn):
         """Update rejects expressions not found in sentence."""
         cid = insert_sentence_card(conn, "Hello world", [("world", "earth")])
         with pytest.raises(ValueError, match="not found"):
             update_sentence_card(
-                conn, cid, front="Hello world", back="M",
+                conn,
+                cid,
+                front="Hello world",
+                back="M",
                 items=[("not_there", "meaning")],
             )
 
@@ -467,7 +496,10 @@ class TestPersistenceInvariants:
         cid = insert_sentence_card(conn, "Hello world", [("world", "earth")])
         with pytest.raises(ValueError, match="meaning"):
             update_sentence_card(
-                conn, cid, front="Hello world", back="M",
+                conn,
+                cid,
+                front="Hello world",
+                back="M",
                 items=[("world", "")],
             )
 
@@ -475,9 +507,7 @@ class TestPersistenceInvariants:
         """A failed insert must not leave partial data."""
         count_before = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
         try:
-            insert_sentence_card(
-                conn, "Hello world", [("not_in_sentence", "meaning")]
-            )
+            insert_sentence_card(conn, "Hello world", [("not_in_sentence", "meaning")])
         except ValueError:
             pass
         count_after = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]

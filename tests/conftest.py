@@ -14,9 +14,7 @@ _HEADLESS_QPA_PLATFORMS = {"offscreen", "minimal", "headless"}
 def _has_display_server() -> bool:
     if not sys.platform.startswith("linux"):
         return True
-    return bool(
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    )
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
 def _uses_headless_qt() -> bool:

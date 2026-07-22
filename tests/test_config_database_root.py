@@ -182,30 +182,45 @@ class TestPathUnderRoot:
         escaped = outside_link / "escaped_barsky.db"
         assert is_path_under_root(str(escaped), str(root)) is False
         assert relative_db_path(str(escaped), str(root)) is None
-        assert resolve_default_database({
-            "database_root": str(root),
-            "default_database": str(escaped),
-        }) == ""
-        assert resolve_default_database({
-            "database_root": str(root),
-            "default_database": os.path.join(
-                "outside-link", "escaped_barsky.db"
-            ),
-        }) == ""
+        assert (
+            resolve_default_database(
+                {
+                    "database_root": str(root),
+                    "default_database": str(escaped),
+                }
+            )
+            == ""
+        )
+        assert (
+            resolve_default_database(
+                {
+                    "database_root": str(root),
+                    "default_database": os.path.join(
+                        "outside-link", "escaped_barsky.db"
+                    ),
+                }
+            )
+            == ""
+        )
         assert normalize_default_database(str(escaped), str(root)) == ""
-        assert normalize_default_database(
-            os.path.join("outside-link", "escaped_barsky.db"), str(root)
-        ) == ""
+        assert (
+            normalize_default_database(
+                os.path.join("outside-link", "escaped_barsky.db"), str(root)
+            )
+            == ""
+        )
 
         normal = root / "normal" / "inside_barsky.db"
         assert is_path_under_root(str(normal), str(root)) is True
         assert relative_db_path(str(normal), str(root)) == os.path.join(
             "normal", "inside_barsky.db"
         )
-        assert resolve_default_database({
-            "database_root": str(root),
-            "default_database": os.path.join("normal", "inside_barsky.db"),
-        }) == str(normal)
+        assert resolve_default_database(
+            {
+                "database_root": str(root),
+                "default_database": os.path.join("normal", "inside_barsky.db"),
+            }
+        ) == str(normal)
         assert normalize_default_database(str(normal), str(root)) == os.path.join(
             "normal", "inside_barsky.db"
         )
@@ -239,14 +254,10 @@ class TestResolveDefaultDatabase:
     def test_relative_joins_root(self, tmp_path):
         settings = {
             "database_root": str(tmp_path),
-            "default_database": os.path.join(
-                "Language-based", "English_barsky.db"
-            ),
+            "default_database": os.path.join("Language-based", "English_barsky.db"),
         }
         expected = os.path.normpath(
-            os.path.join(
-                str(tmp_path), "Language-based", "English_barsky.db"
-            )
+            os.path.join(str(tmp_path), "Language-based", "English_barsky.db")
         )
         assert resolve_default_database(settings) == expected
 

@@ -38,6 +38,7 @@ from kgb_srs.main_window import BarskyApp
 from kgb_srs.schema import init_db, ensure_unfamiliar_items_table
 from kgb_srs.catalog import DatabaseType, write_database_type
 
+
 @pytest.fixture(autouse=True)
 def _dismiss_message_boxes(monkeypatch):
     """Prevent modal dialogs from blocking the headless review-control tests."""
@@ -45,8 +46,8 @@ def _dismiss_message_boxes(monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
 
 
-
 # ── Helpers ───────────────────────────────────────────────────────────
+
 
 def _make_temp_sentence_db():
     """Create a temporary language-sentence database with known test cards.
@@ -64,16 +65,15 @@ def _make_temp_sentence_db():
     future = (datetime.date.today() + datetime.timedelta(days=30)).isoformat()
 
     cards = [
-        ("Hello world", "A greeting", 1, yesterday),          # due
-        ("Goodbye world", "A farewell", 2, today),             # due
-        ("Future card", "Not due yet", 1, future),             # NOT due
-        ("Greetings earth", "Another greeting", 3, yesterday), # due
+        ("Hello world", "A greeting", 1, yesterday),  # due
+        ("Goodbye world", "A farewell", 2, today),  # due
+        ("Future card", "Not due yet", 1, future),  # NOT due
+        ("Greetings earth", "Another greeting", 3, yesterday),  # due
     ]
 
     for front, back, box, next_review in cards:
         conn.execute(
-            "INSERT INTO cards (front, back, box, next_review)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, ?, ?)",
             (front, back, box, next_review),
         )
     conn.commit()
@@ -82,6 +82,7 @@ def _make_temp_sentence_db():
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
+
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -236,7 +237,6 @@ class TestActiveStateButtons:
         assert app.current_card is not None
         assert app.current_card[0] == first_id
 
-
     def test_close_enabled_in_active(self, app_with_db):
         app, _, _ = app_with_db
         app.start_review()
@@ -268,9 +268,7 @@ class TestStartReviewDispatch:
         # Click Next (skip current card) — call dispatch directly
         app._on_primary_button_clicked()
 
-        assert app.review_mode == "daily", (
-            "Must remain in daily review mode after Next"
-        )
+        assert app.review_mode == "daily", "Must remain in daily review mode after Next"
         assert "Next" in app.start_btn.text(), (
             "Button must still show 'Next' during active review"
         )
@@ -298,9 +296,7 @@ class TestCloseTransition:
         assert app._paused_review_card[0] == paused_card[0], (
             "Paused card ID must match the card that was showing"
         )
-        assert app._paused_review_mode == "daily", (
-            "Paused mode must be 'daily'"
-        )
+        assert app._paused_review_mode == "daily", "Paused mode must be 'daily'"
 
     def test_close_returns_to_idle_with_resume_label(self, app_with_db):
         app, _, _ = app_with_db
@@ -387,9 +383,7 @@ class TestQueueCompletion:
 
         today = datetime.date.today().isoformat()
         cur = conn.cursor()
-        cur.execute(
-            "SELECT COUNT(*) FROM cards WHERE next_review <= ?", (today,)
-        )
+        cur.execute("SELECT COUNT(*) FROM cards WHERE next_review <= ?", (today,))
         due_count = cur.fetchone()[0]
         assert due_count > 0, "Test DB must have due cards"
 
@@ -726,7 +720,6 @@ class TestQueueSnapshot:
         assert len(snapshot) >= len(remaining), (
             "Snapshot must capture the full original due queue"
         )
-
 
 
 class TestProcessAnswerFreshBox:

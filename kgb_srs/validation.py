@@ -306,7 +306,9 @@ _IRREGULAR_VERB_GROUPS: tuple[frozenset[str], ...] = (
     frozenset({"weave", "weaves", "weaving", "wove", "woven"}),
     frozenset({"wring", "wringing", "wrings", "wrung"}),
     frozenset({"rewrite", "rewrites", "rewriting", "rewritten", "rewrote"}),
-    frozenset({"underwrite", "underwrites", "underwriting", "underwritten", "underwrote"}),
+    frozenset(
+        {"underwrite", "underwrites", "underwriting", "underwritten", "underwrote"}
+    ),
     frozenset({"write", "writes", "writing", "written", "wrote"}),
 )
 
@@ -865,9 +867,7 @@ def locate_unfamiliar_spans(
         expr, preferred = _item_expression_and_surface(item)
         if not expr:
             continue
-        span = locate_item_surface_span(
-            sentence, expr, preferred_surface=preferred
-        )
+        span = locate_item_surface_span(sentence, expr, preferred_surface=preferred)
         if span is None:
             continue
         start, end = span
@@ -908,9 +908,7 @@ def sort_items_by_sentence_order(sentence: str, items: list) -> list:
         else:
             located.append((span[0], idx, item))
     located.sort(key=lambda t: (t[0], t[1]))
-    return [item for _start, _idx, item in located] + [
-        item for _idx, item in missing
-    ]
+    return [item for _start, _idx, item in located] + [item for _idx, item in missing]
 
 
 def format_sentence_meaning_lines(items: list) -> list[str]:

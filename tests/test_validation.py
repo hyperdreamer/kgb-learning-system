@@ -13,16 +13,20 @@ from kgb_srs.validation import (
 # normalize_sentence
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("input_text,expected", [
-    ("Hello  world", "hello world"),
-    ("Héllo  Wörld", "héllo wörld"),
-    ("  leading  spaces  ", "leading spaces"),
-    ("tab\there", "tab here"),
-    ("new\nline\r", "new line"),
-    ("\u00e9", "\u00e9"),        # NFC é, stays NFC
-    ("e\u0301", "\u00e9"),       # NFD é → NFC
-    ("\u212b", "\u00e5"),        # ANGSTROM SIGN → å
-])
+
+@pytest.mark.parametrize(
+    "input_text,expected",
+    [
+        ("Hello  world", "hello world"),
+        ("Héllo  Wörld", "héllo wörld"),
+        ("  leading  spaces  ", "leading spaces"),
+        ("tab\there", "tab here"),
+        ("new\nline\r", "new line"),
+        ("\u00e9", "\u00e9"),  # NFC é, stays NFC
+        ("e\u0301", "\u00e9"),  # NFD é → NFC
+        ("\u212b", "\u00e5"),  # ANGSTROM SIGN → å
+    ],
+)
 def test_normalize_sentence(input_text, expected):
     result = normalize_sentence(input_text)
     assert result == expected
@@ -36,6 +40,7 @@ def test_normalize_sentence_preserves_empty():
 # ---------------------------------------------------------------------------
 # validate_unfamiliar_items
 # ---------------------------------------------------------------------------
+
 
 class TestValidateUnfamiliarItems:
     def test_all_items_found_literally(self):
@@ -122,14 +127,10 @@ class TestValidateUnfamiliarItems:
         ).valid
 
     def test_third_person_go_goes(self):
-        assert validate_unfamiliar_items(
-            "He goes to school.", ["go to"]
-        ).valid
+        assert validate_unfamiliar_items("He goes to school.", ["go to"]).valid
 
     def test_studies_study(self):
-        assert validate_unfamiliar_items(
-            "She studies hard every day.", ["study"]
-        ).valid
+        assert validate_unfamiliar_items("She studies hard every day.", ["study"]).valid
 
     def test_watched_watch(self):
         assert validate_unfamiliar_items(
@@ -137,16 +138,12 @@ class TestValidateUnfamiliarItems:
         ).valid
 
     def test_still_rejects_absent(self):
-        result = validate_unfamiliar_items(
-            "He insists on speaking.", ["absent phrase"]
-        )
+        result = validate_unfamiliar_items("He insists on speaking.", ["absent phrase"])
         assert result.valid is False
         assert "absent phrase" in result.missing
 
     def test_cjk_still_literal(self):
-        assert validate_unfamiliar_items(
-            "我喜欢吃中国菜", ["中国菜", "我喜欢"]
-        ).valid
+        assert validate_unfamiliar_items("我喜欢吃中国菜", ["中国菜", "我喜欢"]).valid
 
     def test_multiword_requires_consecutive(self):
         """Words present but not consecutive as the phrase must fail."""
@@ -158,35 +155,19 @@ class TestValidateUnfamiliarItems:
 
     def test_go_gone_went_irregular(self):
         """Irregular go/went/gone (and going/goes) share a lemma family."""
-        assert validate_unfamiliar_items(
-            "He has gone home.", ["go"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "They went home early.", ["go"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "She is going home.", ["go"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "He has gone home.", ["go home"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "They went home early.", ["go home"]
-        ).valid
+        assert validate_unfamiliar_items("He has gone home.", ["go"]).valid
+        assert validate_unfamiliar_items("They went home early.", ["go"]).valid
+        assert validate_unfamiliar_items("She is going home.", ["go"]).valid
+        assert validate_unfamiliar_items("He has gone home.", ["go home"]).valid
+        assert validate_unfamiliar_items("They went home early.", ["go home"]).valid
         # reverse: surface lemma in item, past in sentence already covered;
         # also item may be the irregular form against a base in sentence
-        assert validate_unfamiliar_items(
-            "I go there every day.", ["gone"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "I go there every day.", ["went"]
-        ).valid
+        assert validate_unfamiliar_items("I go there every day.", ["gone"]).valid
+        assert validate_unfamiliar_items("I go there every day.", ["went"]).valid
 
     def test_undergo_inflections_do_not_match_go(self):
         """A prefixed verb keeps its own irregular family."""
-        assert validate_unfamiliar_items(
-            "He underwent surgery.", ["undergo"]
-        ).valid
+        assert validate_unfamiliar_items("He underwent surgery.", ["undergo"]).valid
         result = validate_unfamiliar_items("He underwent surgery.", ["go"])
         assert result.valid is False
         assert result.missing == ["go"]
@@ -226,7 +207,7 @@ class TestValidateUnfamiliarItems:
 
         span = locate_item_surface_span(sentence, "staple")
         assert span is not None
-        assert sentence[span[0]:span[1]] == "staple"
+        assert sentence[span[0] : span[1]] == "staple"
 
         assert surface_form_in_sentence(sentence, "staple") is True
         bolded = highlight_unfamiliar_in_sentence(sentence, ["staple"])
@@ -241,31 +222,15 @@ class TestValidateUnfamiliarItems:
 
     def test_choose_chose_chosen_irregular(self):
         """Irregular choose/chose/chosen share a lemma family."""
-        assert validate_unfamiliar_items(
-            "She chose a book.", ["choose"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "He has chosen wisely.", ["choose"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "They are choosing now.", ["choose"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "She chooses carefully.", ["choose"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "I choose tea.", ["chose"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "I choose tea.", ["chosen"]
-        ).valid
-        assert validate_unfamiliar_items(
-            "She chose a book.", ["choose a book"]
-        ).valid
+        assert validate_unfamiliar_items("She chose a book.", ["choose"]).valid
+        assert validate_unfamiliar_items("He has chosen wisely.", ["choose"]).valid
+        assert validate_unfamiliar_items("They are choosing now.", ["choose"]).valid
+        assert validate_unfamiliar_items("She chooses carefully.", ["choose"]).valid
+        assert validate_unfamiliar_items("I choose tea.", ["chose"]).valid
+        assert validate_unfamiliar_items("I choose tea.", ["chosen"]).valid
+        assert validate_unfamiliar_items("She chose a book.", ["choose a book"]).valid
         # Unrelated word must still fail.
-        result = validate_unfamiliar_items(
-            "The chocolate is sweet.", ["choose"]
-        )
+        result = validate_unfamiliar_items("The chocolate is sweet.", ["choose"])
         assert result.valid is False
         assert "choose" in result.missing
 
@@ -306,6 +271,7 @@ class TestValidateUnfamiliarItems:
 
     def test_surface_form_in_sentence(self):
         from kgb_srs.validation import surface_form_in_sentence
+
         assert surface_form_in_sentence("He has gone home.", "gone")
         assert surface_form_in_sentence("He has gone home.", "Gone")
         assert not surface_form_in_sentence("He has gone home.", "went")
@@ -337,7 +303,10 @@ class TestValidateUnfamiliarItems:
         """AI residual surface (lay) must survive insert re-validation for lie."""
         from kgb_srs.ai_parser import MembershipClaim
         from kgb_srs.schema import init_db, insert_sentence_card
-        from kgb_srs.validation import apply_ai_membership_claims, validate_unfamiliar_items
+        from kgb_srs.validation import (
+            apply_ai_membership_claims,
+            validate_unfamiliar_items,
+        )
 
         sentence = "He lay down to rest."
         # Local rules intentionally do not map recline-lie ↔ lay.
@@ -388,9 +357,7 @@ class TestValidateUnfamiliarItems:
 
         conn = init_db(str(tmp_path / "undergo.db"))
         with pytest.raises(ValueError, match="go"):
-            insert_sentence_card(
-                conn, "He underwent surgery.", [("go", "move")], ""
-            )
+            insert_sentence_card(conn, "He underwent surgery.", [("go", "move")], "")
         conn.close()
 
     def test_highlight_uses_preferred_surface_for_lie_lay(self):
@@ -419,9 +386,11 @@ class TestValidateUnfamiliarItems:
 # Surface location + in-sentence highlight
 # ---------------------------------------------------------------------------
 
+
 class TestHighlightUnfamiliarInSentence:
     def test_bold_inflected_surface_not_lemma(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
         out = highlight_unfamiliar_in_sentence(
             "He insists on speaking himself.",
             ["insist on"],
@@ -433,15 +402,19 @@ class TestHighlightUnfamiliarInSentence:
 
     def test_bold_irregular_surface(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
-        assert highlight_unfamiliar_in_sentence(
-            "He has gone home.", ["go"]
-        ) == "He has **gone** home."
-        assert highlight_unfamiliar_in_sentence(
-            "She chose a book.", ["choose"]
-        ) == "She **chose** a book."
+
+        assert (
+            highlight_unfamiliar_in_sentence("He has gone home.", ["go"])
+            == "He has **gone** home."
+        )
+        assert (
+            highlight_unfamiliar_in_sentence("She chose a book.", ["choose"])
+            == "She **chose** a book."
+        )
 
     def test_multiple_items(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
         out = highlight_unfamiliar_in_sentence(
             "She went home and bought milk.",
             ["go", "buy"],
@@ -450,18 +423,21 @@ class TestHighlightUnfamiliarInSentence:
 
     def test_no_match_returns_original(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
         s = "The cargo ship left."
         assert highlight_unfamiliar_in_sentence(s, ["go"]) == s
 
     def test_locate_item_surface_span(self):
         from kgb_srs.validation import locate_item_surface_span
+
         s = "He insists on speaking himself."
         span = locate_item_surface_span(s, "insist on")
         assert span is not None
-        assert s[span[0]:span[1]] == "insists on"
+        assert s[span[0] : span[1]] == "insists on"
 
     def test_japanese_literal_highlight(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
+
         s = "私は日本語を勉強しています"
         out = highlight_unfamiliar_in_sentence(s, ["日本語"])
         assert out == "私は**日本語**を勉強しています"
@@ -481,7 +457,9 @@ class TestHighlightUnfamiliarInSentence:
             "May Still Be **Exacted**!"
         )
 
-    def test_composed_cafe_plural_matches_decomposed_surface_and_preserves_surface(self):
+    def test_composed_cafe_plural_matches_decomposed_surface_and_preserves_surface(
+        self,
+    ):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
 
         sentence = "A cafe\u0301 is open."
@@ -499,7 +477,7 @@ class TestHighlightUnfamiliarInSentence:
         sentence = "The cafe\u0301's owner arrived."
         span = locate_item_surface_span(sentence, "café")
         assert span is not None
-        assert sentence[span[0]:span[1]] == "cafe\u0301"
+        assert sentence[span[0] : span[1]] == "cafe\u0301"
         assert highlight_unfamiliar_in_sentence(sentence, ["café"]) == (
             "The **cafe\u0301**'s owner arrived."
         )
@@ -520,7 +498,7 @@ class TestHighlightUnfamiliarInSentence:
         sentence = "x가's owner arrived."
         span = locate_item_surface_span(sentence, "가")
         assert span == (1, 3)
-        assert sentence[span[0]:span[1]] == "가"
+        assert sentence[span[0] : span[1]] == "가"
         assert highlight_unfamiliar_in_sentence(sentence, ["가"]) == (
             "x**가**'s owner arrived."
         )
@@ -534,20 +512,19 @@ class TestHighlightUnfamiliarInSentence:
         sentence = "각!"
         span = _normalized_literal_span(sentence, "각")
         assert span == (0, 3)
-        assert sentence[span[0]:span[1]] == "각"
+        assert sentence[span[0] : span[1]] == "각"
         assert highlight_unfamiliar_in_sentence(sentence, ["각"]) == "**각**!"
 
     def test_trailing_punctuation_not_inside_bold(self):
         from kgb_srs.validation import highlight_unfamiliar_in_sentence
 
-        assert highlight_unfamiliar_in_sentence(
-            "Exacted!", ["exact"]
-        ) == "**Exacted**!"
+        assert highlight_unfamiliar_in_sentence("Exacted!", ["exact"]) == "**Exacted**!"
 
 
 # ---------------------------------------------------------------------------
 # Sentence-order sort + numbered meaning lines
 # ---------------------------------------------------------------------------
+
 
 class TestSentenceMeaningDisplayHelpers:
     def test_sort_items_by_sentence_order(self):
@@ -581,6 +558,7 @@ class TestSentenceMeaningDisplayHelpers:
 # ---------------------------------------------------------------------------
 # deduplicate_unfamiliar_items
 # ---------------------------------------------------------------------------
+
 
 class TestDeduplicateUnfamiliarItems:
     def test_removes_exact_duplicates(self):

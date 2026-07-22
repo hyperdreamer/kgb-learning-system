@@ -28,7 +28,13 @@ def test_review_controller_loads_due_or_all_cards_in_id_order():
             "INSERT INTO cards VALUES (?, ?, ?, ?, ?)",
             [
                 (3, "due late", "", 1, today.isoformat()),
-                (1, "due early", "", 2, (today - datetime.timedelta(days=1)).isoformat()),
+                (
+                    1,
+                    "due early",
+                    "",
+                    2,
+                    (today - datetime.timedelta(days=1)).isoformat(),
+                ),
                 (2, "future", "", 3, (today + datetime.timedelta(days=1)).isoformat()),
             ],
         )
@@ -36,17 +42,13 @@ def test_review_controller_loads_due_or_all_cards_in_id_order():
             all_cards_checkbox=_CheckBox(), random_checkbox=_CheckBox()
         )
 
-        assert ReviewControllerMixin._load_review_queue(
-            state, conn.cursor()
-        ) == [
+        assert ReviewControllerMixin._load_review_queue(state, conn.cursor()) == [
             (1, "due early", "", 2),
             (3, "due late", "", 1),
         ]
 
         state.all_cards_checkbox._checked = True
-        assert ReviewControllerMixin._load_review_queue(
-            state, conn.cursor()
-        ) == [
+        assert ReviewControllerMixin._load_review_queue(state, conn.cursor()) == [
             (1, "due early", "", 2),
             (2, "future", "", 3),
             (3, "due late", "", 1),

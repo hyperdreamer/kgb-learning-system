@@ -21,7 +21,16 @@ from PyQt6.QtWidgets import (
     QMenu,
 )
 from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon, QShortcut, QKeySequence
+from PyQt6.QtGui import (
+    QFont,
+    QPainter,
+    QPen,
+    QColor,
+    QBrush,
+    QIcon,
+    QShortcut,
+    QKeySequence,
+)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from .config import (
@@ -40,14 +49,23 @@ from .forms import SentenceCardDialog, DBCreationDialog
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 from .schema import (
-    insert_sentence_card, get_sentence_card, update_sentence_card,
-    find_duplicate_sentence_card, validate_db_name,
+    insert_sentence_card,
+    get_sentence_card,
+    update_sentence_card,
+    find_duplicate_sentence_card,
+    validate_db_name,
     resolve_db_path,
 )
-from .catalog import (DatabaseType, infer_database_type,
-                       read_database_type, write_database_type,
-                       build_catalog_tree, DB_DIR_LANGUAGE_SENTENCE,
-                       DB_DIR_LANGUAGE_WORD_PHRASE, DB_DIR_KNOWLEDGE)
+from .catalog import (
+    DatabaseType,
+    infer_database_type,
+    read_database_type,
+    write_database_type,
+    build_catalog_tree,
+    DB_DIR_LANGUAGE_SENTENCE,
+    DB_DIR_LANGUAGE_WORD_PHRASE,
+    DB_DIR_KNOWLEDGE,
+)
 from .settings_dialog import SettingsDialog
 from .browse_dialog import (
     BrowseCardsDialog,
@@ -82,9 +100,11 @@ def _open_and_infer_type(db_path):
         infer=infer_database_type,
     )
 
+
 # ---------------------------------------------------------------------------
 # BarskyApp
 # ---------------------------------------------------------------------------
+
 
 class BarskyApp(ReviewControllerMixin, QMainWindow):
     """Main application window for the KGB 5-Box SRS System."""
@@ -119,8 +139,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._paused_review_mode = ""
 
         # Daily-review session state
-        self._daily_review_history = []       # cards graded this session
-        self._daily_queue_snapshot = []       # full original due queue (Restart)
+        self._daily_review_history = []  # cards graded this session
+        self._daily_queue_snapshot = []  # full original due queue (Restart)
 
         # Paused-session deep state (preserved across close/resume)
         self._paused_cards_due = []
@@ -160,9 +180,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         default_db = resolve_default_database(self.settings)
         if default_db and os.path.exists(default_db):
-            for display, path in find_databases(
-                get_database_root(self.settings)
-            ):
+            for display, path in find_databases(get_database_root(self.settings)):
                 if path == default_db:
                     self.current_db_path = default_db
                     self.current_lang = display
@@ -235,26 +253,30 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         self.start_btn.setStyleSheet(
             self._button_style(
-                "#43A047", "#66BB6A",
+                "#43A047",
+                "#66BB6A",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
         self.restart_review_btn.setStyleSheet(
             self._button_style(
-                "#1E88E5", "#42A5F5",
+                "#1E88E5",
+                "#42A5F5",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
         self.previous_review_btn.setStyleSheet(
             self._button_style(
-                "#E53935", "#EF5350",
+                "#E53935",
+                "#EF5350",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
 
         self.delete_entry_btn.setStyleSheet(
             self._button_style(
-                "#D32F2F", "#F44336",
+                "#D32F2F",
+                "#F44336",
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
@@ -342,9 +364,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # ------------------------------------------------------------------
     def setup_ui(self):
         central_widget = QWidget()
-        central_widget.setStyleSheet(
-            "QWidget { background-color: #FAFAFA; }"
-        )
+        central_widget.setStyleSheet("QWidget { background-color: #FAFAFA; }")
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(10)
@@ -398,9 +418,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.all_cards_checkbox = QCheckBox("All cards")
         self.all_cards_checkbox.setEnabled(False)
         self.all_cards_checkbox.setChecked(False)
-        self.all_cards_checkbox.stateChanged.connect(
-            self._on_all_cards_toggled
-        )
+        self.all_cards_checkbox.stateChanged.connect(self._on_all_cards_toggled)
         self.all_cards_checkbox.setToolTip(
             "When checked, Start Review includes every card in the database,\n"
             "not only cards due today. Grading still updates the schedule."
@@ -426,7 +444,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.add_entry_btn.setToolTip("Add a new card (Alt+N)")
         top_layout.addWidget(self.add_entry_btn)
 
-        self.delete_entry_btn = action_btn(" Delete Entry", "edit-delete", self.delete_current_card)
+        self.delete_entry_btn = action_btn(
+            " Delete Entry", "edit-delete", self.delete_current_card
+        )
         self.delete_entry_btn.setEnabled(False)
         self.delete_entry_btn.setToolTip("Delete the displayed card (Alt+D)")
         top_layout.addWidget(self.delete_entry_btn)
@@ -546,14 +566,14 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return sc
 
         # Review flow
-        add("Alt+S", self._shortcut_primary)       # Start / Next
-        add("Alt+R", self._shortcut_reveal)        # Reveal
+        add("Alt+S", self._shortcut_primary)  # Start / Next
+        add("Alt+R", self._shortcut_reveal)  # Reveal
         add("Alt+Left", self._shortcut_incorrect)
         add("Alt+Right", self._shortcut_correct)
         add("Alt+1", self._shortcut_incorrect)
         add("Alt+2", self._shortcut_correct)
         add("Alt+X", self._shortcut_close_review)  # Close / eXit review
-        add("Alt+T", self._shortcut_restart)       # resTart
+        add("Alt+T", self._shortcut_restart)  # resTart
         add("Alt+P", self._shortcut_previous)
         add("Alt+L", self._shortcut_listen)
 
@@ -640,7 +660,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         pos = self.db_btn.mapToGlobal(self.db_btn.rect().bottomLeft())
 
         if self.current_db_path and self._menu_contains(menu, self.current_db_path):
-            QTimer.singleShot(10, lambda: self._expand_to_path(menu, self.current_db_path))
+            QTimer.singleShot(
+                10, lambda: self._expand_to_path(menu, self.current_db_path)
+            )
 
         menu.popup(pos)
 
@@ -682,9 +704,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         if not validate_db_name(name):
             QMessageBox.warning(
-                self, "Invalid Name",
+                self,
+                "Invalid Name",
                 f"Database name '{name}' contains invalid characters.\n\n"
-                "Names must not contain /, \\, .., NUL, or control characters."
+                "Names must not contain /, \\, .., NUL, or control characters.",
             )
             return
 
@@ -706,8 +729,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         if os.path.exists(path):
             QMessageBox.warning(
-                self, "Exists",
-                f"A database named '{name}' already exists in this location."
+                self,
+                "Exists",
+                f"A database named '{name}' already exists in this location.",
             )
             return
 
@@ -720,9 +744,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
                 ensure_sentence_schema(conn)
                 try:
-                    ensure_linked_word_phrase_database(
-                        conn, path, db_root, sync=True
-                    )
+                    ensure_linked_word_phrase_database(conn, path, db_root, sync=True)
                 except Exception as exc:
                     # The word/phrase database is a derived projection.  Its
                     # failure must not prevent opening the newly created source DB.
@@ -830,8 +852,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             self._clear_database_state()
             if not silent:
                 QMessageBox.warning(
-                    self, "Error",
-                    f"Failed to open database:\n{failed_path}\n\n{e}"
+                    self, "Error", f"Failed to open database:\n{failed_path}\n\n{e}"
                 )
             return
 
@@ -868,7 +889,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._update_button_visibility()
 
         if not silent:
-            QMessageBox.information(self, "Success", f"Loaded database: {self.current_lang}")
+            QMessageBox.information(
+                self, "Success", f"Loaded database: {self.current_lang}"
+            )
             if not HAS_WEBENGINE:
                 if "Math" in self.current_lang or "LaTeX" in self.current_lang:
                     QMessageBox.warning(
@@ -920,7 +943,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # ------------------------------------------------------------------
     def showEvent(self, event):
         super().showEvent(event)
-        if not getattr(self, '_did_initial_canvas', False):
+        if not getattr(self, "_did_initial_canvas", False):
             self._did_initial_canvas = True
             QTimer.singleShot(0, self.redraw_canvas)
 
@@ -953,9 +976,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         ui_font_size = self.settings.get("font_size", 14)
         # Escape quotes for safe inline CSS
         safe_ui_font = str(ui_font_family).replace("\\", "\\\\").replace("'", "\\'")
-        zone_font_style = (
-            f"font-family: '{safe_ui_font}'; font-size: {ui_font_size}px;"
-        )
+        zone_font_style = f"font-family: '{safe_ui_font}'; font-size: {ui_font_size}px;"
 
         self.incorrect_zone = DropZoneItem(
             margin,
@@ -1060,8 +1081,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         def on_audio_ready(file_path):
             if (
                 BarskyApp._tts_is_closing(self)
-                or
-                self.tts_worker is not worker
+                or self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
                 or getattr(self, "card_ui", None) is not request_card_ui
             ):
@@ -1078,8 +1098,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         def on_error(err):
             if (
                 BarskyApp._tts_is_closing(self)
-                or
-                self.tts_worker is not worker
+                or self.tts_worker is not worker
                 or getattr(self, "current_card", None) is not request_card
                 or getattr(self, "card_ui", None) is not request_card_ui
             ):
@@ -1133,14 +1152,20 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             # Pass full (expression, meaning, sense_id) tuples; the dialog
             # uses meanings + sense links for AI reuse.
             dialog = SentenceCardDialog(
-                self, "Edit Sentence Card", front, items, back,
+                self,
+                "Edit Sentence Card",
+                front,
+                items,
+                back,
                 settings=self.settings,
                 settings_file=self.settings_file,
                 conn=self.conn,
             )
         else:
             dialog = SentenceCardDialog(
-                self, "Add Sentence Card", settings=self.settings,
+                self,
+                "Add Sentence Card",
+                settings=self.settings,
                 settings_file=self.settings_file,
                 conn=self.conn,
             )
@@ -1158,7 +1183,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             dup_id = find_duplicate_sentence_card(self.conn, sentence, items)
             if dup_id is not None:
                 reply = QMessageBox.question(
-                    self, "Duplicate Detected",
+                    self,
+                    "Duplicate Detected",
                     "A card with the same sentence and expressions already exists.\n\n"
                     "Open it for editing instead?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1170,8 +1196,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         try:
             if edit_card_id is not None:
                 update_sentence_card(
-                    self.conn, edit_card_id,
-                    front=sentence, back=back, items=items,
+                    self.conn,
+                    edit_card_id,
+                    front=sentence,
+                    back=back,
+                    items=items,
                     verified_surfaces=verified_surfaces,
                 )
                 QMessageBox.information(
@@ -1240,7 +1269,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 "Add New Knowledge Card",
                 "Enter the front content. Markdown and MathJax are supported:",
             )
-            if front_dialog.exec() != QDialog.DialogCode.Accepted or not front_dialog.text_value:
+            if (
+                front_dialog.exec() != QDialog.DialogCode.Accepted
+                or not front_dialog.text_value
+            ):
                 return
             front = front_dialog.text_value
 
@@ -1254,12 +1286,14 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             if existing_card:
                 card_id, ex_front, ex_back, ex_box = existing_card
                 QMessageBox.information(
-                    self, "Already Exists",
+                    self,
+                    "Already Exists",
                     f"'{ex_front}' is already in your database (Box {ex_box}).\n\n"
-                    "Opening Edit window."
+                    "Opening Edit window.",
                 )
                 return self._add_knowledge_card(
-                    edit_card_id=card_id, existing_front=ex_front)
+                    edit_card_id=card_id, existing_front=ex_front
+                )
 
         today_str = datetime.date.today().isoformat()
 
@@ -1274,13 +1308,18 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 "Enter the back content. Markdown and MathJax supported:",
                 ex_back,
             )
-            if back_dialog.exec() == QDialog.DialogCode.Accepted and back_dialog.text_value:
+            if (
+                back_dialog.exec() == QDialog.DialogCode.Accepted
+                and back_dialog.text_value
+            ):
                 c.execute(
                     "UPDATE cards SET front=?, back=?, box=1, next_review=? WHERE id=?",
                     (front, back_dialog.text_value, today_str, edit_card_id),
                 )
                 self.conn.commit()
-                QMessageBox.information(self, "Updated", "Card updated and moved to Box 1.")
+                QMessageBox.information(
+                    self, "Updated", "Card updated and moved to Box 1."
+                )
                 self._refresh_current_card(edit_card_id)
         else:
             back_dialog = DynamicInputDialog(
@@ -1288,7 +1327,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 "Add Knowledge Card",
                 "Enter the back content. Markdown and MathJax supported:",
             )
-            if back_dialog.exec() == QDialog.DialogCode.Accepted and back_dialog.text_value:
+            if (
+                back_dialog.exec() == QDialog.DialogCode.Accepted
+                and back_dialog.text_value
+            ):
                 c.execute(
                     "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
                     (front, back_dialog.text_value, today_str),
@@ -1322,9 +1364,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         if not fresh:
             # Card was deleted — remove from queue
             if self.current_card is not None:
-                self.cards_due = [
-                    cf for cf in self.cards_due if cf[0] != card_id
-                ]
+                self.cards_due = [cf for cf in self.cards_due if cf[0] != card_id]
             return
 
         if self.current_card is not None and self.current_card[0] == card_id:
@@ -1338,9 +1378,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         else:
             # Different card — update or remove from cards_due
             was_queued = any(cf[0] == card_id for cf in self.cards_due)
-            self.cards_due = [
-                cf for cf in self.cards_due if cf[0] != card_id
-            ]
+            self.cards_due = [cf for cf in self.cards_due if cf[0] != card_id]
             if was_queued:
                 # Preserve queue membership without replacing the active card.
                 self.cards_due.append(fresh)
@@ -1371,8 +1409,10 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.conn.cursor().execute("DELETE FROM cards WHERE id = ?", (card_id,))
         self.conn.commit()
         self._remove_card_from_review_state(card_id)
-        if (self._paused_review_card is not None
-                and int(self._paused_review_card[0]) == card_id):
+        if (
+            self._paused_review_card is not None
+            and int(self._paused_review_card[0]) == card_id
+        ):
             self._paused_review_card = None
             self._paused_review_mode = ""
         if (
@@ -1451,9 +1491,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             # (or existing) directory. Structure creation already ran inside
             # the dialog, but re-run here so later create/scan paths are ready.
             try:
-                ensure_database_root_structure(
-                    get_database_root(self.settings)
-                )
+                ensure_database_root_structure(get_database_root(self.settings))
             except OSError as exc:
                 QMessageBox.warning(
                     self,

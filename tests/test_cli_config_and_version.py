@@ -43,5 +43,6 @@ def test_version_marks_only_development_branches(monkeypatch):
     assert get_app_version(lambda: None) == __version__
 
     import kgb_srs.version as version
+
     monkeypatch.setattr(version, "get_git_branch", lambda: "main")
     assert version.get_app_version() == __version__

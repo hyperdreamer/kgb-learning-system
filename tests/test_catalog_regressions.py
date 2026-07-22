@@ -2,7 +2,6 @@
 
 import os
 
-import pytest
 
 from kgb_srs.catalog import (
     DB_DIR_KNOWLEDGE,
@@ -10,7 +9,6 @@ from kgb_srs.catalog import (
     DatabaseType,
     infer_database_type,
 )
-from kgb_srs.schema import resolve_db_path
 from .qt_helpers import qt_app as _qt_app
 
 
@@ -22,6 +20,7 @@ class TestCatalogPathNoDuplicate:
         path = os.path.join(DB_DIR_KNOWLEDGE, "Math", "Topology_barsky.db")
         db_type = infer_database_type(path)
         from kgb_srs.catalog import display_path_for
+
         display = display_path_for(path, db_type)
         parts = display.replace("\\", "/").split("/")
         # Must be: Knowledge-based/Math/Topology
@@ -32,10 +31,10 @@ class TestCatalogPathNoDuplicate:
 
     def test_nested_canonical_english_path(self):
         """Canonical nested path preserved: Language-based/Sentence-based/FR/A1."""
-        path = os.path.join(
-            DB_DIR_LANGUAGE_SENTENCE, "FR", "A1_barsky.db")
+        path = os.path.join(DB_DIR_LANGUAGE_SENTENCE, "FR", "A1_barsky.db")
         db_type = DatabaseType.LANGUAGE_SENTENCE
         from kgb_srs.catalog import display_path_for
+
         display = display_path_for(path, db_type)
         parts = display.replace("\\", "/").split("/")
         assert parts == ["Language-based", "Sentence-based", "FR", "A1"]
@@ -45,6 +44,7 @@ class TestCatalogPathNoDuplicate:
         path = os.path.join("db", "Languages", "English_barsky.db")
         db_type = DatabaseType.LANGUAGE_WORD_PHRASE
         from kgb_srs.catalog import display_path_for
+
         display = display_path_for(path, db_type)
         # Legacy detection should work
         assert "Languages" in display
@@ -66,6 +66,7 @@ class TestDBNameValidation:
     def _validate_db_name(self, name):
         """Call the validation function (to be implemented)."""
         from kgb_srs.schema import validate_db_name
+
         return validate_db_name(name)
 
     def test_slash_rejected(self):
@@ -97,24 +98,22 @@ class TestDBNameValidation:
 
 class TestCatalogDisplayPathRegressions:
     def test_canonical_absolute_path_is_relative_in_menu(self):
-            _qt_app()
-            from kgb_srs.catalog import display_path_for, DB_DIR_LANGUAGE_SENTENCE
-            from kgb_srs.config import DIR_DB
+        _qt_app()
+        from kgb_srs.catalog import display_path_for, DB_DIR_LANGUAGE_SENTENCE
+        from kgb_srs.config import DIR_DB
 
-            path = os.path.join(
-                DIR_DB, DB_DIR_LANGUAGE_SENTENCE, "French_barsky.db"
-            )
-            assert display_path_for(path, DatabaseType.LANGUAGE_SENTENCE) == (
-                "Language-based/Sentence-based/French"
-            )
+        path = os.path.join(DIR_DB, DB_DIR_LANGUAGE_SENTENCE, "French_barsky.db")
+        assert display_path_for(path, DatabaseType.LANGUAGE_SENTENCE) == (
+            "Language-based/Sentence-based/French"
+        )
 
     def test_legacy_knowledge_display_path_has_single_category(self):
-            _qt_app()
-            from kgb_srs.main_window import _compute_display_path
+        _qt_app()
+        from kgb_srs.main_window import _compute_display_path
 
-            result = _compute_display_path(
-                "/tmp/db/Math/Real/Real_barsky.db",
-                DatabaseType.KNOWLEDGE,
-                "Math/Real/Real",
-            )
-            assert result.replace("\\", "/") == "Knowledge-based/Math/Real/Real"
+        result = _compute_display_path(
+            "/tmp/db/Math/Real/Real_barsky.db",
+            DatabaseType.KNOWLEDGE,
+            "Math/Real/Real",
+        )
+        assert result.replace("\\", "/") == "Knowledge-based/Math/Real/Real"

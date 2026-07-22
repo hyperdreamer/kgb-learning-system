@@ -27,7 +27,9 @@ class TestReviewQueuePreservation:
             cards_due = [cf for cf in cards_due if cf[0] != card_id]
             cards_due.append(fresh)
 
-        assert current_card == (1, "front1", "back1", 2), "Current card should not change"
+        assert current_card == (1, "front1", "back1", 2), (
+            "Current card should not change"
+        )
         assert len(cards_due) == 2
 
     def test_edit_current_card_updates_it(self):
@@ -45,84 +47,86 @@ class TestReviewQueuePreservation:
 
 class TestReviewPresentationRegressions:
     def test_deleting_queued_card_removes_it_from_review_state(self):
-            _qt_app()
-            from kgb_srs.main_window import BarskyApp
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
 
-            from types import SimpleNamespace
-            window = SimpleNamespace(
-                current_card=(1, "current", "back", 1),
-                cards_due=[(2, "queued", "back", 2), (3, "other", "back", 1)],
-                _daily_review_history=[(2, "queued", "back", 2), (4, "graded", "back", 3)],
-                _daily_queue_snapshot=[(2, "queued", "back", 2), (3, "other", "back", 1)],
-                _paused_cards_due=[(2, "queued", "back", 2)],
-                _paused_daily_queue=[(2, "queued", "back", 2), (5, "paused", "back", 1)],
-                _paused_review_history=[(2, "queued", "back", 2)],
-            )
-            BarskyApp._remove_card_from_review_state(window, 2)
-            assert [card[0] for card in window.cards_due] == [3]
-            assert window.current_card[0] == 1
-            assert [card[0] for card in window._daily_review_history] == [4]
-            assert [card[0] for card in window._daily_queue_snapshot] == [3]
-            assert window._paused_cards_due == []
-            assert [card[0] for card in window._paused_daily_queue] == [5]
-            assert window._paused_review_history == []
+        from types import SimpleNamespace
+
+        window = SimpleNamespace(
+            current_card=(1, "current", "back", 1),
+            cards_due=[(2, "queued", "back", 2), (3, "other", "back", 1)],
+            _daily_review_history=[(2, "queued", "back", 2), (4, "graded", "back", 3)],
+            _daily_queue_snapshot=[(2, "queued", "back", 2), (3, "other", "back", 1)],
+            _paused_cards_due=[(2, "queued", "back", 2)],
+            _paused_daily_queue=[(2, "queued", "back", 2), (5, "paused", "back", 1)],
+            _paused_review_history=[(2, "queued", "back", 2)],
+        )
+        BarskyApp._remove_card_from_review_state(window, 2)
+        assert [card[0] for card in window.cards_due] == [3]
+        assert window.current_card[0] == 1
+        assert [card[0] for card in window._daily_review_history] == [4]
+        assert [card[0] for card in window._daily_queue_snapshot] == [3]
+        assert window._paused_cards_due == []
+        assert [card[0] for card in window._paused_daily_queue] == [5]
+        assert window._paused_review_history == []
 
     def test_sentence_expression_labels_accept_structured_pairs(self):
-            _qt_app()
-            from kgb_srs.main_window import _expression_labels
+        _qt_app()
+        from kgb_srs.main_window import _expression_labels
 
-            assert _expression_labels([("bonjour", "hello"), ("ami", "friend")]) == [
-                "bonjour", "ami"
-            ]
+        assert _expression_labels([("bonjour", "hello"), ("ami", "friend")]) == [
+            "bonjour",
+            "ami",
+        ]
 
     def test_sentence_card_display_orders_and_numbers_meanings(self, tmp_path):
-            """Review back: bold both surfaces; number multi-item meanings in sentence order."""
-            _qt_app()
-            import sqlite3
-            from types import SimpleNamespace
-            from kgb_srs.main_window import BarskyApp
-            from kgb_srs.schema import init_db, insert_sentence_card
+        """Review back: bold both surfaces; number multi-item meanings in sentence order."""
+        _qt_app()
+        import sqlite3
+        from types import SimpleNamespace
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.schema import init_db, insert_sentence_card
 
-            db_path = tmp_path / "sentence_display.db"
-            conn = sqlite3.connect(db_path)
-            init_db(conn)
-            # Insert exact before grievance so DB id order is reverse of sentence order.
-            sentence = (
-                "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
-            )
-            card_id = insert_sentence_card(
-                conn,
-                sentence,
-                [
-                    ("exact", "to demand and obtain (revenge) from someone"),
-                    (
-                        "grievance",
-                        "a real or imagined wrong or injustice that is the cause for revenge",
-                    ),
-                ],
-                back="",
-            )
-            win = SimpleNamespace(conn=conn)
-            md = BarskyApp._build_sentence_card_display(
-                win,
-                card_id,
-                sentence,
-                "",
-                flipped=True,
-                metadata="**Box 1** | ID: `1`",
-            )
-            assert "**Grievance**" in md
-            assert "**Exacted**" in md
-            # Meanings ordered by sentence appearance, numbered, separate blocks.
-            assert "1. **grievance**:" in md
-            assert "2. **exact**:" in md
-            g_pos = md.index("1. **grievance**:")
-            e_pos = md.index("2. **exact**:")
-            assert g_pos < e_pos
-            # Separate lines / blocks (blank line between numbered entries).
-            between = md[g_pos:e_pos]
-            assert "\n\n" in between
-            conn.close()
+        db_path = tmp_path / "sentence_display.db"
+        conn = sqlite3.connect(db_path)
+        init_db(conn)
+        # Insert exact before grievance so DB id order is reverse of sentence order.
+        sentence = (
+            "Revenge for a Grievance of a Hundred Generations May Still Be Exacted!"
+        )
+        card_id = insert_sentence_card(
+            conn,
+            sentence,
+            [
+                ("exact", "to demand and obtain (revenge) from someone"),
+                (
+                    "grievance",
+                    "a real or imagined wrong or injustice that is the cause for revenge",
+                ),
+            ],
+            back="",
+        )
+        win = SimpleNamespace(conn=conn)
+        md = BarskyApp._build_sentence_card_display(
+            win,
+            card_id,
+            sentence,
+            "",
+            flipped=True,
+            metadata="**Box 1** | ID: `1`",
+        )
+        assert "**Grievance**" in md
+        assert "**Exacted**" in md
+        # Meanings ordered by sentence appearance, numbered, separate blocks.
+        assert "1. **grievance**:" in md
+        assert "2. **exact**:" in md
+        g_pos = md.index("1. **grievance**:")
+        e_pos = md.index("2. **exact**:")
+        assert g_pos < e_pos
+        # Separate lines / blocks (blank line between numbered entries).
+        between = md[g_pos:e_pos]
+        assert "\n\n" in between
+        conn.close()
 
 
 class TestReviewControls:
@@ -135,24 +139,26 @@ class TestReviewControls:
     def _db(*ids):
         """Return in-memory conn with cards inserted (all due today)."""
         import sqlite3
-        import datetime
         from kgb_srs.db import init_db
+
         conn = sqlite3.connect(":memory:")
         init_db(conn)
         today = datetime.date.today().isoformat()
         for cid in ids:
             conn.execute(
                 "INSERT INTO cards (id, front, back, box, next_review) "
-                "VALUES (?, ?, ?, 1, ?)", (cid, f"c{cid}", f"b{cid}", today))
+                "VALUES (?, ?, ?, 1, ?)",
+                (cid, f"c{cid}", f"b{cid}", today),
+            )
         conn.commit()
         return conn
 
     @staticmethod
-    def _win(conn=None, card=None, due=(), mode="",
-             paused_card=None, paused_mode=""):
+    def _win(conn=None, card=None, due=(), mode="", paused_card=None, paused_mode=""):
         """Build BarskyApp with review state injected."""
         _qt_app()
         from kgb_srs.main_window import BarskyApp
+
         w = BarskyApp()
         if conn:
             w.conn = conn
@@ -168,9 +174,12 @@ class TestReviewControls:
         """Patch QMessageBox to auto-confirm delete/acknowledge."""
         from unittest.mock import patch
         from PyQt6.QtWidgets import QMessageBox
+
         return (
-            patch("kgb_srs.main_window.QMessageBox.question",
-                  return_value=QMessageBox.StandardButton.Yes),
+            patch(
+                "kgb_srs.main_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
             patch("kgb_srs.main_window.QMessageBox.information"),
         )
 
@@ -180,16 +189,11 @@ class TestReviewControls:
         """_button_style() must include QPushButton:disabled with faded
         background (#CFD8DC) and muted text (#78909C)."""
         from kgb_srs.main_window import BarskyApp
+
         style = BarskyApp._button_style("#D32F2F", "#F44336")
-        assert "QPushButton:disabled" in style, (
-            "Missing QPushButton:disabled selector"
-        )
-        assert "#CFD8DC" in style, (
-            "Missing disabled background-color #CFD8DC"
-        )
-        assert "#78909C" in style, (
-            "Missing disabled color #78909C"
-        )
+        assert "QPushButton:disabled" in style, "Missing QPushButton:disabled selector"
+        assert "#CFD8DC" in style, "Missing disabled background-color #CFD8DC"
+        assert "#78909C" in style, "Missing disabled color #78909C"
         # Ensure enabled colors are untouched
         assert "#D32F2F" in style
         assert "#F44336" in style
@@ -202,15 +206,16 @@ class TestReviewControls:
         must place those declarations INSIDE the QPushButton {{...}} rule,
         not after the closing brace."""
         from kgb_srs.main_window import BarskyApp
+
         style = BarskyApp._button_style(
-            "#43A047", "#66BB6A",
+            "#43A047",
+            "#66BB6A",
             extra="font-size: 16px; padding: 10px;",
         )
         import re
+
         m = re.search(r"QPushButton\s*\{([^}]*)\}", style)
-        assert m is not None, (
-            "QPushButton rule must exist in the stylesheet"
-        )
+        assert m is not None, "QPushButton rule must exist in the stylesheet"
         block = m.group(1)
         assert "font-size: 16px" in block, (
             "font-size must be INSIDE the QPushButton rule block"
@@ -228,24 +233,28 @@ class TestReviewControls:
         dynamic padding and font-size are inside a QPushButton rule."""
         _qt_app()
         from kgb_srs.main_window import BarskyApp
+
         w = BarskyApp()
         w.settings["font_size"] = 20
         w.settings["font_family"] = "Arial"
         w.apply_font_settings()
 
-        expected_fs = 22      # font_size + 2
+        expected_fs = 22  # font_size + 2
         expected_pad = max(10, int(20 * 0.8))  # 16
 
-        for btn_name in ("start_btn", "restart_review_btn",
-                         "previous_review_btn", "delete_entry_btn"):
+        for btn_name in (
+            "start_btn",
+            "restart_review_btn",
+            "previous_review_btn",
+            "delete_entry_btn",
+        ):
             btn = getattr(w, btn_name)
             ss = btn.styleSheet()
             assert ss, f"{btn_name} stylesheet must not be empty"
             import re
+
             m = re.search(r"QPushButton\s*\{([^}]*)\}", ss)
-            assert m is not None, (
-                f"{btn_name}: QPushButton rule must exist"
-            )
+            assert m is not None, f"{btn_name}: QPushButton rule must exist"
             block = m.group(1)
             assert f"font-size: {expected_fs}px" in block, (
                 f"{btn_name}: font-size: {expected_fs}px must be in "
@@ -263,6 +272,7 @@ class TestReviewControls:
         metrics / size hints."""
         _qt_app()
         from kgb_srs.main_window import BarskyApp
+
         w = BarskyApp()
 
         w.settings["font_size"] = 14
@@ -276,8 +286,7 @@ class TestReviewControls:
         large_font_height = w.start_btn.fontMetrics().height()
 
         assert large_hint > small_hint, (
-            f"Button sizeHint must grow with font_size: "
-            f"{large_hint} not > {small_hint}"
+            f"Button sizeHint must grow with font_size: {large_hint} not > {small_hint}"
         )
         assert large_font_height > small_font_height, (
             f"Button font metrics must grow with font_size: "
@@ -396,7 +405,6 @@ class TestReviewControls:
         assert w.random_checkbox.font().pointSize() == 17
         w.close()
 
-
     # -- finding #1: button visibility after DB load ----------------------
 
     def test_buttons_after_db_load(self):
@@ -405,11 +413,13 @@ class TestReviewControls:
         force_seq_btn has been removed (merged into the primary button)."""
         import tempfile
         import os
+
         conn = self._db(1)
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
         tmp.close()
         try:
             from kgb_srs.db import init_db
+
             init_db(tmp.name).close()
             w = self._win(conn=conn)
             w.current_db_path = tmp.name
@@ -611,8 +621,9 @@ class TestReviewControls:
     def test_close_stores_paused_card_and_mode(self):
         """close_review saves card + mode, clears current_card + review_mode."""
         conn = self._db(1, 2)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[(2, "c2", "b2", 1)], mode="daily")
+        w = self._win(
+            conn=conn, card=(1, "c1", "b1", 1), due=[(2, "c2", "b2", 1)], mode="daily"
+        )
         w.close_review()
 
         assert w._paused_review_card[0] == 1
@@ -625,14 +636,21 @@ class TestReviewControls:
     def test_close_does_not_mutate_db(self):
         """close_review leaves the database unchanged."""
         conn = self._db(1, 2)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[(2, "c2", "b2", 1)], mode="daily")
+        w = self._win(
+            conn=conn, card=(1, "c1", "b1", 1), due=[(2, "c2", "b2", 1)], mode="daily"
+        )
 
-        before = list(conn.execute(
-            "SELECT id, box, next_review FROM cards ORDER BY id").fetchall())
+        before = list(
+            conn.execute(
+                "SELECT id, box, next_review FROM cards ORDER BY id"
+            ).fetchall()
+        )
         w.close_review()
-        after = list(conn.execute(
-            "SELECT id, box, next_review FROM cards ORDER BY id").fetchall())
+        after = list(
+            conn.execute(
+                "SELECT id, box, next_review FROM cards ORDER BY id"
+            ).fetchall()
+        )
         assert before == after
         conn.close()
         w.close()
@@ -650,8 +668,9 @@ class TestReviewControls:
         """After daily close, start_review shows paused card first,
         then the preserved remaining queue (no requery)."""
         conn = self._db(1, 2, 3)
-        w = self._win(conn=conn, card=(2, "c2", "b2", 1),
-                       due=[(3, "c3", "b3", 1)], mode="daily")
+        w = self._win(
+            conn=conn, card=(2, "c2", "b2", 1), due=[(3, "c3", "b3", 1)], mode="daily"
+        )
         w.close_review()
         w.start_review()
 
@@ -664,8 +683,12 @@ class TestReviewControls:
     def test_daily_resume_no_duplicate_in_queue(self):
         """Paused card is de-duplicated from the resumed queue."""
         conn = self._db(1, 2, 3)
-        w = self._win(conn=conn, card=(2, "c2", "b2", 1),
-                       due=[(2, "c2", "b2", 1), (3, "c3", "b3", 1)], mode="daily")
+        w = self._win(
+            conn=conn,
+            card=(2, "c2", "b2", 1),
+            due=[(2, "c2", "b2", 1), (3, "c3", "b3", 1)],
+            mode="daily",
+        )
         w.close_review()
         w.start_review()
         assert sum(1 for c in w.cards_due if c[0] == 2) == 0
@@ -675,8 +698,9 @@ class TestReviewControls:
     def test_daily_resume_skips_deleted_paused(self):
         """If paused card was deleted, silently skip to next card."""
         conn = self._db(1, 2)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[(2, "c2", "b2", 1)], mode="daily")
+        w = self._win(
+            conn=conn, card=(1, "c1", "b1", 1), due=[(2, "c2", "b2", 1)], mode="daily"
+        )
         w.close_review()
         conn.execute("DELETE FROM cards WHERE id=1")
         conn.commit()
@@ -708,19 +732,20 @@ class TestReviewControls:
         conn.close()
         w.close()
 
-
     # -- DB load clears paused state --------------------------------------
 
     def test_db_load_clears_paused_state(self):
         """Loading a database resets paused review state."""
         import tempfile
         import os
+
         conn = self._db(1)
         # Create a real temp DB so load_database doesn't early-return
         tmp = tempfile.NamedTemporaryFile(suffix="_barsky.db", delete=False)
         tmp.close()
         try:
             from kgb_srs.db import init_db
+
             init_db(tmp.name).close()
             w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
             w.close_review()
@@ -758,7 +783,9 @@ class TestReviewControls:
         assert w._paused_review_mode == ""
         w.close()
 
-    def test_create_sentence_db_survives_projection_failure(self, tmp_path, monkeypatch):
+    def test_create_sentence_db_survives_projection_failure(
+        self, tmp_path, monkeypatch
+    ):
         """Projection errors are non-modal and do not block source DB creation."""
         _qt_app()
         from PyQt6.QtWidgets import QDialog
@@ -820,9 +847,14 @@ class TestReviewControls:
     def test_delete_clears_paused_and_advances(self):
         """Deleting active card: DB row gone, paused cleared, next shown."""
         conn = self._db(1, 2)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[(2, "c2", "b2", 1)], mode="daily",
-                       paused_card=(1, "c1", "b1", 1), paused_mode="daily")
+        w = self._win(
+            conn=conn,
+            card=(1, "c1", "b1", 1),
+            due=[(2, "c2", "b2", 1)],
+            mode="daily",
+            paused_card=(1, "c1", "b1", 1),
+            paused_mode="daily",
+        )
 
         p1, p2 = self._mock_dialogs()
         with p1, p2:
@@ -838,8 +870,7 @@ class TestReviewControls:
     def test_delete_last_card_disables_buttons(self):
         """Deleting the last card: no current card, buttons disabled."""
         conn = self._db(1)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[], mode="daily")
+        w = self._win(conn=conn, card=(1, "c1", "b1", 1), due=[], mode="daily")
 
         p1, p2 = self._mock_dialogs()
         with p1, p2:
@@ -854,8 +885,12 @@ class TestReviewControls:
     def test_delete_removes_from_queue(self):
         """Deleted card removed from cards_due."""
         conn = self._db(1, 2)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)], mode="daily")
+        w = self._win(
+            conn=conn,
+            card=(1, "c1", "b1", 1),
+            due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)],
+            mode="daily",
+        )
 
         p1, p2 = self._mock_dialogs()
         with p1, p2:
@@ -868,10 +903,14 @@ class TestReviewControls:
     def test_delete_card_by_id_helper(self):
         """_delete_card_by_id: DB row gone, review state + paused cleared."""
         conn = self._db(1, 2)
-        w = self._win(conn=conn, card=(1, "c1", "b1", 1),
-                       due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)],
-                       mode="daily",
-                       paused_card=(1, "c1", "b1", 1), paused_mode="daily")
+        w = self._win(
+            conn=conn,
+            card=(1, "c1", "b1", 1),
+            due=[(1, "c1", "b1", 1), (2, "c2", "b2", 1)],
+            mode="daily",
+            paused_card=(1, "c1", "b1", 1),
+            paused_mode="daily",
+        )
         # In-memory helper DB is not a sentence catalog; avoid sense purge path.
         w._db_type = None
         w._save_settings = lambda: None
@@ -879,11 +918,9 @@ class TestReviewControls:
         returned = w._delete_card_by_id(1)
 
         # DB row deleted
-        assert conn.execute(
-            "SELECT id FROM cards WHERE id=1").fetchone() is None
+        assert conn.execute("SELECT id FROM cards WHERE id=1").fetchone() is None
         # Card 2 still exists
-        assert conn.execute(
-            "SELECT id FROM cards WHERE id=2").fetchone() is not None
+        assert conn.execute("SELECT id FROM cards WHERE id=2").fetchone() is not None
         # Review state cleaned: not in cards_due, not current
         assert 1 not in [c[0] for c in w.cards_due]
         assert w.current_card is None
@@ -931,8 +968,7 @@ class TestReviewControls:
         wp = init_db(wp_path)
         try:
             fronts = {
-                r[0].lower()
-                for r in wp.execute("SELECT front FROM cards").fetchall()
+                r[0].lower() for r in wp.execute("SELECT front FROM cards").fetchall()
             }
             assert fronts == {"insist on"}
         finally:
@@ -950,9 +986,7 @@ class TestReviewControls:
         w.settings["database_root"] = str(db_root)
         # closeEvent saves settings; keep tests from polluting the real file.
         w._save_settings = lambda: None
-        w._daily_review_history = [
-            (card_id, "He insists on speaking himself.", "", 1)
-        ]
+        w._daily_review_history = [(card_id, "He insists on speaking himself.", "", 1)]
         w._daily_queue_snapshot = list(w.cards_due)
         w._paused_cards_due = list(w.cards_due)
         w._paused_daily_queue = list(w.cards_due)
@@ -960,13 +994,12 @@ class TestReviewControls:
 
         w._delete_card_by_id(card_id)
 
-        assert conn.execute(
-            "SELECT id FROM cards WHERE id=?", (card_id,)
-        ).fetchone() is None
+        assert (
+            conn.execute("SELECT id FROM cards WHERE id=?", (card_id,)).fetchone()
+            is None
+        )
         assert get_sense(conn, sense_id) is None
-        assert conn.execute(
-            "SELECT COUNT(*) FROM expression_senses"
-        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM expression_senses").fetchone()[0] == 0
         assert w._daily_review_history == []
         assert w._daily_queue_snapshot == []
         assert w._paused_cards_due == []
@@ -975,9 +1008,7 @@ class TestReviewControls:
 
         wp = init_db(wp_path)
         try:
-            fronts = [
-                r[0] for r in wp.execute("SELECT front FROM cards").fetchall()
-            ]
+            fronts = [r[0] for r in wp.execute("SELECT front FROM cards").fetchall()]
             assert fronts == []
         finally:
             wp.close()
@@ -1026,6 +1057,7 @@ class TestReviewControls:
         _qt_app()
         from PyQt6.QtWidgets import QPushButton
         from kgb_srs.main_window import BarskyApp
+
         w = BarskyApp()
 
         assert w.delete_entry_btn.text().strip() == "Delete Entry"
@@ -1066,9 +1098,7 @@ class TestReviewControls:
                 f"Expected ~1080 (90 % of 1200), got {cw_wide}"
             )
             # wider scene → wider card
-            assert cw_wide > cw_narrow, (
-                f"Card should grow: {cw_wide} not > {cw_narrow}"
-            )
+            assert cw_wide > cw_narrow, f"Card should grow: {cw_wide} not > {cw_narrow}"
             # centred
             assert cx_narrow == pytest.approx(400, abs=1), (
                 f"Card not centred at 800/2, got {cx_narrow}"
@@ -1077,14 +1107,17 @@ class TestReviewControls:
                 f"Card not centred at 1200/2, got {cx_wide}"
             )
             # contained within scene bounds
-            for cw, cx, limit in [(cw_narrow, cx_narrow, 800),
-                                   (cw_wide, cx_wide, 1200)]:
+            for cw, cx, limit in [
+                (cw_narrow, cx_narrow, 800),
+                (cw_wide, cx_wide, 1200),
+            ]:
                 left = cx - cw / 2
                 right = cx + cw / 2
                 assert left >= 0, f"Card left edge outside scene ({left})"
                 assert right <= limit, f"Card right edge outside scene ({right})"
         finally:
             w.close()
+
     # -- close button visual contract --------------------------------------
 
     def test_close_button_is_compact_x_overlay_on_canvas(self):

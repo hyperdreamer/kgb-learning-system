@@ -55,8 +55,7 @@ class DBCreationDialog(QDialog):
         know_label = QLabel("<b>Knowledge-based</b>")
         group_layout.addWidget(know_label)
 
-        self._knowledge_radio = QRadioButton(
-            "Knowledge-based (generic front/back)")
+        self._knowledge_radio = QRadioButton("Knowledge-based (generic front/back)")
         self._knowledge_radio.setToolTip(
             "Traditional front/back cards. No language AI prompts."
         )
@@ -110,6 +109,7 @@ class DBCreationDialog(QDialog):
         root = self._base_dir or "db"
         # Show a short path for the project default; otherwise the full root.
         from .config import DIR_DB
+
         if not self._base_dir or os.path.abspath(self._base_dir) == (
             os.path.abspath(DIR_DB)
         ):
@@ -120,18 +120,19 @@ class DBCreationDialog(QDialog):
 
     def _on_create(self):
         from .schema import validate_db_name
+
         name = self._name_edit.text().strip()
         if not name:
-            QMessageBox.warning(
-                self, "Error", "Please enter a database name.")
+            QMessageBox.warning(self, "Error", "Please enter a database name.")
             return
 
         if not validate_db_name(name):
             QMessageBox.warning(
-                self, "Error",
+                self,
+                "Error",
                 f"Invalid database name: {name!r}\n\n"
                 "Names must not contain path separators (/ or \\), "
-                "'..', control characters, or be absolute paths."
+                "'..', control characters, or be absolute paths.",
             )
             return
 

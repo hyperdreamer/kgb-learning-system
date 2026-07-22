@@ -15,9 +15,11 @@ from .validation import normalize_sentence
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MeaningResult:
     """A single meaning entry returned by the AI."""
+
     expression: str = ""
     contextual_meaning: str = ""
     meaning: str = ""
@@ -27,6 +29,7 @@ class MeaningResult:
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
+
 
 class AIParseError(Exception):
     """The AI response could not be parsed as JSON."""
@@ -67,6 +70,7 @@ def _parse_json(text: str) -> dict:
 # ---------------------------------------------------------------------------
 # Sentence meanings
 # ---------------------------------------------------------------------------
+
 
 def parse_sentence_meanings(
     response_text: str,
@@ -115,17 +119,11 @@ def parse_sentence_meanings(
 
         expr = item.get("expression")
         if expr is None:
-            raise AIValidationError(
-                f"Item {i} missing required 'expression' field"
-            )
+            raise AIValidationError(f"Item {i} missing required 'expression' field")
         if not isinstance(expr, str):
-            raise AIValidationError(
-                f"Item {i} 'expression' must be a string"
-            )
+            raise AIValidationError(f"Item {i} 'expression' must be a string")
         if not expr.strip():
-            raise AIValidationError(
-                f"Item {i} has empty 'expression' field"
-            )
+            raise AIValidationError(f"Item {i} has empty 'expression' field")
 
         meaning = item.get("contextual_meaning")
         if meaning is None:
@@ -133,13 +131,9 @@ def parse_sentence_meanings(
                 f"Item {i} missing required 'contextual_meaning' field"
             )
         if not isinstance(meaning, str):
-            raise AIValidationError(
-                f"Item {i} 'contextual_meaning' must be a string"
-            )
+            raise AIValidationError(f"Item {i} 'contextual_meaning' must be a string")
         if not meaning.strip():
-            raise AIValidationError(
-                f"Item {i} has empty 'contextual_meaning' field"
-            )
+            raise AIValidationError(f"Item {i} has empty 'contextual_meaning' field")
 
         # Validate identity/order: returned expression must match
         # the expected expression at the same index under normalization.
@@ -151,10 +145,12 @@ def parse_sentence_meanings(
                 f"AI returned expressions in wrong order or with wrong content."
             )
 
-        results.append(MeaningResult(
-            expression=expr,
-            contextual_meaning=meaning,
-        ))
+        results.append(
+            MeaningResult(
+                expression=expr,
+                contextual_meaning=meaning,
+            )
+        )
 
     return results
 
@@ -214,9 +210,7 @@ def parse_sense_assignment(
         raise AIValidationError("Missing non-empty 'action' field")
     action_norm = action.strip().lower()
     if action_norm not in ("reuse", "create"):
-        raise AIValidationError(
-            f"action must be 'reuse' or 'create', got {action!r}"
-        )
+        raise AIValidationError(f"action must be 'reuse' or 'create', got {action!r}")
 
     raw_sense_id = data.get("sense_id", None)
     sense_id: int | None = None
@@ -250,8 +244,7 @@ def parse_sense_assignment(
             raise AIValidationError("action=reuse requires sense_id")
         if sense_id not in allowed:
             raise AIValidationError(
-                f"sense_id {sense_id} is not one of the prior senses "
-                f"{sorted(allowed)}"
+                f"sense_id {sense_id} is not one of the prior senses {sorted(allowed)}"
             )
         return SenseAssignment(
             expression=expression,
@@ -262,9 +255,7 @@ def parse_sense_assignment(
 
     # create
     if not meaning_text:
-        raise AIValidationError(
-            "action=create requires non-empty 'meaning'"
-        )
+        raise AIValidationError("action=create requires non-empty 'meaning'")
     return SenseAssignment(
         expression=expression,
         action="create",
@@ -277,9 +268,11 @@ def parse_sense_assignment(
 # Membership fallback (local-first residual)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MembershipClaim:
     """One AI membership judgment for a residual unfamiliar item."""
+
     expression: str
     found: bool
     surface: str = ""
@@ -338,17 +331,13 @@ def parse_membership_claims(
 
         found_raw = item.get("found")
         if not isinstance(found_raw, bool):
-            raise AIValidationError(
-                f"Item {i} 'found' must be a boolean"
-            )
+            raise AIValidationError(f"Item {i} 'found' must be a boolean")
 
         surface = item.get("surface", "")
         if surface is None:
             surface = ""
         if not isinstance(surface, str):
-            raise AIValidationError(
-                f"Item {i} 'surface' must be a string"
-            )
+            raise AIValidationError(f"Item {i} 'surface' must be a string")
         surface = surface.strip()
         if found_raw and not surface:
             raise AIValidationError(
@@ -357,11 +346,13 @@ def parse_membership_claims(
         if not found_raw:
             surface = ""
 
-        results.append(MembershipClaim(
-            expression=expr,
-            found=found_raw,
-            surface=surface,
-        ))
+        results.append(
+            MembershipClaim(
+                expression=expr,
+                found=found_raw,
+                surface=surface,
+            )
+        )
 
     return results
 
@@ -369,6 +360,7 @@ def parse_membership_claims(
 # ---------------------------------------------------------------------------
 # Word/phrase meanings
 # ---------------------------------------------------------------------------
+
 
 def parse_word_phrase_meanings(
     response_text: str,
@@ -422,40 +414,30 @@ def parse_word_phrase_meanings(
 
         meaning_text = item.get("meaning")
         if meaning_text is None:
-            raise AIValidationError(
-                f"Meaning {i} missing required 'meaning' field"
-            )
+            raise AIValidationError(f"Meaning {i} missing required 'meaning' field")
         if not isinstance(meaning_text, str):
-            raise AIValidationError(
-                f"Meaning {i} 'meaning' must be a string"
-            )
+            raise AIValidationError(f"Meaning {i} 'meaning' must be a string")
         if not meaning_text.strip():
-            raise AIValidationError(
-                f"Meaning {i} has empty 'meaning' field"
-            )
+            raise AIValidationError(f"Meaning {i} has empty 'meaning' field")
 
         example = item.get("example")
         if example is None:
-            raise AIValidationError(
-                f"Meaning {i} missing required 'example' field"
-            )
+            raise AIValidationError(f"Meaning {i} missing required 'example' field")
         if not isinstance(example, str):
-            raise AIValidationError(
-                f"Meaning {i} 'example' must be a string"
-            )
+            raise AIValidationError(f"Meaning {i} 'example' must be a string")
         if not example.strip():
-            raise AIValidationError(
-                f"Meaning {i} has empty 'example' field"
-            )
+            raise AIValidationError(f"Meaning {i} has empty 'example' field")
 
         formatted = f"{i + 1}. {meaning_text}"
         formatted += f"\n   *{example}*"
 
-        results.append(MeaningResult(
-            expression="",
-            contextual_meaning=formatted,
-            meaning=meaning_text.strip(),
-            example=example.strip(),
-        ))
+        results.append(
+            MeaningResult(
+                expression="",
+                contextual_meaning=formatted,
+                meaning=meaning_text.strip(),
+                example=example.strip(),
+            )
+        )
 
     return results

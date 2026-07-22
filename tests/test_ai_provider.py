@@ -13,6 +13,7 @@ from kgb_srs.ai_provider import (
     build_word_phrase_prompt,
     AIMissingConfigError,
 )
+
 # Import under a non-test name so pytest does not collect the pure function.
 from kgb_srs.ai_provider import test_connection as check_ai_connection
 
@@ -20,6 +21,7 @@ from kgb_srs.ai_provider import test_connection as check_ai_connection
 # ---------------------------------------------------------------------------
 # AIProviderConfig
 # ---------------------------------------------------------------------------
+
 
 class TestAIProviderConfig:
     def test_defaults(self):
@@ -211,6 +213,7 @@ class TestAIProviderConfig:
 # AIClient — build_request
 # ---------------------------------------------------------------------------
 
+
 class TestAIClientBuildRequest:
     def test_builds_correct_url(self):
         cfg = AIProviderConfig(
@@ -255,15 +258,16 @@ class TestAIClientBuildRequest:
 # AIClient — parse_response
 # ---------------------------------------------------------------------------
 
+
 class TestAIClientParseResponse:
     @pytest.fixture
     def client(self):
         return AIClient(AIProviderConfig(api_key="sk-test"))
 
     def test_extracts_content(self, client):
-        response_json = json.dumps({
-            "choices": [{"message": {"content": "Hello back!"}}]
-        })
+        response_json = json.dumps(
+            {"choices": [{"message": {"content": "Hello back!"}}]}
+        )
         result = client.parse_response(response_json)
         assert result == "Hello back!"
 
@@ -280,9 +284,7 @@ class TestAIClientParseResponse:
             client.parse_response("not json")
 
     def test_error_response(self, client):
-        response_json = json.dumps({
-            "error": {"message": "Invalid API key"}
-        })
+        response_json = json.dumps({"error": {"message": "Invalid API key"}})
         with pytest.raises(ValueError, match="Invalid API key"):
             client.parse_response(response_json)
 
@@ -315,6 +317,7 @@ class TestAIClientParseResponse:
 # ---------------------------------------------------------------------------
 # Prompt builders
 # ---------------------------------------------------------------------------
+
 
 class TestBuildSentencePrompt:
     def test_basic_prompt(self):
@@ -361,6 +364,7 @@ class TestBuildWordPhrasePrompt:
 # test_connection
 # ---------------------------------------------------------------------------
 
+
 class TestTestConnection:
     def _cfg(self, **overrides):
         data = dict(
@@ -388,9 +392,7 @@ class TestTestConnection:
             assert payload["model"] == "test-model"
             assert payload["messages"] == [{"role": "user", "content": "ping"}]
             assert payload["max_tokens"] == 1
-            return json.dumps({
-                "choices": [{"message": {"content": "pong"}}]
-            })
+            return json.dumps({"choices": [{"message": {"content": "pong"}}]})
 
         monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, latency = check_ai_connection(self._cfg())
@@ -419,9 +421,11 @@ class TestTestConnection:
                 401,
                 "Unauthorized",
                 hdrs=None,
-                fp=io.BytesIO(json.dumps({
-                    "error": {"message": "Invalid API key"}
-                }).encode("utf-8")),
+                fp=io.BytesIO(
+                    json.dumps({"error": {"message": "Invalid API key"}}).encode(
+                        "utf-8"
+                    )
+                ),
             )
 
         monkeypatch.setattr(module, "http_request", fake_http)
@@ -459,6 +463,7 @@ class TestTestConnection:
 # list_models
 # ---------------------------------------------------------------------------
 
+
 class TestListModels:
     def _cfg(self, **overrides):
         data = dict(
@@ -472,6 +477,7 @@ class TestListModels:
 
     def test_missing_api_key(self):
         from kgb_srs.ai_provider import list_models
+
         ok, message, models = list_models(self._cfg(api_key=""))
         assert ok is False
         assert "API key" in message
@@ -486,14 +492,16 @@ class TestListModels:
             assert url == "https://api.example.com/v1/models"
             assert headers["Authorization"] == "Bearer sk-test"
             assert body is None
-            return json.dumps({
-                "data": [
-                    {"id": "zeta-model"},
-                    {"id": "alpha-model"},
-                    {"id": "alpha-model"},
-                    {"object": "model"},
-                ]
-            })
+            return json.dumps(
+                {
+                    "data": [
+                        {"id": "zeta-model"},
+                        {"id": "alpha-model"},
+                        {"id": "alpha-model"},
+                        {"object": "model"},
+                    ]
+                }
+            )
 
         monkeypatch.setattr(module, "http_request", fake_http)
         ok, message, models = list_models(self._cfg())
@@ -511,9 +519,11 @@ class TestListModels:
                 401,
                 "Unauthorized",
                 hdrs=None,
-                fp=io.BytesIO(json.dumps({
-                    "error": {"message": "Invalid API key"}
-                }).encode("utf-8")),
+                fp=io.BytesIO(
+                    json.dumps({"error": {"message": "Invalid API key"}}).encode(
+                        "utf-8"
+                    )
+                ),
             )
 
         monkeypatch.setattr(module, "http_request", fake_http)

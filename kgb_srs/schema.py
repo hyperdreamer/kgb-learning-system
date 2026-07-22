@@ -33,6 +33,7 @@ _FORBIDDEN_DB_NAME_RE = re.compile(r"[\x00-\x1f/\\\\]|\.\.")
 # Database name validation
 # ---------------------------------------------------------------------------
 
+
 def validate_db_name(name: str) -> bool:
     """Validate a database display name for use as a path component.
 
@@ -97,16 +98,14 @@ def resolve_db_path(base_dir: str, subdir: str, name: str) -> str:
     common = os.path.commonpath([real_base, target])
     if common != real_base:
         raise ValueError(
-            f"Path traversal detected: {name!r} resolves outside "
-            f"base directory."
+            f"Path traversal detected: {name!r} resolves outside base directory."
         )
 
     # Ensure target is a direct child of the canonical directory
     target_dir = os.path.dirname(target)
     if target_dir != canon:
         raise ValueError(
-            f"Path traversal detected: {name!r} resolves outside "
-            f"canonical directory."
+            f"Path traversal detected: {name!r} resolves outside canonical directory."
         )
     return target
 
@@ -114,6 +113,7 @@ def resolve_db_path(base_dir: str, subdir: str, name: str) -> str:
 # ---------------------------------------------------------------------------
 # Database initialization
 # ---------------------------------------------------------------------------
+
 
 def init_db(db_path_or_conn):
     """Initialize or open a database.
@@ -160,6 +160,7 @@ def init_db(db_path_or_conn):
 # ---------------------------------------------------------------------------
 # Migration: unfamiliar_items
 # ---------------------------------------------------------------------------
+
 
 def ensure_unfamiliar_items_table(conn, *, commit: bool = True):
     """Create the unfamiliar_items table if it doesn't exist.
@@ -234,6 +235,7 @@ def ensure_sentence_schema(conn, *, commit: bool = True) -> None:
 # Validation helpers for sentence-card invariants
 # ---------------------------------------------------------------------------
 
+
 def _validate_expressions_in_sentence(
     sentence: str,
     items: list,
@@ -279,9 +281,7 @@ def _validate_expressions_in_sentence(
 
     if still_missing:
         missing_str = ", ".join(still_missing)
-        raise ValueError(
-            f"Expressions not found in sentence: {missing_str}"
-        )
+        raise ValueError(f"Expressions not found in sentence: {missing_str}")
 
 
 def _require_nonempty_meanings(items: list, operation: str):
@@ -351,9 +351,7 @@ def _normalize_and_deduplicate_sentence_items(
             seen.add(key)
             if not surface and verified_surfaces:
                 surface = (
-                    verified_surfaces.get(expr)
-                    or verified_surfaces.get(key)
-                    or ""
+                    verified_surfaces.get(expr) or verified_surfaces.get(key) or ""
                 )
                 surface = str(surface).strip()
             deduped.append((expr, meaning, sense_id, surface))
@@ -366,6 +364,7 @@ def _normalize_and_deduplicate_sentence_items(
 # ---------------------------------------------------------------------------
 # Duplicate detection
 # ---------------------------------------------------------------------------
+
 
 def find_duplicate_sentence_card(conn, sentence: str, items: list):
     """Find an existing card with the same normalized sentence and
@@ -399,8 +398,7 @@ def find_duplicate_sentence_card(conn, sentence: str, items: list):
     conn.create_function("kgb_normalize_sentence", 1, normalize_sentence)
     cur = conn.cursor()
     cur.execute(
-        "SELECT id FROM cards WHERE kgb_normalize_sentence(front) = ? "
-        "ORDER BY id",
+        "SELECT id FROM cards WHERE kgb_normalize_sentence(front) = ? ORDER BY id",
         (norm_sentence,),
     )
     if cur.fetchone() is None:
@@ -436,6 +434,7 @@ def find_duplicate_sentence_card(conn, sentence: str, items: list):
 # ---------------------------------------------------------------------------
 # Sentence-card CRUD
 # ---------------------------------------------------------------------------
+
 
 def insert_sentence_card(
     conn,
@@ -501,9 +500,7 @@ def insert_sentence_card(
                     sense = pref
                     meaning = pref.meaning
             if sense is None:
-                sense = create_or_get_sense(
-                    conn, expr, meaning, commit=False
-                )
+                sense = create_or_get_sense(conn, expr, meaning, commit=False)
             cur.execute(
                 "INSERT INTO unfamiliar_items "
                 "(card_id, expression, meaning, sense_id, surface_form) "
@@ -528,9 +525,7 @@ def get_sentence_card(conn, card_id: int):
     or None. *sense_id* / *surface_form* may be empty for legacy rows.
     """
     cur = conn.cursor()
-    cur.execute(
-        "SELECT front, back, box FROM cards WHERE id=?", (card_id,)
-    )
+    cur.execute("SELECT front, back, box FROM cards WHERE id=?", (card_id,))
     card = cur.fetchone()
     if card is None:
         return None
@@ -542,10 +537,7 @@ def get_sentence_card(conn, card_id: int):
         "FROM unfamiliar_items WHERE card_id=? ORDER BY id",
         (card_id,),
     )
-    items = [
-        (row[0], row[1], row[2], row[3] or "")
-        for row in cur.fetchall()
-    ]
+    items = [(row[0], row[1], row[2], row[3] or "") for row in cur.fetchall()]
 
     return (card[0], card[1], card[2], items)
 
@@ -575,9 +567,7 @@ def update_sentence_card(
 
     # Validate that every expression appears in the sentence (local rules,
     # plus any dialog-verified residual surfaces).
-    _validate_expressions_in_sentence(
-        front, items, verified_surfaces=verified_surfaces
-    )
+    _validate_expressions_in_sentence(front, items, verified_surfaces=verified_surfaces)
 
     # Reject empty meanings for sentence cards (newly edited)
     _require_nonempty_meanings(items, "update")
@@ -611,9 +601,7 @@ def update_sentence_card(
                     sense = pref
                     meaning = pref.meaning
             if sense is None:
-                sense = create_or_get_sense(
-                    conn, expr, meaning, commit=False
-                )
+                sense = create_or_get_sense(conn, expr, meaning, commit=False)
             cur.execute(
                 "INSERT INTO unfamiliar_items "
                 "(card_id, expression, meaning, sense_id, surface_form) "
@@ -634,6 +622,7 @@ def update_sentence_card(
 # Database discovery
 # ---------------------------------------------------------------------------
 
+
 def find_databases(base_dir=None):
     """Recursively find all _barsky.db files under *base_dir*.
 
@@ -644,6 +633,7 @@ def find_databases(base_dir=None):
     """
     if base_dir is None:
         from .config import get_database_root
+
         base_dir = get_database_root()
 
     results = []

@@ -14,9 +14,11 @@ class TestNoDuplicateException:
         """The canonical source is ai_provider. ai_parser should not
         define a duplicate AIMissingConfigError."""
         from kgb_srs.ai_provider import AIMissingConfigError
+
         assert AIMissingConfigError is not None
         # ai_parser should NOT have its own AIMissingConfigError
         import kgb_srs.ai_parser as ap
+
         assert not hasattr(ap, "AIMissingConfigError")
 
 
@@ -25,37 +27,41 @@ class TestPublicAPILazy:
 
     def test_barskyapp_in_all(self):
         import kgb_srs
+
         assert "BarskyApp" in kgb_srs.__all__
 
     def test_barskyapp_accessible(self):
         from kgb_srs import BarskyApp
+
         assert BarskyApp is not None
 
     def test_get_app_returns_same(self):
         from kgb_srs import BarskyApp, get_app
+
         assert get_app() is BarskyApp
 
 
 class TestSettingsFileSafety:
     def test_settings_save_failure_is_propagated(self, tmp_path, monkeypatch):
-            import kgb_srs.config as config
+        import kgb_srs.config as config
 
-            monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
-            monkeypatch.setattr(
-                config.os, "replace",
-                lambda *args: (_ for _ in ()).throw(OSError("disk full")),
-            )
-            with pytest.raises(OSError, match="disk full"):
-                config.save_settings({"ai_api_key": "secret"})
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+        monkeypatch.setattr(
+            config.os,
+            "replace",
+            lambda *args: (_ for _ in ()).throw(OSError("disk full")),
+        )
+        with pytest.raises(OSError, match="disk full"):
+            config.save_settings({"ai_api_key": "secret"})
 
     def test_settings_file_is_owner_only(self, tmp_path, monkeypatch):
-            import stat
-            import kgb_srs.config as config
+        import stat
+        import kgb_srs.config as config
 
-            settings_path = tmp_path / "barsky_settings.json"
-            monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
-            config.save_settings({"ai_api_key": "secret"})
-            assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
+        settings_path = tmp_path / "barsky_settings.json"
+        monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
+        config.save_settings({"ai_api_key": "secret"})
+        assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
 
 
 class TestSettingsStaging:
@@ -69,22 +75,27 @@ class TestSettingsStaging:
         # Create settings file with known values
         settings_path = tmp_path / "barsky_settings.json"
         monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
-        config.save_settings({
-            "width": 900, "height": 700, "font_family": "Arial",
-            "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
-            "ai_active_provider": "Default",
-            "ai_providers": {
-                "Default": {
-                    "base_url": "https://api.openai.com/v1",
-                    "model": "gpt-4o-mini",
-                    "api_key": "secret123",
-                    "timeout": 30,
-                }
-            },
-            "explanation_language": "Chinese",
-        })
-        monkeypatch.setattr(config, "load_settings",
-                            lambda: config.load_settings())
+        config.save_settings(
+            {
+                "width": 900,
+                "height": 700,
+                "font_family": "Arial",
+                "font_size": 14,
+                "default_database": "",
+                "tts_voice": "en-US-Ava",
+                "ai_active_provider": "Default",
+                "ai_providers": {
+                    "Default": {
+                        "base_url": "https://api.openai.com/v1",
+                        "model": "gpt-4o-mini",
+                        "api_key": "secret123",
+                        "timeout": 30,
+                    }
+                },
+                "explanation_language": "Chinese",
+            }
+        )
+        monkeypatch.setattr(config, "load_settings", lambda: config.load_settings())
 
         _qt_app()
         window = BarskyApp()
@@ -95,8 +106,7 @@ class TestSettingsStaging:
         staged = dict(window.settings)
         staged["width"] = 1024
         staged["ai_providers"] = {
-            name: dict(entry)
-            for name, entry in staged.get("ai_providers", {}).items()
+            name: dict(entry) for name, entry in staged.get("ai_providers", {}).items()
         }
         active = staged["ai_active_provider"]
         staged["ai_providers"][active]["api_key"] = "new_secret"
@@ -107,9 +117,9 @@ class TestSettingsStaging:
             window.settings["ai_providers"][window.settings["ai_active_provider"]][
                 "api_key"
             ]
-            == original_settings["ai_providers"][original_settings["ai_active_provider"]][
-                "api_key"
-            ]
+            == original_settings["ai_providers"][
+                original_settings["ai_active_provider"]
+            ]["api_key"]
         )
 
         # After successful save, should update
@@ -132,20 +142,26 @@ class TestSettingsStaging:
 
         settings_path = tmp_path / "barsky_settings.json"
         monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
-        config.save_settings({
-            "width": 900, "height": 700, "font_family": "Arial",
-            "font_size": 14, "default_database": "", "tts_voice": "en-US-Ava",
-            "ai_active_provider": "Default",
-            "ai_providers": {
-                "Default": {
-                    "base_url": "https://api.openai.com/v1",
-                    "model": "gpt-4o-mini",
-                    "api_key": "secret123",
-                    "timeout": 30,
-                }
-            },
-            "explanation_language": "Chinese",
-        })
+        config.save_settings(
+            {
+                "width": 900,
+                "height": 700,
+                "font_family": "Arial",
+                "font_size": 14,
+                "default_database": "",
+                "tts_voice": "en-US-Ava",
+                "ai_active_provider": "Default",
+                "ai_providers": {
+                    "Default": {
+                        "base_url": "https://api.openai.com/v1",
+                        "model": "gpt-4o-mini",
+                        "api_key": "secret123",
+                        "timeout": 30,
+                    }
+                },
+                "explanation_language": "Chinese",
+            }
+        )
 
         _qt_app()
         window = BarskyApp()
@@ -155,8 +171,7 @@ class TestSettingsStaging:
         # Build staged changes
         staged = dict(window.settings)
         staged["ai_providers"] = {
-            name: dict(entry)
-            for name, entry in staged.get("ai_providers", {}).items()
+            name: dict(entry) for name, entry in staged.get("ai_providers", {}).items()
         }
         active = staged["ai_active_provider"]
         staged["ai_providers"][active]["api_key"] = "would_be_leaked"
@@ -164,6 +179,7 @@ class TestSettingsStaging:
 
         # Simulate save failure
         save_called = []
+
         def failing_save(s):
             save_called.append(dict(s))
             raise OSError("disk full")
@@ -181,9 +197,7 @@ class TestSettingsStaging:
                 "api_key"
             ]
             == original["ai_providers"][original["ai_active_provider"]]["api_key"]
-        ), (
-            "API key must not change on save failure"
-        )
+        ), "API key must not change on save failure"
         assert window.settings["width"] == original["width"]
         assert json.dumps(window.settings, sort_keys=True) == orig_json, (
             "Settings must be byte-for-byte unchanged after save failure"
@@ -199,21 +213,24 @@ class TestSettingsStaging:
         monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
 
         original_key = "key-original"
-        config.save_settings({
-            "width": 900,
-            "ai_active_provider": "Default",
-            "ai_providers": {
-                "Default": {
-                    "base_url": "https://api.openai.com/v1",
-                    "model": "gpt-4o-mini",
-                    "api_key": original_key,
-                    "timeout": 30,
-                }
-            },
-        })
+        config.save_settings(
+            {
+                "width": 900,
+                "ai_active_provider": "Default",
+                "ai_providers": {
+                    "Default": {
+                        "base_url": "https://api.openai.com/v1",
+                        "model": "gpt-4o-mini",
+                        "api_key": original_key,
+                        "timeout": 30,
+                    }
+                },
+            }
+        )
 
         _qt_app()
         from kgb_srs.main_window import BarskyApp
+
         window = BarskyApp()
         assert (
             window.settings["ai_providers"][window.settings["ai_active_provider"]][
@@ -225,8 +242,7 @@ class TestSettingsStaging:
         # Stage a change
         staged = dict(window.settings)
         staged["ai_providers"] = {
-            name: dict(entry)
-            for name, entry in staged.get("ai_providers", {}).items()
+            name: dict(entry) for name, entry in staged.get("ai_providers", {}).items()
         }
         staged["ai_providers"][staged["ai_active_provider"]]["api_key"] = (
             "would-be-leaked"
@@ -235,6 +251,7 @@ class TestSettingsStaging:
         # Fail the save
         def failing_save(s):
             raise OSError("permission denied")
+
         monkeypatch.setattr(config, "save_settings", failing_save)
 
         try:
@@ -248,8 +265,6 @@ class TestSettingsStaging:
                 "api_key"
             ]
             == original_key
-        ), (
-            "API key was mutated despite save failure"
-        )
+        ), "API key was mutated despite save failure"
 
         window.close()

@@ -6,7 +6,7 @@ import random
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
 
-from .browse_dialog import _expression_labels, _fetch_expressions_for_card
+from .browse_dialog import _fetch_expressions_for_card
 from .catalog import DatabaseType
 from .graphics import FlashCardItem
 from .markdown_utils import markdown_to_plain_text
@@ -283,7 +283,9 @@ class ReviewControllerMixin:
             return
 
         if not self.current_card:
-            QMessageBox.information(self, "Nothing to Delete", "No card is currently displayed.")
+            QMessageBox.information(
+                self, "Nothing to Delete", "No card is currently displayed."
+            )
             return
 
         card_id, front, back, box = self.current_card
@@ -307,7 +309,9 @@ class ReviewControllerMixin:
 
         self._delete_card_by_id(card_id)
 
-        QMessageBox.information(self, "Deleted", f"Card #{card_id} has been permanently deleted.")
+        QMessageBox.information(
+            self, "Deleted", f"Card #{card_id} has been permanently deleted."
+        )
         self.show_next_card()
 
     def start_review(self):
@@ -389,7 +393,6 @@ class ReviewControllerMixin:
             return
 
         self.show_next_card()
-
 
     def restart_current_review(self):
         """Restart the current daily review session (called from Restart button)."""
@@ -577,9 +580,7 @@ class ReviewControllerMixin:
         elif card_rect.intersects(cor_rect):
             QTimer.singleShot(0, lambda: self.process_answer(correct=True))
         else:
-            card_item.setPos(
-                self.scene.width() / 2, (self.scene.height() - 100) / 2
-            )
+            card_item.setPos(self.scene.width() / 2, (self.scene.height() - 100) / 2)
 
     def process_answer(self, correct):
         if not self.current_card:

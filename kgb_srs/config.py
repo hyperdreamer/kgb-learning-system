@@ -20,6 +20,7 @@ def normalize_settings_path(path) -> str:
     """Return an absolute, user-expanded path for a settings file."""
     return os.path.abspath(os.path.expanduser(os.fspath(path)))
 
+
 # Canonical relative layout under the database root.
 # Language-based uses two subtype directories; Knowledge-based is flat.
 CANONICAL_DB_SUBDIRS = (
@@ -62,24 +63,28 @@ DEFAULT_SETTINGS = {
     "explanation_language": "Chinese",
 }
 
-_POSITIVE_INT_SETTINGS = frozenset({
-    "width",
-    "height",
-    "sentence_dialog_width",
-    "sentence_dialog_height",
-    "font_size",
-    "content_font_size",
-})
-_STRING_SETTINGS = frozenset({
-    "database_root",
-    "default_database",
-    "font_family",
-    "content_font_family",
-    "tts_voice",
-    "tts_language",
-    "explanation_language",
-    "ai_active_provider",
-})
+_POSITIVE_INT_SETTINGS = frozenset(
+    {
+        "width",
+        "height",
+        "sentence_dialog_width",
+        "sentence_dialog_height",
+        "font_size",
+        "content_font_size",
+    }
+)
+_STRING_SETTINGS = frozenset(
+    {
+        "database_root",
+        "default_database",
+        "font_family",
+        "content_font_family",
+        "tts_voice",
+        "tts_language",
+        "explanation_language",
+        "ai_active_provider",
+    }
+)
 
 
 def get_database_root(settings=None) -> str:
@@ -243,10 +248,7 @@ def load_settings(settings_file=None):
     # With no usable profile mapping, drop the default bag so
     # ensure_ai_provider_profiles migrates legacy flat keys. Otherwise an
     # empty Default profile would clobber a real ai_api_key.
-    if (
-        "ai_providers" not in loaded
-        or not isinstance(loaded.get("ai_providers"), dict)
-    ):
+    if "ai_providers" not in loaded or not isinstance(loaded.get("ai_providers"), dict):
         settings.pop("ai_providers", None)
         if "ai_active_provider" not in loaded:
             settings.pop("ai_active_provider", None)

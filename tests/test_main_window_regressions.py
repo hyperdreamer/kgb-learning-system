@@ -2,7 +2,6 @@
 
 import os
 
-import pytest
 
 from .qt_helpers import qt_app as _qt_app
 
@@ -11,18 +10,18 @@ class TestNoSyncHTTPInMainWindow:
     """Main window must not contain processEvents or synchronous HTTP calls."""
 
     def test_no_process_events(self):
-        import os
         main_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "kgb_srs", "main_window.py")
+            os.path.dirname(os.path.dirname(__file__)), "kgb_srs", "main_window.py"
+        )
         with open(main_path, "r") as f:
             content = f.read()
-        assert "processEvents" not in content, \
-            "processEvents found in main_window.py"
-        assert "_make_http_call" not in content, \
+        assert "processEvents" not in content, "processEvents found in main_window.py"
+        assert "_make_http_call" not in content, (
             "_make_http_call found in main_window.py"
-        assert "urllib.request.urlopen" not in content, \
+        )
+        assert "urllib.request.urlopen" not in content, (
             "urllib.request.urlopen found in main_window.py"
+        )
 
 
 class TestAddEntryButtonLabel:
@@ -98,13 +97,17 @@ class TestMenuSubmenuSpacing:
         dummy = db_dir / "Test_barsky.db"
         dummy.write_text("")
 
-        monkeypatch.setattr("kgb_srs.main_window.find_databases",
-                            lambda *a, **k: [("Test", str(dummy))])
-        monkeypatch.setattr("kgb_srs.main_window._open_and_infer_type",
-                            lambda p: DatabaseType.LANGUAGE_SENTENCE)
+        monkeypatch.setattr(
+            "kgb_srs.main_window.find_databases", lambda *a, **k: [("Test", str(dummy))]
+        )
+        monkeypatch.setattr(
+            "kgb_srs.main_window._open_and_infer_type",
+            lambda p: DatabaseType.LANGUAGE_SENTENCE,
+        )
 
         class FakeApp:
             current_db_path = None
+
         app = FakeApp()
         menu = QMenu()
         BarskyApp.build_db_menu(app, menu)
@@ -127,13 +130,18 @@ class TestMenuSubmenuSpacing:
         dummy = db_dir / "French_barsky.db"
         dummy.write_text("")
 
-        monkeypatch.setattr("kgb_srs.main_window.find_databases",
-                            lambda *a, **k: [("French", str(dummy))])
-        monkeypatch.setattr("kgb_srs.main_window._open_and_infer_type",
-                            lambda p: DatabaseType.LANGUAGE_SENTENCE)
+        monkeypatch.setattr(
+            "kgb_srs.main_window.find_databases",
+            lambda *a, **k: [("French", str(dummy))],
+        )
+        monkeypatch.setattr(
+            "kgb_srs.main_window._open_and_infer_type",
+            lambda p: DatabaseType.LANGUAGE_SENTENCE,
+        )
 
         class FakeApp:
             current_db_path = None
+
         app = FakeApp()
         menu = QMenu()
         BarskyApp.build_db_menu(app, menu)
@@ -168,13 +176,16 @@ class TestMenuSubmenuSpacing:
         dummy = db_dir / "Math_barsky.db"
         dummy.write_text("")
 
-        monkeypatch.setattr("kgb_srs.main_window.find_databases",
-                            lambda *a, **k: [("Math", str(dummy))])
-        monkeypatch.setattr("kgb_srs.main_window._open_and_infer_type",
-                            lambda p: DatabaseType.KNOWLEDGE)
+        monkeypatch.setattr(
+            "kgb_srs.main_window.find_databases", lambda *a, **k: [("Math", str(dummy))]
+        )
+        monkeypatch.setattr(
+            "kgb_srs.main_window._open_and_infer_type", lambda p: DatabaseType.KNOWLEDGE
+        )
 
         class FakeApp:
             current_db_path = None
+
         app = FakeApp()
         menu = QMenu()
         BarskyApp.build_db_menu(app, menu)
@@ -296,9 +307,7 @@ class TestDropZoneLayoutDoesNotOverflow:
 
         assert vr.y() >= 0
         inset = vp.height() - vr.bottom()
-        assert inset >= 10, (
-            f"at min height: zone inset = {inset} px, need ≥ 10"
-        )
+        assert inset >= 10, f"at min height: zone inset = {inset} px, need ≥ 10"
 
         view_bottom_global = view.mapToGlobal(QPoint(0, view.height())).y()
         btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()

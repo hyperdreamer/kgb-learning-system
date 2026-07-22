@@ -21,6 +21,7 @@ from kgb_srs.schema import (
 # Search-function registration
 # ---------------------------------------------------------------------------
 
+
 class TestSearchFunctionRegistration:
     def test_weakrefable_connection_is_registered_once_and_not_retained(self):
         class TrackingConnection(sqlite3.Connection):
@@ -60,6 +61,7 @@ class TestSearchFunctionRegistration:
 # ---------------------------------------------------------------------------
 # parse_search_tokens
 # ---------------------------------------------------------------------------
+
 
 class TestParseSearchTokens:
     def test_simple_and(self):
@@ -109,6 +111,7 @@ class TestParseSearchTokens:
 # Mixed search semantics — OR groups of AND operands
 # ============================================================================
 
+
 class TestMixedSearchSemantics:
     """Tests for mixed AND/OR search with sentence cards."""
 
@@ -118,6 +121,7 @@ class TestMixedSearchSemantics:
         init_db(c)
         ensure_unfamiliar_items_table(c)
         from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
         migrate_unfamiliar_items_meaning(c)
         # Card 1: alpha + nope together
         c.execute(
@@ -179,6 +183,7 @@ class TestMixedSearchSemantics:
 # ---------------------------------------------------------------------------
 # search_sentence_cards — with DB
 # ---------------------------------------------------------------------------
+
 
 class TestSearchSentenceCards:
     @pytest.fixture
@@ -258,6 +263,7 @@ class TestSearchSentenceCards:
 # ---------------------------------------------------------------------------
 # search_word_phrase_cards — with DB
 # ---------------------------------------------------------------------------
+
 
 class TestSearchWordPhraseCards:
     @pytest.fixture

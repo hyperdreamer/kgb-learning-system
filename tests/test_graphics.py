@@ -41,9 +41,7 @@ def flashcard():
 
 
 def _background(stylesheet, selector):
-    match = re.search(
-        rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", stylesheet
-    )
+    match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", stylesheet)
     assert match, f"Missing stylesheet selector: {selector}"
     color = re.search(r"background-color:\s*(#[0-9A-Fa-f]{6})", match.group(1))
     assert color, f"Missing background color in: {selector}"
@@ -183,7 +181,9 @@ def test_review_card_navigation_policy_routes_only_http_links(url, allowed):
     from kgb_srs.graphics import ReviewCardNavigationPolicy, route_review_card_link
 
     opened = []
-    result = route_review_card_link(url, lambda qurl: opened.append(qurl.toString()) or True)
+    result = route_review_card_link(
+        url, lambda qurl: opened.append(qurl.toString()) or True
+    )
 
     assert ReviewCardNavigationPolicy.should_open_externally(url) is allowed
     assert ReviewCardNavigationPolicy.allows_embedded_navigation(url) is False

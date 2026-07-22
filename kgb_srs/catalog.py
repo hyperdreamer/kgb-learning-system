@@ -30,6 +30,7 @@ _LEGACY_LANGUAGES = "Languages"
 # Enumerations
 # ---------------------------------------------------------------------------
 
+
 class DatabaseCategory(Enum):
     LANGUAGE_BASED = "language_based"
     KNOWLEDGE_BASED = "knowledge_based"
@@ -72,6 +73,7 @@ class DatabaseType(Enum):
 # ---------------------------------------------------------------------------
 # Menu display path helper
 # ---------------------------------------------------------------------------
+
 
 def display_path_for(
     db_path: str,
@@ -130,7 +132,7 @@ def display_path_for(
         else:
             parts = normalized.replace("\\", "/").split("/")
             if not os.path.isabs(normalized) and "db" in parts:
-                relative = "/".join(parts[parts.index("db") + 1:])
+                relative = "/".join(parts[parts.index("db") + 1 :])
             else:
                 relative = os.path.basename(normalized)
     rel_parts = relative.replace("\\", "/").split("/")
@@ -156,6 +158,7 @@ def display_path_for(
 # ---------------------------------------------------------------------------
 # Metadata inference from path
 # ---------------------------------------------------------------------------
+
 
 def infer_database_type(db_path: str) -> DatabaseType:
     """Infer the database_type from the file path.
@@ -186,7 +189,7 @@ def infer_database_type(db_path: str) -> DatabaseType:
     # Check if path contains the canonical component sequence
     def _has_subsequence(haystack, needle):
         for i in range(len(haystack) - len(needle) + 1):
-            if haystack[i:i + len(needle)] == needle:
+            if haystack[i : i + len(needle)] == needle:
                 return True
         return False
 
@@ -242,6 +245,7 @@ def write_database_type(conn, db_type: DatabaseType) -> None:
 # Catalog tree for menu building
 # ---------------------------------------------------------------------------
 
+
 def build_catalog_tree(
     entries: list[tuple[str, str, DatabaseType]],
 ) -> dict:
@@ -273,16 +277,14 @@ def build_catalog_tree(
         if db_type == DatabaseType.LANGUAGE_WORD_PHRASE:
             # Word/Phrase databases are deliberately flat.  In particular,
             # do not reproduce legacy directory components such as Languages.
-            tree["Language-based"]["Word/Phrase-based"][leaf] = (
-                db_path, db_type
-            )
+            tree["Language-based"]["Word/Phrase-based"][leaf] = (db_path, db_type)
             continue
 
         if db_type == DatabaseType.LANGUAGE_SENTENCE:
             node = tree["Language-based"]["Sentence-based"]
             try:
                 subtype_index = parts.index("Sentence-based")
-                relative_parts = parts[subtype_index + 1:]
+                relative_parts = parts[subtype_index + 1 :]
             except ValueError:
                 relative_parts = [leaf]
         else:

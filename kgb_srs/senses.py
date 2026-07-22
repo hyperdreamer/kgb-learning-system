@@ -203,9 +203,7 @@ def create_or_get_sense(
     if not meaning_text:
         raise ValueError("meaning must be non-empty")
 
-    existing = find_sense_by_meaning(
-        conn, expr, meaning_text, commit=commit
-    )
+    existing = find_sense_by_meaning(conn, expr, meaning_text, commit=commit)
     if existing is not None:
         return existing
 
@@ -235,9 +233,7 @@ def create_or_get_sense(
         # Race / unique conflict: undo only the nested insert attempt.
         cur.execute("ROLLBACK TO SAVEPOINT sense_ins")
         cur.execute("RELEASE SAVEPOINT sense_ins")
-        existing = find_sense_by_meaning(
-            conn, expr, meaning_text, commit=commit
-        )
+        existing = find_sense_by_meaning(conn, expr, meaning_text, commit=commit)
         if existing is not None:
             return existing
         raise
@@ -259,9 +255,7 @@ def resolve_sense_for_item(
     if preferred_sense_id is not None:
         sense = get_sense(conn, preferred_sense_id, commit=commit)
         if sense is not None:
-            if normalize_sentence(sense.expression) == normalize_sentence(
-                expression
-            ):
+            if normalize_sentence(sense.expression) == normalize_sentence(expression):
                 # Keep meaning text aligned with stored sense if empty.
                 return sense
     return create_or_get_sense(conn, expression, meaning, commit=commit)
@@ -327,9 +321,7 @@ def purge_orphan_senses(conn, *, commit: bool = False) -> int:
     return deleted
 
 
-def example_sentences_for_sense(
-    conn, sense_id: int, *, limit: int = 5
-) -> list[str]:
+def example_sentences_for_sense(conn, sense_id: int, *, limit: int = 5) -> list[str]:
     """Sentences that use this sense (via unfamiliar_items.sense_id or meaning)."""
     ensure_expression_senses_table(conn, commit=False)
     sense = get_sense(conn, sense_id, commit=False)
@@ -411,7 +403,7 @@ def build_word_phrase_back_from_senses(
 
         1. <meaning>
 
-          <example with **surface form** bolded>
+        <example with **surface form** bolded>
 
     The example sits on its own line under the meaning, indented with em
     spaces so both QTextDocument and WebEngine show a clear hierarchy.
@@ -443,8 +435,7 @@ def derive_word_phrase_entries(conn) -> list[tuple[str, str, list[Sense]]]:
             continue
         display = senses[0].expression
         examples_map = {
-            s.id: example_sentences_for_sense(conn, s.id, limit=1)
-            for s in senses
+            s.id: example_sentences_for_sense(conn, s.id, limit=1) for s in senses
         }
         back = build_word_phrase_back_from_senses(senses, examples_map)
         entries.append((display, back, senses))
@@ -505,8 +496,7 @@ def upsert_word_phrase_card(
         action = "updated"
     else:
         cur.execute(
-            "INSERT INTO cards (front, back, box, next_review) "
-            "VALUES (?, ?, 1, ?)",
+            "INSERT INTO cards (front, back, box, next_review) VALUES (?, ?, 1, ?)",
             (front, back, today),
         )
         card_id = int(cur.lastrowid)
@@ -715,8 +705,7 @@ def default_word_phrase_path_for_sentence(
     target_real = os.path.realpath(target_lexical)
     root_real = os.path.realpath(root_lexical)
     if not (
-        contained(target_lexical, root_lexical)
-        and contained(target_real, root_real)
+        contained(target_lexical, root_lexical) and contained(target_real, root_real)
     ):
         raise ProjectionPathSafetyError(
             {
@@ -739,8 +728,10 @@ def _legacy_flat_word_phrase_path(sentence_db_path: str, db_root: str) -> str:
     from .schema import DB_SUFFIX
 
     leaf = os.path.basename(sentence_db_path)
-    name = leaf[: -len(DB_SUFFIX)] if leaf.endswith(DB_SUFFIX) else (
-        os.path.splitext(leaf)[0] or "dictionary"
+    name = (
+        leaf[: -len(DB_SUFFIX)]
+        if leaf.endswith(DB_SUFFIX)
+        else (os.path.splitext(leaf)[0] or "dictionary")
     )
     return os.path.abspath(
         os.path.join(db_root, DB_DIR_LANGUAGE_WORD_PHRASE, f"{name}{DB_SUFFIX}")
@@ -807,9 +798,7 @@ def ensure_linked_word_phrase_database(
     Creates the target file and settings link when missing. Returns
     ``(target_path, stats_or_None)``.
     """
-    canonical_path = default_word_phrase_path_for_sentence(
-        sentence_db_path, db_root
-    )
+    canonical_path = default_word_phrase_path_for_sentence(sentence_db_path, db_root)
     path = get_linked_word_phrase_db(source_conn)
     _raise_for_populated_legacy_flat_link(
         path, sentence_db_path, db_root, canonical_path
@@ -965,9 +954,7 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
     """
     ensure_expression_senses_table(conn, commit=commit)
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id, expression, meaning, sense_id FROM unfamiliar_items"
-    )
+    cur.execute("SELECT id, expression, meaning, sense_id FROM unfamiliar_items")
     rows = cur.fetchall()
     linked = 0
     for item_id, expression, meaning, sense_id in rows:
@@ -979,9 +966,7 @@ def backfill_senses_from_items(conn, *, commit: bool = True) -> int:
             # Keep existing link if still valid.
             if get_sense(conn, int(sense_id), commit=commit) is not None:
                 continue
-        sense = create_or_get_sense(
-            conn, expr, meaning_text, commit=False
-        )
+        sense = create_or_get_sense(conn, expr, meaning_text, commit=False)
         cur.execute(
             "UPDATE unfamiliar_items SET sense_id=? WHERE id=?",
             (sense.id, item_id),

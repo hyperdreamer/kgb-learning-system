@@ -45,7 +45,8 @@ class _AIGenerateWorker(QThread):
             client = AIClient(self._config)
             url, headers, body = client.build_request(self._prompt)
             raw = http_request(
-                url, headers,
+                url,
+                headers,
                 body=json.dumps(body).encode("utf-8"),
                 timeout=self._config.timeout_seconds,
                 method="POST",

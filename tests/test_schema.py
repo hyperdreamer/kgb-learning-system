@@ -21,6 +21,7 @@ from kgb_srs.schema import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fresh_conn():
     """A new in-memory SQLite database with the base schema initialized."""
@@ -35,6 +36,7 @@ def migrated_conn(fresh_conn):
     """A database with unfamiliar_items table ensured."""
     ensure_unfamiliar_items_table(fresh_conn)
     from kgb_srs.schema import migrate_unfamiliar_items_meaning
+
     migrate_unfamiliar_items_meaning(fresh_conn)
     return fresh_conn
 
@@ -42,6 +44,7 @@ def migrated_conn(fresh_conn):
 # ---------------------------------------------------------------------------
 # init_db — basic schema
 # ---------------------------------------------------------------------------
+
 
 class TestInitDb:
     def test_creates_cards_table(self, fresh_conn):
@@ -57,9 +60,7 @@ class TestInitDb:
         assert cur.fetchone() is not None
 
     def test_random_review_default(self, fresh_conn):
-        cur = fresh_conn.execute(
-            "SELECT value FROM settings WHERE key='random_review'"
-        )
+        cur = fresh_conn.execute("SELECT value FROM settings WHERE key='random_review'")
         assert cur.fetchone()[0] == "1"
 
     def test_idempotent(self, fresh_conn):
@@ -97,7 +98,9 @@ class TestInitDb:
             opened.append(conn)
             return conn
 
-        monkeypatch.setattr("kgb_srs.schema.sqlite3.connect", connect_then_reject_schema)
+        monkeypatch.setattr(
+            "kgb_srs.schema.sqlite3.connect", connect_then_reject_schema
+        )
         with pytest.raises(sqlite3.DatabaseError):
             init_db(str(tmp_path / "failed-init.db"))
 
@@ -125,6 +128,7 @@ class TestInitDb:
 # ---------------------------------------------------------------------------
 # ensure_unfamiliar_items_table
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureUnfamiliarItemsTable:
     def test_creates_table(self, fresh_conn):
@@ -192,6 +196,7 @@ class TestEnsureUnfamiliarItemsTable:
 # insert_sentence_card
 # ---------------------------------------------------------------------------
 
+
 class TestInsertSentenceCard:
     def test_inserts_card_row(self, migrated_conn):
         card_id = insert_sentence_card(
@@ -208,7 +213,9 @@ class TestInsertSentenceCard:
 
     def test_inserts_unfamiliar_items(self, migrated_conn):
         card_id = insert_sentence_card(
-            migrated_conn, "Bonjour le monde", [("Bonjour", "hello"), ("monde", "world")]
+            migrated_conn,
+            "Bonjour le monde",
+            [("Bonjour", "hello"), ("monde", "world")],
         )
         cur = migrated_conn.execute(
             "SELECT expression, meaning FROM unfamiliar_items WHERE card_id=? ORDER BY id",
@@ -221,7 +228,9 @@ class TestInsertSentenceCard:
 
     def test_deduplicates_unfamiliar_items(self, migrated_conn):
         card_id = insert_sentence_card(
-            migrated_conn, "Hello hello", [("Hello", "g1"), ("hello", "g2"), ("HELLO", "g3")]
+            migrated_conn,
+            "Hello hello",
+            [("Hello", "g1"), ("hello", "g2"), ("HELLO", "g3")],
         )
         cur = migrated_conn.execute(
             "SELECT COUNT(*) FROM unfamiliar_items WHERE card_id=?", (card_id,)
@@ -240,6 +249,7 @@ class TestInsertSentenceCard:
 # ---------------------------------------------------------------------------
 # get_sentence_card
 # ---------------------------------------------------------------------------
+
 
 class TestGetSentenceCard:
     def test_retrieves_full_card(self, migrated_conn):
@@ -266,14 +276,18 @@ class TestGetSentenceCard:
 # update_sentence_card
 # ---------------------------------------------------------------------------
 
+
 class TestUpdateSentenceCard:
     def test_updates_front_and_items(self, migrated_conn):
         card_id = insert_sentence_card(
             migrated_conn, "Old sentence", [("Old", "old meaning")]
         )
         update_sentence_card(
-            migrated_conn, card_id,
-            front="New sentence", back="Meanings", items=[("New", "new meaning")]
+            migrated_conn,
+            card_id,
+            front="New sentence",
+            back="Meanings",
+            items=[("New", "new meaning")],
         )
         result = get_sentence_card(migrated_conn, card_id)
         assert result[0] == "New sentence"
@@ -287,18 +301,17 @@ class TestUpdateSentenceCard:
         card_id = insert_sentence_card(
             migrated_conn, "Test sentence", [("Test", "meaning")]
         )
-        migrated_conn.execute(
-            "UPDATE cards SET box=3 WHERE id=?", (card_id,)
-        )
+        migrated_conn.execute("UPDATE cards SET box=3 WHERE id=?", (card_id,))
         migrated_conn.commit()
 
         update_sentence_card(
-            migrated_conn, card_id,
-            front="Test sentence", back="Meaning", items=[("Test", "meaning")]
+            migrated_conn,
+            card_id,
+            front="Test sentence",
+            back="Meaning",
+            items=[("Test", "meaning")],
         )
-        cur = migrated_conn.execute(
-            "SELECT box FROM cards WHERE id=?", (card_id,)
-        )
+        cur = migrated_conn.execute("SELECT box FROM cards WHERE id=?", (card_id,))
         assert cur.fetchone()[0] == 1
 
     def test_rejects_expression_not_in_sentence(self, migrated_conn):
@@ -307,8 +320,11 @@ class TestUpdateSentenceCard:
         )
         with pytest.raises(ValueError, match="not found"):
             update_sentence_card(
-                migrated_conn, card_id,
-                front="New sentence", back="M", items=[("NotThere", "meaning")]
+                migrated_conn,
+                card_id,
+                front="New sentence",
+                back="M",
+                items=[("NotThere", "meaning")],
             )
 
     def test_rejects_empty_meaning(self, migrated_conn):
@@ -317,8 +333,11 @@ class TestUpdateSentenceCard:
         )
         with pytest.raises(ValueError, match="meaning"):
             update_sentence_card(
-                migrated_conn, card_id,
-                front="Test sentence", back="M", items=[("Test", "")]
+                migrated_conn,
+                card_id,
+                front="Test sentence",
+                back="M",
+                items=[("Test", "")],
             )
 
     def test_insert_and_update_share_item_normalization_and_deduplication(
@@ -352,7 +371,9 @@ class TestUpdateSentenceCard:
         )
 
         card = get_sentence_card(migrated_conn, card_id)
-        assert [(expr, meaning, surface) for expr, meaning, _sense, surface in card[3]] == [
+        assert [
+            (expr, meaning, surface) for expr, meaning, _sense, surface in card[3]
+        ] == [
             ("lie", "recline", "lay"),
             ("down", "below", "explicit"),
         ]
@@ -362,6 +383,7 @@ class TestUpdateSentenceCard:
 # ---------------------------------------------------------------------------
 # find_databases
 # ---------------------------------------------------------------------------
+
 
 class TestFindDatabases:
     def test_finds_db_files(self):
@@ -396,6 +418,7 @@ class TestFindDatabases:
 # DB path resolution hardening
 # ---------------------------------------------------------------------------
 
+
 class TestResolveDbPath:
     def test_normal_path(self, tmp_path):
         base = str(tmp_path)
@@ -412,6 +435,7 @@ class TestResolveDbPath:
         """Symlink escapes are caught by realpath resolution."""
         import os as _os
         import shutil
+
         base = str(tmp_path)
         subdir = os.path.join(base, "sub")
         os.makedirs(subdir, exist_ok=True)

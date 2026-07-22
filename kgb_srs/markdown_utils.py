@@ -70,7 +70,7 @@ def sanitize_review_html_fragment(fragment: str) -> str:
     def replace_url_attribute(match):
         name = match.group("name").lower()
         raw_value = match.group("value")
-        value = raw_value[1:-1] if raw_value[:1] in {"\"", "'"} else raw_value
+        value = raw_value[1:-1] if raw_value[:1] in {'"', "'"} else raw_value
         if name == "href" and is_safe_review_link(value):
             return f' href="{html_lib.escape(html_lib.unescape(value), quote=True)}"'
         return ""
@@ -98,6 +98,7 @@ def _protect_math_segments(text):
             token = make_token()
             token_map[token] = match.group(0)
             return token
+
         return re.sub(pattern, repl, source, flags=re.DOTALL)
 
     # Protect display math first, then inline math

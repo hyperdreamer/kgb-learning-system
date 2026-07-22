@@ -57,11 +57,17 @@ class SentenceCardDialog(QDialog):
          open so the user can fix or Cancel. Save is dimmed while empty.
     """
 
-    def __init__(self, parent=None, title="Add Sentence Card",
-                 sentence="", items=None, back="",
-                 settings: dict | None = None,
-                 conn=None,
-                 settings_file=None):
+    def __init__(
+        self,
+        parent=None,
+        title="Add Sentence Card",
+        sentence="",
+        items=None,
+        back="",
+        settings: dict | None = None,
+        conn=None,
+        settings_file=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(560, 520)
@@ -91,9 +97,7 @@ class SentenceCardDialog(QDialog):
             for item in items:
                 if isinstance(item, tuple):
                     expr = str(item[0])
-                    self._meanings[expr] = (
-                        str(item[1]) if len(item) > 1 else ""
-                    )
+                    self._meanings[expr] = str(item[1]) if len(item) > 1 else ""
                     sid = None
                     if len(item) > 2 and item[2] is not None:
                         try:
@@ -134,21 +138,22 @@ class SentenceCardDialog(QDialog):
         layout.addLayout(sel_row)
 
         # --- Unfamiliar items ---
-        layout.addWidget(QLabel(
-            "Unfamiliar words/phrases (select from sentence or type below):"))
+        layout.addWidget(
+            QLabel("Unfamiliar words/phrases (select from sentence or type below):")
+        )
         self._items_list = QListWidget()
         # Extended selection still allows multi-remove; meaning editor
         # always follows the current (primary) list item.
         self._items_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection)
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self._items_list.setMaximumHeight(120)
         layout.addWidget(self._items_list)
 
         # Manual entry
         entry_layout = QHBoxLayout()
         self._item_entry = QLineEdit()
-        self._item_entry.setPlaceholderText(
-            "Type a word/phrase and press Add")
+        self._item_entry.setPlaceholderText("Type a word/phrase and press Add")
         self._item_entry.returnPressed.connect(self._add_item)
         entry_layout.addWidget(self._item_entry)
 
@@ -238,9 +243,7 @@ class SentenceCardDialog(QDialog):
 
         # Connect double-click on list to removal
         self._items_list.itemDoubleClicked.connect(self._remove_selected)
-        self._items_list.itemSelectionChanged.connect(
-            self._on_item_selection_changed
-        )
+        self._items_list.itemSelectionChanged.connect(self._on_item_selection_changed)
         # Dim Save while empty; re-evaluate as the user types / edits items.
         self._sentence_edit.textChanged.connect(self._update_save_enabled)
 
@@ -260,8 +263,7 @@ class SentenceCardDialog(QDialog):
 
     def _get_items(self) -> list[str]:
         return [
-            self._items_list.item(i).text()
-            for i in range(self._items_list.count())
+            self._items_list.item(i).text() for i in range(self._items_list.count())
         ]
 
     def _selected_expression(self) -> str | None:
@@ -345,7 +347,8 @@ class SentenceCardDialog(QDialog):
             deduped = deduplicate_unfamiliar_items(all_items)
             if len(deduped) <= len(existing):
                 self._status_label.setText(
-                    "Item already in list (or duplicate after normalization).")
+                    "Item already in list (or duplicate after normalization)."
+                )
                 self._status_label.setStyleSheet("color: #c00;")
             else:
                 self._persist_active_meaning()
@@ -363,8 +366,7 @@ class SentenceCardDialog(QDialog):
         cursor = self._sentence_edit.textCursor()
         selected = cursor.selectedText().strip()
         if not selected:
-            self._status_label.setText(
-                "No text selected in the sentence box.")
+            self._status_label.setText("No text selected in the sentence box.")
             self._status_label.setStyleSheet("color: #c00;")
             return
 
@@ -372,16 +374,14 @@ class SentenceCardDialog(QDialog):
         all_items = existing + [selected]
         deduped = deduplicate_unfamiliar_items(all_items)
         if len(deduped) <= len(existing):
-            self._status_label.setText(
-                "Selection already in list (or duplicate).")
+            self._status_label.setText("Selection already in list (or duplicate).")
             self._status_label.setStyleSheet("color: #c00;")
         else:
             self._persist_active_meaning()
             self._meanings.setdefault(selected, "")
             self._sense_ids.setdefault(selected, None)
             self._items_list.addItem(selected)
-            self._status_label.setText(
-                f"Added: {selected[:50]}")
+            self._status_label.setText(f"Added: {selected[:50]}")
             self._status_label.setStyleSheet("color: #393;")
             self._items_list.setCurrentRow(self._items_list.count() - 1)
             self._on_item_selection_changed()
@@ -403,11 +403,11 @@ class SentenceCardDialog(QDialog):
     def _check_ai_available(self):
         ai_config = AIProviderConfig.from_settings(self._settings)
         if ai_config.configured:
-            self._ai_status.setText(
-                f"AI configured ({ai_config.model})")
+            self._ai_status.setText(f"AI configured ({ai_config.model})")
         else:
             self._ai_status.setText(
-                "AI not configured — set API key under Settings → AI Providers.")
+                "AI not configured — set API key under Settings → AI Providers."
+            )
         self._update_generate_enabled()
 
     # ------------------------------------------------------------------
@@ -462,9 +462,7 @@ class SentenceCardDialog(QDialog):
                 "Add unfamiliar words/phrases, then select one and "
                 "click Generate Meaning."
             )
-            empty.setStyleSheet(
-                "color: #90A4AE; font-style: italic; padding: 8px 2px;"
-            )
+            empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
             empty.setWordWrap(True)
             self._meanings_layout.addWidget(empty)
             self._meanings_layout.addStretch()
@@ -472,12 +470,8 @@ class SentenceCardDialog(QDialog):
 
         expr = self._selected_expression()
         if expr is None:
-            empty = QLabel(
-                "Select an unfamiliar word/phrase, then Generate Meaning."
-            )
-            empty.setStyleSheet(
-                "color: #90A4AE; font-style: italic; padding: 8px 2px;"
-            )
+            empty = QLabel("Select an unfamiliar word/phrase, then Generate Meaning.")
+            empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
             empty.setWordWrap(True)
             self._meanings_layout.addWidget(empty)
             self._meanings_layout.addStretch()
@@ -510,9 +504,7 @@ class SentenceCardDialog(QDialog):
         font = expr_label.font()
         font.setBold(True)
         expr_label.setFont(font)
-        expr_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        expr_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         card_layout.addWidget(expr_label)
 
         edit = self._make_meaning_field(
@@ -574,9 +566,7 @@ class SentenceCardDialog(QDialog):
                 "Meaning set — sense will be resolved on Save."
             )
         else:
-            self._sense_source_label.setText(
-                "No meaning yet — click Generate Meaning."
-            )
+            self._sense_source_label.setText("No meaning yet — click Generate Meaning.")
 
     def _on_active_meaning_changed(self) -> None:
         """Keep the store in sync when the user repairs meaning manually."""
@@ -650,9 +640,7 @@ class SentenceCardDialog(QDialog):
                 f"Checking {len(prior)} prior sense(s) for '{expr}'…"
             )
         else:
-            self._ai_status.setText(
-                f"Creating first sense for '{expr}'…"
-            )
+            self._ai_status.setText(f"Creating first sense for '{expr}'…")
         self._ai_status.setStyleSheet("color: #666;")
 
         self._ai_worker = _create_ai_worker(ai_config, prompt)
@@ -660,9 +648,7 @@ class SentenceCardDialog(QDialog):
 
         def on_finished(raw_text):
             try:
-                assignment = parse_sense_assignment(
-                    raw_text, target_expr, prior_ids
-                )
+                assignment = parse_sense_assignment(raw_text, target_expr, prior_ids)
                 if assignment.action == "reuse" and assignment.sense_id is not None:
                     sense = None
                     if self._conn is not None:
@@ -681,10 +667,7 @@ class SentenceCardDialog(QDialog):
                         )
                     self._meanings[target_expr] = meaning_text
                     self._sense_ids[target_expr] = assignment.sense_id
-                    status = (
-                        f"Reused sense #{assignment.sense_id} for "
-                        f"'{target_expr}'."
-                    )
+                    status = f"Reused sense #{assignment.sense_id} for '{target_expr}'."
                 else:
                     # create
                     meaning_text = assignment.meaning.strip()
@@ -693,14 +676,10 @@ class SentenceCardDialog(QDialog):
                     self._meanings[target_expr] = meaning_text
                     self._sense_ids[target_expr] = None
                     status = (
-                        f"Created new meaning for '{target_expr}' "
-                        f"(will link on Save)."
+                        f"Created new meaning for '{target_expr}' (will link on Save)."
                     )
 
-                if (
-                    self._active_meaning_expr == target_expr
-                    and self._meaning_widgets
-                ):
+                if self._active_meaning_expr == target_expr and self._meaning_widgets:
                     edit = self._meaning_widgets[0][1]
                     edit.setReadOnly(True)
                     self._programmatic_meaning_update = True
@@ -755,15 +734,15 @@ class SentenceCardDialog(QDialog):
 
         if not sentence:
             QMessageBox.warning(
-                self, "Validation",
-                "Please enter a sentence before saving."
+                self, "Validation", "Please enter a sentence before saving."
             )
             return
 
         if not items:
             QMessageBox.warning(
-                self, "Validation",
-                "Add at least one unfamiliar word or phrase before saving."
+                self,
+                "Validation",
+                "Add at least one unfamiliar word or phrase before saving.",
             )
             return
 
@@ -773,7 +752,8 @@ class SentenceCardDialog(QDialog):
             meaning = (self._meanings.get(expr) or "").strip()
             if not meaning:
                 QMessageBox.warning(
-                    self, "Missing meaning",
+                    self,
+                    "Missing meaning",
                     f"Add a meaning for '{expr}' before saving.\n\n"
                     "Select the item, then type a meaning or click "
                     "Generate Meaning.",
@@ -796,10 +776,11 @@ class SentenceCardDialog(QDialog):
         missing_str = ", ".join(result.missing)
         if not ai_config.configured:
             QMessageBox.warning(
-                self, "Validation",
+                self,
+                "Validation",
                 f"These items were not found in the sentence:\n\n"
                 f"{missing_str}\n\n"
-                "Please remove them or fix the sentence before saving."
+                "Please remove them or fix the sentence before saving.",
             )
             return
 
@@ -834,8 +815,7 @@ class SentenceCardDialog(QDialog):
         self._membership_missing = list(missing)
         self._membership_pending_accept = None
 
-        self._status_label.setText(
-            f"🤖 AI checking {len(missing)} residual item(s)…")
+        self._status_label.setText(f"🤖 AI checking {len(missing)} residual item(s)…")
         self._status_label.setStyleSheet("color: #666;")
         self._ai_progress.setVisible(True)
         self._ai_progress.setRange(0, 0)
@@ -850,9 +830,7 @@ class SentenceCardDialog(QDialog):
         worker.error.connect(
             lambda message, w=worker: self._on_membership_ai_error(message, w)
         )
-        worker.finished.connect(
-            lambda w=worker: self._on_membership_ai_finished(w)
-        )
+        worker.finished.connect(lambda w=worker: self._on_membership_ai_finished(w))
         self._membership_worker = worker
         worker.start()
 
@@ -869,16 +847,18 @@ class SentenceCardDialog(QDialog):
         except (AIParseError, AIValidationError) as e:
             self._membership_pending_accept = None
             QMessageBox.warning(
-                self, "AI membership check",
+                self,
+                "AI membership check",
                 f"Could not use AI residual check:\n{e}\n\n"
-                f"Still unmatched: {', '.join(missing)}"
+                f"Still unmatched: {', '.join(missing)}",
             )
             return
         except Exception as e:
             self._membership_pending_accept = None
             QMessageBox.warning(
-                self, "AI membership check",
-                f"Unexpected error in AI residual check:\n{e}"
+                self,
+                "AI membership check",
+                f"Unexpected error in AI residual check:\n{e}",
             )
             return
 
@@ -886,19 +866,20 @@ class SentenceCardDialog(QDialog):
             self._membership_pending_accept = None
             missing_str = ", ".join(residual.missing)
             QMessageBox.warning(
-                self, "Validation",
+                self,
+                "Validation",
                 f"These items were still not found after AI check:\n\n"
                 f"{missing_str}\n\n"
-                "Please remove them or fix the sentence before saving."
+                "Please remove them or fix the sentence before saving.",
             )
-            self._status_label.setText(
-                f"❌ Still not found: {missing_str}")
+            self._status_label.setText(f"❌ Still not found: {missing_str}")
             self._status_label.setStyleSheet("color: #c00;")
             return
 
         recovered = len(missing)
         self._status_label.setText(
-            f"✅ AI residual check accepted {recovered} item(s); finalizing…")
+            f"✅ AI residual check accepted {recovered} item(s); finalizing…"
+        )
         self._status_label.setStyleSheet("color: #393;")
         self._membership_pending_accept = (
             sentence,
@@ -913,18 +894,21 @@ class SentenceCardDialog(QDialog):
         missing = getattr(self, "_membership_missing", [])
         missing_str = ", ".join(missing) if missing else "(unknown)"
         QMessageBox.warning(
-            self, "AI membership check",
-            f"AI residual check failed:\n{message}\n\n"
-            f"Still unmatched: {missing_str}"
+            self,
+            "AI membership check",
+            f"AI residual check failed:\n{message}\n\nStill unmatched: {missing_str}",
         )
         self._status_label.setText(
-            f"❌ AI residual check failed; still missing: {missing_str}")
+            f"❌ AI residual check failed; still missing: {missing_str}"
+        )
         self._status_label.setStyleSheet("color: #c00;")
 
     def _on_membership_ai_finished(self, worker=None) -> None:
         """Clear only the matching worker, then commit a queued valid result."""
         active_worker = getattr(self, "_membership_worker", None)
-        if active_worker is None or (worker is not None and worker is not active_worker):
+        if active_worker is None or (
+            worker is not None and worker is not active_worker
+        ):
             return
 
         pending_accept = self._membership_pending_accept
@@ -958,7 +942,8 @@ class SentenceCardDialog(QDialog):
             if not meaning:
                 # Defense in depth — _accept already checks meanings first.
                 QMessageBox.warning(
-                    self, "Missing meaning",
+                    self,
+                    "Missing meaning",
                     f"Add a meaning for '{expr}' before saving.\n\n"
                     "Select the item, then type a meaning or click "
                     "Generate Meaning.",

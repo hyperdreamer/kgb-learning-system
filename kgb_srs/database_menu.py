@@ -35,7 +35,9 @@ def _compute_display_path(db_path, db_type, legacy_display):
     norm_path = os.path.normpath(db_path).replace("\\", "/")
     canon_dirs = {
         DatabaseType.LANGUAGE_SENTENCE: DB_DIR_LANGUAGE_SENTENCE.replace("\\", "/"),
-        DatabaseType.LANGUAGE_WORD_PHRASE: DB_DIR_LANGUAGE_WORD_PHRASE.replace("\\", "/"),
+        DatabaseType.LANGUAGE_WORD_PHRASE: DB_DIR_LANGUAGE_WORD_PHRASE.replace(
+            "\\", "/"
+        ),
         DatabaseType.KNOWLEDGE: DB_DIR_KNOWLEDGE.replace("\\", "/"),
     }
     canonical = canon_dirs.get(db_type, "")
@@ -71,13 +73,17 @@ def _open_and_infer_type(
     return infer(db_path)
 
 
-def build_db_menu(owner, parent_menu, *, find=find_databases, infer=_open_and_infer_type):
+def build_db_menu(
+    owner, parent_menu, *, find=find_databases, infer=_open_and_infer_type
+):
     """Populate *parent_menu* with the owner's catalogued databases."""
     settings = getattr(owner, "settings", None) or {}
     entries = []
     for display, full_path in find(get_database_root(settings)):
         db_type = infer(full_path)
-        entries.append((_compute_display_path(full_path, db_type, display), full_path, db_type))
+        entries.append(
+            (_compute_display_path(full_path, db_type, display), full_path, db_type)
+        )
 
     tree = build_catalog_tree(entries)
     current_path = getattr(owner, "current_db_path", None)
@@ -95,7 +101,9 @@ def build_db_menu(owner, parent_menu, *, find=find_databases, infer=_open_and_in
                 menu.addMenu(submenu)
             else:
                 db_path, _db_type = value
-                action = menu.addAction(f"{'● ' if db_path == current_path else ''}{name}")
+                action = menu.addAction(
+                    f"{'● ' if db_path == current_path else ''}{name}"
+                )
                 action.setData(db_path)
         return menu
 
@@ -121,7 +129,9 @@ def _expand_to_path(menu, target_path):
                 menu.setActiveAction(action)
                 QTimer.singleShot(
                     20,
-                    lambda submenu=action.menu(), path=target_path: _expand_to_path(submenu, path),
+                    lambda submenu=action.menu(), path=target_path: _expand_to_path(
+                        submenu, path
+                    ),
                 )
                 return
         elif action.data() == target_path:

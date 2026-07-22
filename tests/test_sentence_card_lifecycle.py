@@ -54,9 +54,7 @@ def _start_membership_worker(monkeypatch, dialog):
 
     worker = _ControllableWorker()
     monkeypatch.setattr(dialog_module, "_create_ai_worker", lambda *_args: worker)
-    dialog._start_membership_ai_check(
-        "I went home.", ["go"], ["go"], SimpleNamespace()
-    )
+    dialog._start_membership_ai_check("I went home.", ["go"], ["go"], SimpleNamespace())
     return worker
 
 

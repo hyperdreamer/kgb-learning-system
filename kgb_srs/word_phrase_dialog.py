@@ -53,9 +53,14 @@ class WordPhraseCardDialog(QDialog):
          - At most MAX_WORD_PHRASE_MEANINGS tabs exist.
     """
 
-    def __init__(self, parent=None, title="Add Word/Phrase",
-                 front="", meanings_data=None,
-                 settings: dict | None = None):
+    def __init__(
+        self,
+        parent=None,
+        title="Add Word/Phrase",
+        front="",
+        meanings_data=None,
+        settings: dict | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(540, 460)
@@ -216,11 +221,13 @@ class WordPhraseCardDialog(QDialog):
         page_layout.addWidget(example_edit, stretch=1)
 
         tab_index = self._meanings_tabs.addTab(page, "")
-        self._meaning_rows.append({
-            "meaning_edit": meaning_edit,
-            "example_edit": example_edit,
-            "page": page,
-        })
+        self._meaning_rows.append(
+            {
+                "meaning_edit": meaning_edit,
+                "example_edit": example_edit,
+                "page": page,
+            }
+        )
         self._rebuild_tab_labels()
         self._meanings_tabs.setCurrentIndex(tab_index)
         self._update_meaning_controls()
@@ -359,7 +366,8 @@ class WordPhraseCardDialog(QDialog):
         else:
             self._generate_btn.setEnabled(False)
             self._ai_status.setText(
-                "AI not configured — set API key under Settings → AI Providers.")
+                "AI not configured — set API key under Settings → AI Providers."
+            )
 
     # ------------------------------------------------------------------
     # AI generation (nonblocking)
@@ -380,8 +388,7 @@ class WordPhraseCardDialog(QDialog):
             return
 
         explanation = self._settings.get("explanation_language", "Chinese")
-        prompt = build_word_phrase_prompt(
-            front, explanation_language=explanation)
+        prompt = build_word_phrase_prompt(front, explanation_language=explanation)
 
         # Disable controls during generation
         self._set_controls_enabled(False)
@@ -391,6 +398,7 @@ class WordPhraseCardDialog(QDialog):
         self._ai_status.setStyleSheet("color: #666;")
 
         self._ai_worker = _create_ai_worker(ai_config, prompt)
+
         def on_finished(raw_text):
             try:
                 meanings = parse_word_phrase_meanings(raw_text)
@@ -497,24 +505,27 @@ class WordPhraseCardDialog(QDialog):
         front = self._front_edit.text().strip()
         if not front:
             QMessageBox.warning(
-                self, "Validation",
-                "Please enter a word or phrase (front) before saving."
+                self,
+                "Validation",
+                "Please enter a word or phrase (front) before saving.",
             )
             return
 
         rows = self._get_rows_data()
         if not rows:
             QMessageBox.warning(
-                self, "Validation",
+                self,
+                "Validation",
                 "Add at least one meaning with both a meaning text "
-                "and a non‑empty example sentence."
+                "and a non‑empty example sentence.",
             )
             return
 
         if any(not meaning or not example for meaning, example in rows):
             QMessageBox.warning(
-                self, "Validation",
-                "Every non-empty meaning must contain both a meaning and an example."
+                self,
+                "Validation",
+                "Every non-empty meaning must contain both a meaning and an example.",
             )
             return
 

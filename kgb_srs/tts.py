@@ -59,19 +59,23 @@ class TTSWorker(QThread):
 class VoiceListWorker(QThread):
     """Background worker that fetches the list of available Edge TTS voices."""
 
-    voices_ready = pyqtSignal(list)  # emits list of (ShortName, Locale, Gender, FriendlyName)
+    voices_ready = pyqtSignal(
+        list
+    )  # emits list of (ShortName, Locale, Gender, FriendlyName)
     error = pyqtSignal(str)
 
     async def _fetch(self):
         voices = await edge_tts.list_voices()
         result = []
         for v in voices:
-            result.append((
-                v["ShortName"],
-                v["Locale"],
-                v.get("Gender", ""),
-                v.get("FriendlyName", v["ShortName"]),
-            ))
+            result.append(
+                (
+                    v["ShortName"],
+                    v["Locale"],
+                    v.get("Gender", ""),
+                    v.get("FriendlyName", v["ShortName"]),
+                )
+            )
         return result
 
     def run(self):

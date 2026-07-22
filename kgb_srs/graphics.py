@@ -15,11 +15,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import (
-    QColor, QBrush, QPen, QPainterPath, QIcon, QDesktopServices,
+    QColor,
+    QBrush,
+    QPen,
+    QPainterPath,
+    QIcon,
+    QDesktopServices,
 )
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
+
     try:
         from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     except ImportError:
@@ -54,7 +60,11 @@ class ReviewCardNavigationPolicy:
     def should_open_externally(cls, url: QUrl | str) -> bool:
         """Return whether *url* is an HTTP(S) link suitable for the desktop."""
         parsed = QUrl(cls._url_text(url))
-        return parsed.isValid() and parsed.scheme().lower() in cls.EXTERNAL_SCHEMES and bool(parsed.host())
+        return (
+            parsed.isValid()
+            and parsed.scheme().lower() in cls.EXTERNAL_SCHEMES
+            and bool(parsed.host())
+        )
 
     @classmethod
     def allows_embedded_navigation(cls, url: QUrl | str) -> bool:
@@ -71,6 +81,7 @@ def route_review_card_link(url: QUrl | str, opener=QDesktopServices.openUrl) -> 
 
 
 if QWebEnginePage is not None:
+
     class ReviewCardWebPage(QWebEnginePage):
         """Display-only page which delegates user links to the desktop."""
 
@@ -92,20 +103,25 @@ def configure_review_web_view(web_view) -> None:
         return
     settings = web_view.settings()
     settings.setAttribute(
-        QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False,
+        QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls,
+        False,
     )
     settings.setAttribute(
-        QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, False,
+        QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls,
+        False,
     )
     settings.setAttribute(
-        QWebEngineSettings.WebAttribute.JavascriptEnabled, False,
+        QWebEngineSettings.WebAttribute.JavascriptEnabled,
+        False,
     )
 
 
 # ── Reusable button stylesheet helper ────────────────────────────────────────
 
-def _button_stylesheet(object_name, base_color, hover_color, pressed_color,
-                       font_fam, font_sz, dyn_pad):
+
+def _button_stylesheet(
+    object_name, base_color, hover_color, pressed_color, font_fam, font_sz, dyn_pad
+):
     """Return a full QPushButton stylesheet covering normal, hover, pressed,
     and disabled states."""
     shared = (
@@ -174,7 +190,9 @@ class DropZoneItem(QGraphicsRectItem):
 
         brush = self._brush_dim if self._hovered else self._brush
         painter.fillPath(path, brush)
-        painter.setPen(self._pen if self._hovered else QPen(self._pen.color().darker(120), 2))
+        painter.setPen(
+            self._pen if self._hovered else QPen(self._pen.color().darker(120), 2)
+        )
         painter.drawPath(path)
 
         # let text paint via child item
@@ -248,8 +266,13 @@ class FlashCardItem(QGraphicsRectItem):
         self.tts_btn.setToolTip("Speak this card (Alt+L)")
         self.tts_btn.setStyleSheet(
             _button_stylesheet(
-                "ttsBtn", "#9C27B0", "#AB47BC", "#8E24AA",
-                font_fam, font_sz, dyn_pad,
+                "ttsBtn",
+                "#9C27B0",
+                "#AB47BC",
+                "#8E24AA",
+                font_fam,
+                font_sz,
+                dyn_pad,
             )
         )
         self.tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -260,8 +283,13 @@ class FlashCardItem(QGraphicsRectItem):
         self.flip_btn.setToolTip("Reveal the answer (Alt+R)")
         self.flip_btn.setStyleSheet(
             _button_stylesheet(
-                "revealBtn", "#2196F3", "#42A5F5", "#1E88E5",
-                font_fam, font_sz, dyn_pad,
+                "revealBtn",
+                "#2196F3",
+                "#42A5F5",
+                "#1E88E5",
+                font_fam,
+                font_sz,
+                dyn_pad,
             )
         )
         self.flip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -288,7 +316,9 @@ class FlashCardItem(QGraphicsRectItem):
         super().paint(painter, option, widget)
 
         painter.save()
-        painter.setPen(QPen(QColor("#bbbbbb"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setPen(
+            QPen(QColor("#bbbbbb"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        )
         grip_w = 40
         grip_x = -grip_w / 2
         grip_y = -self.rect().height() / 2 + 10

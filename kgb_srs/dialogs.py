@@ -14,7 +14,13 @@ from PyQt6.QtWidgets import (
 class DynamicInputDialog(QDialog):
     """Resizable text input dialog for front/back content with Markdown/Math support."""
 
-    def __init__(self, parent=None, title="Input Dialog", label_text="Enter text:", initial_text=""):
+    def __init__(
+        self,
+        parent=None,
+        title="Input Dialog",
+        label_text="Enter text:",
+        initial_text="",
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.text_value = None
@@ -40,7 +46,9 @@ class DynamicInputDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("OK")
-        ok_btn.setStyleSheet("background-color: #ccffcc; font-weight: bold; padding: 10px;")
+        ok_btn.setStyleSheet(
+            "background-color: #ccffcc; font-weight: bold; padding: 10px;"
+        )
         ok_btn.clicked.connect(self.accept_input)
 
         cancel_btn = QPushButton("Cancel")
