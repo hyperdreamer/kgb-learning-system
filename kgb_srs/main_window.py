@@ -731,18 +731,19 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
 
         target_dir = os.path.dirname(path)
-        os.makedirs(target_dir, exist_ok=True)
-
-        if os.path.exists(path):
-            QMessageBox.warning(
-                self,
-                "Exists",
-                f"A database named '{name}' already exists in this location.",
-            )
-            return
-
-        conn = init_db(path)
+        conn = None
         try:
+            os.makedirs(target_dir, exist_ok=True)
+
+            if os.path.exists(path):
+                QMessageBox.warning(
+                    self,
+                    "Exists",
+                    f"A database named '{name}' already exists in this location.",
+                )
+                return
+
+            conn = init_db(path)
             write_database_type(conn, db_type)
             if db_type == DatabaseType.LANGUAGE_SENTENCE:
                 from .schema import ensure_sentence_schema
@@ -758,8 +759,16 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                         f"Word/phrase projection creation failed: {exc}",
                         file=sys.stderr,
                     )
+        except (OSError, sqlite3.Error) as exc:
+            QMessageBox.warning(
+                self,
+                "Database Creation Failed",
+                f"Could not create database '{name}':\n{path}\n\n{exc}",
+            )
+            return
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
         display = os.path.join(subdir, name)
 
