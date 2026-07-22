@@ -288,6 +288,55 @@ class TestValidateUnfamiliarItems:
         assert not surface_form_in_sentence("He has gone home.", "went")
         assert not surface_form_in_sentence("The cargo ship left.", "go")
 
+    def test_punctuated_ai_surface_rejects_embedded_substring(self):
+        from kgb_srs.ai_parser import MembershipClaim
+        from kgb_srs.validation import (
+            apply_ai_membership_claims,
+            surface_form_in_sentence,
+        )
+
+        assert not surface_form_in_sentence("cargo.", "go.")
+
+        result = apply_ai_membership_claims(
+            "cargo.",
+            ["go"],
+            [MembershipClaim("go", True, "go.")],
+        )
+
+        assert result.valid is False
+        assert result.missing == ["go"]
+
+    def test_punctuated_ai_surface_rejects_digit_adjacent_substring(self):
+        from kgb_srs.validation import surface_form_in_sentence
+
+        assert not surface_form_in_sentence("2go.", "go.")
+
+    def test_punctuated_ai_surface_accepts_whole_token(self):
+        from kgb_srs.ai_parser import MembershipClaim
+        from kgb_srs.validation import (
+            apply_ai_membership_claims,
+            surface_form_in_sentence,
+        )
+
+        assert surface_form_in_sentence("I go.", "go.")
+
+        result = apply_ai_membership_claims(
+            "I go.",
+            ["go"],
+            [MembershipClaim("go", True, "go.")],
+        )
+
+        assert result.valid is True
+        assert result.missing == []
+        assert result.accepted_surfaces["go"] == "go."
+
+    def test_surface_form_matching_keeps_existing_literal_paths(self):
+        from kgb_srs.validation import surface_form_in_sentence
+
+        assert surface_form_in_sentence("We go home.", "go home")
+        assert surface_form_in_sentence("non-staple foods", "staple")
+        assert surface_form_in_sentence("漢字かな", "字か")
+
     def test_apply_ai_membership_claims_requires_real_surface(self):
         from kgb_srs.validation import apply_ai_membership_claims
         from kgb_srs.ai_parser import MembershipClaim

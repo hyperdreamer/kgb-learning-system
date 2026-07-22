@@ -30,6 +30,10 @@ Toolbar font styling uses guarded widget access because controls are created inc
 
 Selecting a missing, unreadable, or corrupt database currently replaces the selected path and closes the active connection before candidate initialization completes. A failure then clears the working database and review state. A safe fix needs a two-phase candidate-open/adopt design so the old connection, labels, and review session remain intact until the candidate is fully initialized; this crosses migration and session ownership and is deferred to avoid state mixing or connection leaks.
 
+### Previous navigation can requeue already graded cards
+
+`ReviewController._previous_daily_card()` restores a prior graded card as the current card, and the subsequent Next action currently treats it as an ungraded skip and appends it to `cards_due`. This can show and grade the same card twice in one daily session. A safe repair requires history entries to retain explicit `skipped` versus `graded` transition metadata through Previous, pause/resume, restart, and session reset. Changing this navigation/state contract without that model risks breaking the valid Next → Previous → Next path for ungraded cards, so it is deferred until the behavior and regression matrix are designed and tested together.
+
 ### `kgb_srs.forms` private legacy exports
 
 `_AIGenerateWorker` and `_apply_ui_font` remain available through `kgb_srs.forms` for existing callers and monkeypatch-based tests. New code should import them from `kgb_srs.form_helpers`. Removing the facade exports requires a documented deprecation cycle and compatibility migration.

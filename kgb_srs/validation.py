@@ -683,7 +683,22 @@ def surface_form_in_sentence(sentence: str, surface: str) -> bool:
     norm_surface = normalize_sentence(surface)
     if not norm_surface:
         return False
-    # Multi-word or punct-bearing: literal substring after escape.
+    stripped_surface = norm_surface.strip(_PUNCT_STRIP)
+    if stripped_surface != norm_surface and re.fullmatch(
+        r"[a-z]+(?: [a-z]+)*", stripped_surface
+    ):
+        start = norm_sentence.find(norm_surface)
+        while start != -1:
+            end = start + len(norm_surface)
+            left_is_alphanumeric = start > 0 and norm_sentence[start - 1].isalnum()
+            right_is_alphanumeric = (
+                end < len(norm_sentence) and norm_sentence[end].isalnum()
+            )
+            if not left_is_alphanumeric and not right_is_alphanumeric:
+                return True
+            start = norm_sentence.find(norm_surface, start + 1)
+        return False
+    # Multi-word or other punct-bearing surfaces: literal substring after escape.
     if " " in norm_surface or not re.fullmatch(r"[a-z]+", norm_surface):
         return _literal_find(norm_surface, norm_sentence)
     # Single alphabetic token: whole-token or hyphen-segment only.
