@@ -8,8 +8,9 @@ All notable changes to the KGB 5-Box SRS System are documented here.
 
 - Remember the **All cards** review selection separately for each database,
   matching the existing **Shuffle** behavior.
-- Add natural TTS pauses between card fields and each sentence-card
-  expression/meaning entry when the content lacks terminal punctuation.
+- Add natural TTS pauses between card fields, each sentence-card
+  expression/meaning entry, and each word/phrase definition/example when the
+  content lacks terminal punctuation.
 
 ### Security and Reliability
 

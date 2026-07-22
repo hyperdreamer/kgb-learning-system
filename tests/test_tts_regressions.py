@@ -72,6 +72,121 @@ class TestTtsRegressions:
         finally:
             conn.close()
 
+    def test_word_phrase_card_tts_pauses_between_senses_and_examples(self):
+        _qt_app()
+        from types import SimpleNamespace
+
+        from kgb_srs.catalog import DatabaseType
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
+        from kgb_srs.tts import prepare_tts_text
+
+        class CapturingCard:
+            def set_text(self, display_text, is_flipped, speech_text):
+                self.display_text = display_text
+                self.is_flipped = is_flipped
+                self.speech_text = speech_text
+
+        senses = [
+            Sense(
+                1,
+                "bank",
+                "a financial institution",
+                "bank",
+                "a financial institution",
+            ),
+            Sense(
+                2,
+                "bank",
+                "the side of a river",
+                "bank",
+                "the side of a river",
+            ),
+        ]
+        back = build_word_phrase_back_from_senses(
+            senses,
+            {
+                1: ["I deposited money at the bank."],
+                2: ["We sat by the bank of the river."],
+            },
+        )
+        card = CapturingCard()
+        window = SimpleNamespace(
+            current_card=(1, "bank", back, 1),
+            _db_type=DatabaseType.LANGUAGE_WORD_PHRASE,
+            card_ui=card,
+        )
+        window._build_word_phrase_card_display = (
+            BarskyApp._build_word_phrase_card_display.__get__(window)
+        )
+
+        BarskyApp.flip_card(window)
+
+        assert prepare_tts_text(card.speech_text) == (
+            "bank.\n"
+            "a financial institution.\n"
+            "I deposited money at the bank.\n"
+            "the side of a river.\n"
+            "We sat by the bank of the river."
+        )
+
+    def test_redrawn_word_phrase_card_keeps_tts_pauses(self, monkeypatch):
+        _qt_app()
+        from types import SimpleNamespace
+
+        import kgb_srs.review_controller as review_controller
+        from kgb_srs.catalog import DatabaseType
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.tts import prepare_tts_text
+
+        class CapturingCard:
+            def __init__(self, *_args):
+                self.speech_text = ""
+
+            def set_text(self, _display_text, _is_flipped, speech_text):
+                self.speech_text = speech_text
+
+        class FakeScene:
+            def width(self):
+                return 900
+
+            def height(self):
+                return 700
+
+            def addItem(self, _item):
+                return None
+
+        back = (
+            "1. a financial institution\n\n"
+            "    > *I deposited money at the **bank**.*\n\n"
+            "> \n\n"
+            "2. the side of a river\n\n"
+            "    > *We sat by the **bank** of the river.*"
+        )
+        window = SimpleNamespace(
+            current_card=(1, "bank", back, 1),
+            is_current_flipped=True,
+            _db_type=DatabaseType.LANGUAGE_WORD_PHRASE,
+            scene=FakeScene(),
+            _zone_y=600,
+            card_ui=None,
+            _update_button_visibility=lambda: None,
+        )
+        window._build_word_phrase_card_display = (
+            BarskyApp._build_word_phrase_card_display.__get__(window)
+        )
+        monkeypatch.setattr(review_controller, "FlashCardItem", CapturingCard)
+
+        BarskyApp.draw_card_ui(window)
+
+        assert prepare_tts_text(window.card_ui.speech_text) == (
+            "bank.\n"
+            "a financial institution.\n"
+            "I deposited money at the bank.\n"
+            "the side of a river.\n"
+            "We sat by the bank of the river."
+        )
+
     def test_generate_audio_sends_paused_segments_to_edge_tts(
         self, tmp_path, monkeypatch
     ):

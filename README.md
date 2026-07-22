@@ -240,7 +240,7 @@ Other chrome shortcuts: **Alt+N** Add Entry, **Alt+,** Settings.
 
 ### 6. Text-to-Speech 🔊
 
-TTS reads the sentence (front) and back content when flipped. It automatically adds a terminal pause after any unpunctuated card field or sentence-card expression/meaning entry, so words and phrases are spoken separately. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample from a list row, then save the selected Edge TTS voice. The language filter is remembered with your settings.
+TTS reads the card front and revealed back content. It automatically adds a terminal pause after any unpunctuated card field, sentence-card expression/meaning entry, or word/phrase dictionary meaning/example, so each review item is spoken separately. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample from a list row, then save the selected Edge TTS voice. The language filter is remembered with your settings.
 
 ### 7. Settings
 

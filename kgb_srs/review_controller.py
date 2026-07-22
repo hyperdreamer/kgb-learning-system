@@ -44,6 +44,12 @@ def _sentence_card_speech_text(conn, card_id, sentence) -> str:
     )
 
 
+def _word_phrase_card_speech_text(front, back) -> str:
+    """Build word/phrase TTS text with each sense line as a speech segment."""
+    back_lines = (line.lstrip() for line in (back or "").splitlines())
+    return _card_speech_text(front, *back_lines)
+
+
 class ReviewHistoryEntry(NamedTuple):
     """A card left behind during review and the transition that left it."""
 
@@ -530,6 +536,7 @@ class ReviewControllerMixin:
                 display_md = self._build_word_phrase_card_display(
                     front, back, flipped=True, metadata=metadata_md
                 )
+                spoken_text = _word_phrase_card_speech_text(front, back)
             else:
                 display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
 
@@ -615,6 +622,7 @@ class ReviewControllerMixin:
             display_md = self._build_word_phrase_card_display(
                 front, back, flipped=True, metadata=metadata_md
             )
+            spoken_text = _word_phrase_card_speech_text(front, back)
         else:
             display_md = f"{metadata_md}\n\n{front}\n\n---\n\n{back}"
 
