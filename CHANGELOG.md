@@ -2,6 +2,19 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [2.2.1] — 2026-07-22
+
+### Documentation and Licensing
+
+- Adopted the GNU General Public License version 3 only (`GPL-3.0-only`);
+  the complete license text is included in [LICENSE](LICENSE).
+- Documented the optional PyQt WebEngine and headless multimedia test
+  environment limitations for future release validation.
+
+### Maintenance
+
+- Formatted Python sources and tests with Ruff.
+
 ## [2.2.0] — 2026-07-22
 
 ### Changes
