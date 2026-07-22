@@ -147,6 +147,127 @@ class TestTtsTempCleanup:
         assert window._tts_temp_path == str(new)
         assert new.exists()
 
+    def test_second_speak_stops_playback_before_cleaning_previous_audio(
+        self, monkeypatch
+    ):
+        _qt_app()
+        from types import SimpleNamespace
+        from PyQt6.QtCore import QObject, pyqtSignal
+        import kgb_srs.main_window as mw
+        import kgb_srs.tts as tts
+
+        first_audio = "/tmp/barsky_tts_first.mp3"
+        second_audio = "/tmp/barsky_tts_second.mp3"
+        events = []
+
+        class FakeWorker(QObject):
+            audio_ready = pyqtSignal(str)
+            error = pyqtSignal(str)
+            finished = pyqtSignal()
+            paths = iter((first_audio, second_audio))
+
+            def __init__(self, *_args):
+                super().__init__()
+
+            def start(self):
+                self.audio_ready.emit(next(self.paths))
+                self.finished.emit()
+
+            def deleteLater(self):
+                return None
+
+            def isRunning(self):
+                return False
+
+        class FakePlayer:
+            def setSource(self, *_args):
+                return None
+
+            def play(self):
+                return None
+
+            def stop(self):
+                events.append(("stop", None))
+
+        monkeypatch.setattr(mw, "TTSWorker", FakeWorker)
+        monkeypatch.setattr(
+            tts,
+            "unlink_tts_temp",
+            lambda path: events.append(("cleanup", path)) or None,
+        )
+
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=None,
+            settings={"tts_voice": "en-US-AvaMultilingualNeural"},
+            player=FakePlayer(),
+        )
+        window._stop_tts_playback = mw.BarskyApp._stop_tts_playback.__get__(
+            window, type(window)
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        button = SimpleNamespace()
+        button.setEnabled = lambda _value: None
+        button.setText = lambda _text: None
+
+        mw.BarskyApp.speak_text(window, "first", button)
+        events.clear()
+        mw.BarskyApp.speak_text(window, "second", button)
+
+        assert events[:2] == [("stop", None), ("cleanup", first_audio)]
+
+    def test_immediate_close_stops_playback_before_cleaning_audio(self, monkeypatch):
+        _qt_app()
+        from types import SimpleNamespace
+        import kgb_srs.main_window as mw
+        import kgb_srs.tts as tts
+
+        audio_path = "/tmp/barsky_tts_playing.mp3"
+        events = []
+
+        class FakePlayer:
+            def stop(self):
+                events.append(("stop", None))
+
+        class Event:
+            accepted = False
+
+            def accept(self):
+                self.accepted = True
+
+            def ignore(self):
+                raise AssertionError("an idle TTS close must not be deferred")
+
+        monkeypatch.setattr(
+            tts,
+            "unlink_tts_temp",
+            lambda path: events.append(("cleanup", path)) or None,
+        )
+        window = SimpleNamespace(
+            tts_worker=None,
+            _tts_temp_path=audio_path,
+            settings={},
+            current_db_path=None,
+            player=FakePlayer(),
+            width=lambda: 800,
+            height=lambda: 600,
+            _save_settings=lambda: None,
+        )
+        window._stop_tts_playback = mw.BarskyApp._stop_tts_playback.__get__(
+            window, type(window)
+        )
+        window._cleanup_tts_temp = mw.BarskyApp._cleanup_tts_temp.__get__(
+            window, type(window)
+        )
+        event = Event()
+
+        mw.BarskyApp.closeEvent(window, event)
+
+        assert event.accepted
+        assert events == [("stop", None), ("cleanup", audio_path)]
+
     def test_late_tts_audio_for_replaced_card_is_unlinked_without_playback(
         self, tmp_path, monkeypatch
     ):

@@ -219,6 +219,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         except OSError as exc:
             print(f"Could not save settings: {exc}", file=sys.stderr)
 
+        self._stop_tts_playback()
         self._cleanup_tts_temp()
         event.accept()
 
@@ -1031,6 +1032,13 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # ------------------------------------------------------------------
     # TTS
     # ------------------------------------------------------------------
+    def _stop_tts_playback(self):
+        """Stop TTS playback before removing its source file."""
+        player = getattr(self, "player", None)
+        stop = getattr(player, "stop", None)
+        if stop is not None:
+            stop()
+
     def _cleanup_tts_temp(self):
         """Best-effort unlink of the last generated TTS temp MP3."""
         from .tts import unlink_tts_temp
@@ -1067,6 +1075,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             return
 
         # Drop the previous temp file before generating a new one.
+        BarskyApp._stop_tts_playback(self)
         self._cleanup_tts_temp()
 
         btn.setEnabled(False)
