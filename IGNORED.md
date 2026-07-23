@@ -34,13 +34,6 @@ diagnostic, not a failing application check. Validate real audio playback on a
 workstation with the intended FFmpeg/media backend before releasing a TTS or
 multimedia change.
 
-### Dependency vulnerability scanner unavailable
-
-`pip-audit` is not installed in the current audit environment. It was not
-installed or added to project dependencies during this maintenance pass. Run
-`pip-audit -r requirements.txt` in a prepared security environment before a
-release.
-
 ### Chromium extension runtime validation
 
 No Chromium-family executable is available in the current audit environment.
