@@ -86,8 +86,10 @@ class TestReviewPresentationRegressions:
             "ami",
         ]
 
-    def test_sentence_card_display_orders_and_numbers_meanings(self, tmp_path):
-        """Review back: bold both surfaces; number multi-item meanings in sentence order."""
+    def test_sentence_card_display_orders_and_labels_meanings_without_list_gutter(
+        self, tmp_path
+    ):
+        """Review back uses flush manual labels in sentence order."""
         _qt_app()
         import sqlite3
         from types import SimpleNamespace
@@ -124,13 +126,14 @@ class TestReviewPresentationRegressions:
         )
         assert "**Grievance**" in md
         assert "**Exacted**" in md
-        # Meanings ordered by sentence appearance, numbered, separate blocks.
-        assert "1. **grievance**:" in md
-        assert "2. **exact**:" in md
-        g_pos = md.index("1. **grievance**:")
-        e_pos = md.index("2. **exact**:")
+        # Meanings ordered by sentence appearance, visibly labeled, and separate.
+        # Escaping the label's period avoids a Markdown ordered-list gutter.
+        assert "1\\. **grievance**:" in md
+        assert "2\\. **exact**:" in md
+        g_pos = md.index("1\\. **grievance**:")
+        e_pos = md.index("2\\. **exact**:")
         assert g_pos < e_pos
-        # Separate lines / blocks (blank line between numbered entries).
+        # Separate lines / blocks (blank line between labeled entries).
         between = md[g_pos:e_pos]
         assert "\n\n" in between
         conn.close()
@@ -192,8 +195,8 @@ class TestReviewPresentationRegressions:
             BarskyApp.flip_card(window)
 
             assert card.display_text.index(
-                "1. **grievance**:"
-            ) < card.display_text.index("2. **exact**:")
+                "1\\. **grievance**:"
+            ) < card.display_text.index("2\\. **exact**:")
             assert card.speech_text.index("grievance:") < card.speech_text.index(
                 "exact:"
             )
@@ -247,8 +250,8 @@ class TestReviewPresentationRegressions:
             BarskyApp.draw_card_ui(window)
 
             assert window.card_ui.display_text.index(
-                "1. **grievance**:"
-            ) < window.card_ui.display_text.index("2. **exact**:")
+                "1\\. **grievance**:"
+            ) < window.card_ui.display_text.index("2\\. **exact**:")
             assert window.card_ui.speech_text.index(
                 "grievance:"
             ) < window.card_ui.speech_text.index("exact:")

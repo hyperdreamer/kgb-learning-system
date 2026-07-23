@@ -46,15 +46,22 @@ _REVIEW_SAFE_ITALIC_STYLE_RE = re.compile(
     r"(?:^|;)\s*font-style\s*:\s*italic\s*(?:;|$)",
     flags=re.IGNORECASE,
 )
-# QTextDocument emits a nested Markdown quote with this fixed pair of
-# properties. Keeping only the canonical pair gives word/phrase examples a
-# wrapping block indent while arbitrary user-provided CSS remains discarded.
+# QTextDocument emits a 40px left margin for Markdown quotes. Preserve only
+# that canonical quote format (with either relevant Qt block-indent value), so
+# examples remain subordinate without retaining arbitrary user CSS.
 _REVIEW_SAFE_QT_BLOCK_INDENT_RE = re.compile(
-    r"(?:^|;)\s*-qt-block-indent\s*:\s*1\s*(?:;|$)",
+    r"(?:^|;)\s*-qt-block-indent\s*:\s*(?P<indent>[01])\s*(?:;|$)",
     flags=re.IGNORECASE,
 )
 _REVIEW_SAFE_QT_INDENT_MARGIN_RE = re.compile(
     r"(?:^|;)\s*margin-left\s*:\s*40px\s*(?:;|$)",
+    flags=re.IGNORECASE,
+)
+# This is the sole non-emphasis color emitted by the application: word/phrase
+# meanings. Exact matching prevents arbitrary user-authored colors from
+# surviving review-card sanitization.
+_REVIEW_SAFE_WORD_PHRASE_MEANING_COLOR_RE = re.compile(
+    r"(?:^|;)\s*color\s*:\s*#d32f2f\s*(?:;|$)",
     flags=re.IGNORECASE,
 )
 _REVIEW_URL_ATTRIBUTE_RE = re.compile(
@@ -97,10 +104,13 @@ def sanitize_review_html_fragment(fragment: str) -> str:
             safe_declarations.append("font-weight: 700")
         if _REVIEW_SAFE_ITALIC_STYLE_RE.search(style_value):
             safe_declarations.append("font-style: italic")
-        if _REVIEW_SAFE_QT_BLOCK_INDENT_RE.search(
-            style_value
-        ) and _REVIEW_SAFE_QT_INDENT_MARGIN_RE.search(style_value):
-            safe_declarations.extend(("margin-left: 40px", "-qt-block-indent: 1"))
+        if _REVIEW_SAFE_WORD_PHRASE_MEANING_COLOR_RE.search(style_value):
+            safe_declarations.append("color: #D32F2F")
+        quote_indent = _REVIEW_SAFE_QT_BLOCK_INDENT_RE.search(style_value)
+        if quote_indent and _REVIEW_SAFE_QT_INDENT_MARGIN_RE.search(style_value):
+            safe_declarations.extend(
+                ("margin-left: 40px", f"-qt-block-indent: {quote_indent['indent']}")
+            )
         if not safe_declarations:
             return ""
         return f' style="{"; ".join(safe_declarations)};"'
