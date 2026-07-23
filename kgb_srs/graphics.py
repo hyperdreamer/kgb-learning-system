@@ -4,6 +4,7 @@ These are QGraphicsItem subclasses for the canvas-based review UI.
 """
 
 import logging
+import re
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -13,7 +14,7 @@ from PyQt6.QtWidgets import (
     QGraphicsProxyWidget,
     QGraphicsTextItem,
     QGraphicsRectItem,
-    QTextEdit,
+    QTextBrowser,
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import (
@@ -23,6 +24,9 @@ from PyQt6.QtGui import (
     QPainterPath,
     QIcon,
     QDesktopServices,
+    QFont,
+    QTextCharFormat,
+    QTextCursor,
 )
 
 try:
@@ -40,10 +44,73 @@ except ImportError:
     QWebEngineSettings = None
     HAS_WEBENGINE = False
 
+from .catalog import DatabaseType
 from .markdown_utils import build_review_html
 
 
 logger = logging.getLogger(__name__)
+
+_SENTENCE_REVIEW_METADATA_RE = re.compile(
+    r"^Box\s+\d+\s*\|\s*ID:\s*\d+$", flags=re.IGNORECASE
+)
+_TTS_ANCHOR_PREFIX = "#barsky-tts-"
+
+
+def _append_bold_range(ranges, document, start, end) -> None:
+    """Append one non-empty document range and its visible speech text."""
+    cursor = QTextCursor(document)
+    cursor.setPosition(start)
+    cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+    speech_text = cursor.selectedText().strip()
+    if speech_text:
+        ranges.append((start, end, speech_text))
+
+
+def _sentence_review_bold_ranges(document) -> list[tuple[int, int, str]]:
+    """Return non-metadata bold ranges eligible for sentence-review TTS."""
+    ranges = []
+    block = document.begin()
+    while block.isValid():
+        if block.blockNumber() == 0 and _SENTENCE_REVIEW_METADATA_RE.fullmatch(
+            block.text().strip()
+        ):
+            block = block.next()
+            continue
+
+        run_start = None
+        run_end = None
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            iterator += 1
+            if not fragment.isValid():
+                continue
+
+            text_format = fragment.charFormat()
+            is_unlinked_bold = (
+                text_format.fontWeight() >= QFont.Weight.Bold.value
+                and not text_format.isAnchor()
+            )
+            fragment_start = fragment.position()
+            fragment_end = fragment_start + fragment.length()
+
+            if is_unlinked_bold:
+                if run_start is None:
+                    run_start, run_end = fragment_start, fragment_end
+                elif fragment_start == run_end:
+                    run_end = fragment_end
+                else:
+                    _append_bold_range(ranges, document, run_start, run_end)
+                    run_start, run_end = fragment_start, fragment_end
+            elif run_start is not None:
+                _append_bold_range(ranges, document, run_start, run_end)
+                run_start = run_end = None
+
+        if run_start is not None:
+            _append_bold_range(ranges, document, run_start, run_end)
+        block = block.next()
+
+    return ranges
 
 
 class ReviewCardNavigationPolicy:
@@ -235,6 +302,7 @@ class FlashCardItem(QGraphicsRectItem):
         super().__init__(-cw / 2, -ch / 2, cw, ch)
         self.app_ref = app_ref
         self.speech_text = ""
+        self._tts_anchor_text = {}
         self.setPos(cx, cy)
 
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable)
@@ -250,16 +318,20 @@ class FlashCardItem(QGraphicsRectItem):
 
         # The card is embedded through QGraphicsProxyWidget. QWebEngineView
         # uses a separate composited surface that is not reliably painted in
-        # that host, leaving an otherwise functional card blank. QTextEdit
-        # safely renders the generated HTML and its offline LaTeX fallback.
-        self.text_widget = QTextEdit()
+        # that host, leaving an otherwise functional card blank. QTextBrowser
+        # safely renders the generated HTML and provides explicit link signals
+        # without allowing links to replace the review content.
+        self.text_widget = QTextBrowser()
         self.text_widget.setReadOnly(True)
+        self.text_widget.setOpenLinks(False)
+        self.text_widget.setOpenExternalLinks(False)
         self.text_widget.setStyleSheet(
             "background-color: transparent; border: none; color: black;"
         )
         self.text_widget.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction
         )
+        self.text_widget.anchorClicked.connect(self._handle_text_link)
 
         self.btn_layout = QHBoxLayout()
 
@@ -339,6 +411,36 @@ class FlashCardItem(QGraphicsRectItem):
         if self.speech_text:
             self.app_ref.speak_text(self.speech_text, self.tts_btn)
 
+    def _handle_text_link(self, url):
+        """Speak internal sentence targets or route safe web links externally."""
+        speech_text = self._tts_anchor_text.get(url.toString())
+        if speech_text is not None:
+            self.app_ref.speak_text(speech_text, self.tts_btn)
+            return
+        route_review_card_link(url)
+
+    def _link_sentence_review_bold_text(self):
+        """Turn sentence-card bold words and phrases into local TTS anchors."""
+        self._tts_anchor_text = {}
+        if getattr(self.app_ref, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE:
+            return
+
+        document = self.text_widget.document()
+        for index, (start, end, speech_text) in enumerate(
+            _sentence_review_bold_ranges(document)
+        ):
+            href = f"{_TTS_ANCHOR_PREFIX}{index}"
+            self._tts_anchor_text[href] = speech_text
+
+            cursor = QTextCursor(document)
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            link_format = QTextCharFormat()
+            link_format.setAnchor(True)
+            link_format.setAnchorHref(href)
+            link_format.setToolTip(f'Listen to "{speech_text}"')
+            cursor.mergeCharFormat(link_format)
+
     def set_text(self, display_text, is_flipped, text_to_speak=""):
         if text_to_speak:
             self.speech_text = text_to_speak
@@ -353,6 +455,7 @@ class FlashCardItem(QGraphicsRectItem):
             include_mathjax=False,
         )
         self.text_widget.setHtml(html_template)
+        self._link_sentence_review_bold_text()
 
         if is_flipped:
             self.flip_btn.hide()

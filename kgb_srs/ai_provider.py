@@ -355,8 +355,9 @@ def build_word_phrase_prompt(
 
 
 _MEMBERSHIP_PROMPT_TEMPLATE = """\
-You check whether learner items appear in a sentence as the same words or
-as inflected / irregular surface forms (tense, number, participle, etc.).
+You check whether learner items appear in a sentence as the same words,
+as inflected / irregular surface forms (tense, number, participle, etc.), or
+as clear grammatical variants of an idiomatic expression.
 
 Sentence:
 {sentence}
@@ -370,8 +371,12 @@ Respond with JSON only:
 Rules:
 - The number of items MUST equal {count}.
 - Keep the same order as the list above.
-- found=true only if the item (or a clear inflection/irregular form of it)
-  appears as a consecutive span in the sentence.
+- found=true only if the item (or a clear inflection/irregular or
+  grammatical variant of it) appears as one consecutive span in the sentence.
+- Treat a copular idiom as found when its "be" verb is conjugated and a
+  degree modifier is inserted without changing the idiom's meaning. For
+  example, "be worse off" is found in "Our tribe is even worse off!";
+  return "is even worse off" as its surface.
 - When found=true, surface MUST be copied exactly from the sentence
   (same spelling as in the sentence, including that form's tense).
 - When found=false, surface must be "".

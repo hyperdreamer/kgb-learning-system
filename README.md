@@ -1,6 +1,6 @@
 # KGB 5-Box SRS System
 
-**Version 2.2.1**
+**Version 2.2.1-dev**
 
 A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
@@ -34,6 +34,16 @@ python -c "from kgb_srs import __version__; print(__version__)"
 
 ---
 
+## System Tray
+
+On desktop environments with system-tray support, KGB places its application
+icon in the tray while it is running. Closing the main window hides it there
+instead of stopping the application. Use the tray menu's **Show** action (or
+double-click the icon) to restore the window, and choose **Quit** from that menu
+to shut the application down completely.
+
+---
+
 ## Database Hierarchy
 
 Databases live under a configurable **database root** (default: project `db/`).
@@ -62,11 +72,11 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 - **Front**: The sentence only, with matched unfamiliar surface forms **bolded in place** (e.g. stored lemma `insist on` highlights surface `insists on`). No separate Unfamiliar bullet list on the front.
 - **Validation**: Every unfamiliar item must appear in the sentence (Unicode-safe, case-insensitive, whitespace-normalized). Literal match is tried first; if that fails, a local inflection-tolerant check accepts common tense/number forms and a comprehensive irregular-verb map (e.g. `insist on` ↔ `insists on`, `go` ↔ `went`/`gone`, `choose` ↔ `chose`/`chosen`). Multi-word phrases must still match consecutive tokens. Continuous scripts without spaces stay on the literal path. Regex metacharacters in items are treated as literal text. **AI is not used for the local path.** If Save still has residual misses and an AI provider is configured, the dialog may optionally ask AI only for those leftovers; any AI `found=true` claim must include a surface span that is re-verified to exist in the sentence.
-- **AI generation**: In-dialog nonblocking AI generation for the **selected** unfamiliar item only. A **Generate Meaning** button starts a background QThread with the sentence + that one expression; controls are disabled during generation; on completion, that item's meaning field is filled. Meanings are always **contextual to the sentence**. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor). Manual meaning edits remain available as a quiet escape hatch when AI is offline or a single meaning needs a fix. The Meaning panel shows only the currently selected list item (not every item at once).
-- **Review**: The front shows the sentence with target surface spans in bold. The back shows the same highlighted sentence, a horizontal rule, then each expression with its contextual meaning once (no bullet list; the derived `cards.back` cache is not re-appended).
-- **TTS**: Reads the sentence aloud.
+- **AI generation**: When AI is configured, adding an unfamiliar item (typed manually or copied with **Add selected text**) immediately starts nonblocking generation for that newly selected item. The **Generate Meaning** button can run generation again at any time; a successful result replaces the current generated or manually entered meaning, while a failed request leaves the current meaning unchanged. Generation uses a background QThread with the sentence + selected expression, with all mutable dialog controls disabled until completion. Meanings are always **contextual to the sentence**. Users can still type or edit meanings directly, including when AI is unavailable. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor). The Meaning panel shows only the currently selected list item (not every item at once).
+- **Review**: The front shows the sentence with target surface spans in bold. The back shows the same highlighted sentence, a horizontal rule, then each expression with its contextual meaning once (no bullet list; the derived `cards.back` cache is not re-appended). Every bold word or phrase in sentence review content is clickable and keyboard-accessible for focused pronunciation.
+- **TTS**: The **Listen** button reads the sentence/card content aloud; activating an individual bold word or phrase speaks only that target.
 - **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, optional `sense_id` FK to global `expression_senses`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). Global sense identity is `(expression_norm, meaning_norm)`. The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
-- **Sense inventory**: Generate Meaning asks AI to **reuse** a prior sense for the expression when it fits this sentence, or **create** a new sense. The meaning field is AI-primary (read-only); double-click unlocks rare manual repair.
+- **Sense inventory**: Generate Meaning asks AI to **reuse** a prior sense for the expression when it fits this sentence, or **create** a new sense. The meaning field is directly editable, and an edit clears any reused sense link so Save can resolve the entered meaning.
 - **Automatic Word/Phrase projection**: Creating a sentence DB (or opening an old one / starting the app) automatically creates and links a same-named read-only word/phrase DB under Word-Phrase-based. Unique `(expression, sense)` units are projected there; later sentence Saves re-sync it.
 - **Duplicate detection**: A new card with the same normalized sentence and same normalized ordered list of expressions triggers an edit-offer rather than a silent duplicate.
 - **Migration**: Existing databases without the `meaning` / `sense_id` columns are safely migrated on next open — `ALTER TABLE ADD COLUMN` and `expression_senses` creation are applied idempotently with no data loss.
@@ -123,9 +133,9 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 ### Sentence AI Workflow
 
 1. Create/open the **Add Sentence Card** dialog.
-2. Enter the sentence and unfamiliar items (type manually or use **Add selected text** to add highlighted text from the sentence).
-3. Select one item in the list. The **Meaning** panel shows only that item.
-4. Click **Generate Meaning** — AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense. The meaning field is AI-primary (read-only display); double-click unlocks rare manual repair.
+2. Enter the sentence, then add unfamiliar items by typing them or using **Add selected text** on highlighted sentence text. If AI is configured, each newly added item is selected and its meaning is generated immediately.
+3. Select any item in the list to show it in the **Meaning** panel.
+4. Type or edit a contextual meaning directly, or click **Generate Meaning** to regenerate it. AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense; a successful regeneration replaces the current generated or manual meaning, and a failed regeneration preserves it.
 5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
 6. **Save** runs membership + meaning checks. On failure the dialog stays open so you can fix or Cancel. Save is dimmed while the sentence or item list is empty.
 7. On success, Save commits the card with expression+meaning pairs linked to global senses.
@@ -136,7 +146,7 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 ## In-Dialog Features
 
 ### Add Selected Text
-The sentence dialog includes an **Add selected text** button. Highlight any text in the sentence editor and click it to add the selection as an unfamiliar item.
+The sentence dialog includes an **Add selected text** button. Highlight any text in the sentence editor and click it to add the selection as an unfamiliar item. With AI configured, adding the selection also starts contextual meaning generation automatically.
 
 ### Save-time validation
 There is no separate **Validate** button. **Save** is the only gate:
@@ -240,7 +250,7 @@ Other chrome shortcuts: **Alt+N** Add Entry, **Alt+,** Settings.
 
 ### 6. Text-to-Speech 🔊
 
-TTS reads the card front and revealed back content. It automatically adds a terminal pause after any unpunctuated card field, sentence-card expression/meaning entry, or word/phrase dictionary meaning/example, so each review item is spoken separately. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample from a list row, then save the selected Edge TTS voice. The language filter is remembered with your settings.
+TTS reads the card front and revealed back content. In sentence-based review, activate any bold word or phrase to hear only that target; the card metadata remains noninteractive. It automatically adds a terminal pause after any unpunctuated card field, sentence-card expression/meaning entry, or word/phrase dictionary meaning/example, so each review item is spoken separately. Choose a voice under **Settings → Audio & Speech**: filter by language and gender, search by name, preview a short sample from a list row, then save the selected Edge TTS voice. The language filter is remembered with your settings.
 
 ### 7. Settings
 
@@ -275,7 +285,7 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package (__version__ = 2.2.1)
+kgb_srs/                    # Python package (__version__ = 2.2.1-dev)
 ├── __init__.py
 ├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference

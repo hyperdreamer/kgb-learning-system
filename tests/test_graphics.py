@@ -144,8 +144,87 @@ def test_set_text_renders_unfamiliar_sentence_terms_in_bold(flashcard):
         assert cursor.charFormat().fontWeight() >= QFont.Weight.Bold.value
 
 
-def test_word_phrase_example_is_indented_below_its_sense(flashcard):
-    """A word/phrase example remains nested under its numbered meaning."""
+def test_sentence_review_bold_words_and_phrases_trigger_targeted_tts():
+    """Clickable bold review targets speak only the activated word or phrase."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QTextCursor
+    from PyQt6.QtTest import QTest
+
+    from kgb_srs.catalog import DatabaseType
+    from kgb_srs.graphics import FlashCardItem
+
+    class SpeechCapturingApp(_MockApp):
+        _db_type = DatabaseType.LANGUAGE_SENTENCE
+
+        def __init__(self):
+            self.spoken = []
+
+        def speak_text(self, text, button):
+            self.spoken.append((text, button))
+
+    app = QApplication.instance() or QApplication([])
+    mock = SpeechCapturingApp()
+    item = FlashCardItem(mock, 300, 200, 500, 320)
+    item.set_text(
+        "**Box 1** | ID: `22`\n\n"
+        "They aren't building **roads**; they are **tightening the noose**!\n\n"
+        "---\n\n**noose**: a loop tied at one end of a rope\n\n"
+        "**Box 1** | ID: 22",
+        is_flipped=True,
+    )
+
+    document = item.text_widget.document()
+    metadata = document.find("Box 1")
+    word = document.find("roads")
+    phrase = document.find("tightening the noose")
+    definition_term = document.find("noose", phrase.selectionEnd())
+    metadata_shaped_body_text = document.find("Box 1", metadata.selectionEnd())
+
+    assert not metadata.charFormat().isAnchor()
+    for cursor in (word, phrase, definition_term, metadata_shaped_body_text):
+        assert not cursor.isNull()
+        assert cursor.charFormat().isAnchor()
+        assert cursor.charFormat().anchorHref().startswith("#barsky-tts-")
+
+    click_cursor = QTextCursor(document)
+    click_cursor.setPosition(phrase.selectionStart() + 1)
+    item.text_widget.show()
+    app.processEvents()
+    QTest.mouseClick(
+        item.text_widget.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=item.text_widget.cursorRect(click_cursor).center(),
+    )
+    app.processEvents()
+
+    assert mock.spoken == [("tightening the noose", item.tts_btn)]
+
+    del item
+    app.processEvents()
+
+
+def test_bold_text_outside_sentence_review_is_not_repurposed_for_tts():
+    """Click-to-speak remains scoped to sentence-based review cards."""
+    from kgb_srs.catalog import DatabaseType
+    from kgb_srs.graphics import FlashCardItem
+
+    app = QApplication.instance() or QApplication([])
+    mock = _MockApp()
+    mock._db_type = DatabaseType.KNOWLEDGE
+    item = FlashCardItem(mock, 200, 150, 350, 200)
+    item.set_text("A **bold reference**", is_flipped=False)
+
+    bold_reference = item.text_widget.document().find("bold reference")
+
+    assert not bold_reference.isNull()
+    assert not bold_reference.charFormat().isAnchor()
+
+    del item
+    app.processEvents()
+
+
+def test_word_phrase_single_meaning_is_unindented_and_red(flashcard):
+    """A single word/phrase meaning is flush and visually distinct."""
     from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
 
     sense = Sense(
@@ -168,6 +247,10 @@ def test_word_phrase_example_is_indented_below_its_sense(flashcard):
 
     meaning_block = blocks["a metal fastener"]
     example_block = blocks["A bolt secures the door."]
+    assert meaning_block.textList() is None
+    assert meaning_block.blockFormat().leftMargin() == 0
+    meaning_cursor = flashcard.text_widget.document().find("a metal fastener")
+    assert meaning_cursor.charFormat().foreground().color().name().upper() == "#D32F2F"
     assert (
         example_block.blockFormat().leftMargin()
         > meaning_block.blockFormat().leftMargin()
@@ -204,7 +287,7 @@ def test_word_phrase_example_is_italic_without_losing_surface_bold(flashcard):
 
 
 def test_word_phrase_examples_keep_the_same_indent_for_each_sense(flashcard):
-    """Every example in a multi-sense word/phrase card aligns consistently."""
+    """Manual multi-sense labels leave meanings flush and examples aligned."""
     from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
 
     senses = [
@@ -238,13 +321,17 @@ def test_word_phrase_examples_keep_the_same_indent_for_each_sense(flashcard):
         blocks[block.text().strip()] = block
         block = block.next()
 
-    first_meaning = blocks["a financial institution"]
-    second_meaning = blocks["the side of a river"]
+    first_meaning = blocks["1. a financial institution"]
+    second_meaning = blocks["2. the side of a river"]
     first_example = blocks["I visited the bank."]
     second_example = blocks["The bank slopes steeply."]
     first_example_margin = first_example.blockFormat().leftMargin()
     second_example_margin = second_example.blockFormat().leftMargin()
 
+    assert first_meaning.textList() is None
+    assert second_meaning.textList() is None
+    assert first_meaning.blockFormat().leftMargin() == 0
+    assert second_meaning.blockFormat().leftMargin() == 0
     assert first_example_margin > first_meaning.blockFormat().leftMargin()
     assert second_example_margin > second_meaning.blockFormat().leftMargin()
     assert first_example_margin == second_example_margin

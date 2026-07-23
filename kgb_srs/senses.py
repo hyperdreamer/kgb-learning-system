@@ -400,12 +400,11 @@ def _highlight_expression_in_example(example: str, expression: str) -> str:
     return highlight_unfamiliar_in_sentence(text, [expr])
 
 
-# A nested Markdown quote gives examples a real block-level indent, including
-# wrapped lines, when QTextDocument renders the review card.
-_EXAMPLE_MARKDOWN_PREFIX = "    > "
-# An empty quote makes QTextDocument close each ordered list before the next
-# sense, preventing later examples from losing the first example's indent.
-_SENSE_SEPARATOR = "\n\n> \n\n"
+# A top-level Markdown quote gives examples a real block-level indent,
+# including wrapped lines, when QTextDocument renders the review card.
+_EXAMPLE_MARKDOWN_PREFIX = "> "
+_SENSE_SEPARATOR = "\n\n"
+_WORD_PHRASE_MEANING_COLOR = "#D32F2F"
 
 
 def build_word_phrase_back_from_senses(
@@ -414,23 +413,30 @@ def build_word_phrase_back_from_senses(
 ) -> str:
     """Render word/phrase card back text from senses + example sentences.
 
-    Layout per sense::
-
-        1. <meaning>
-
-            > *<example with **surface form** bolded>*
-
-    The nested quote makes the italic example a subordinate, block-indented
-    line under its meaning, including when the sentence wraps.
+    A lone sense has no redundant number. Multiple senses use escaped Markdown
+    labels instead of an ordered list, so their meanings remain flush with the
+    card content. The generated font color is whitelisted by the review HTML
+    sanitizer; examples stay italic and block-indented beneath each meaning.
     """
+    sense_list = list(senses)
+    show_numbers = len(sense_list) > 1
     parts: list[str] = []
-    for i, sense in enumerate(senses, 1):
+    for i, sense in enumerate(sense_list, 1):
         examples = []
         if examples_by_sense_id:
             examples = examples_by_sense_id.get(sense.id, [])
         example = examples[0] if examples else ""
         meaning = (sense.meaning or "").strip()
-        block = f"{i}. {meaning}" if meaning else f"{i}."
+        colored_meaning = (
+            f'<font color="{_WORD_PHRASE_MEANING_COLOR}">{meaning}</font>'
+            if meaning
+            else ""
+        )
+        if show_numbers:
+            # Escaping the period prevents Markdown from creating a list gutter.
+            block = f"{i}\\. {colored_meaning}" if meaning else f"{i}\\."
+        else:
+            block = colored_meaning
         if example:
             highlighted = _highlight_expression_in_example(example, sense.expression)
             block = f"{block}\n\n{_EXAMPLE_MARKDOWN_PREFIX}*{highlighted}*"

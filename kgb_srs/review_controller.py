@@ -2,6 +2,7 @@
 
 import datetime
 import random
+import re
 import sqlite3
 from typing import Literal, NamedTuple
 
@@ -42,9 +43,28 @@ def _sentence_card_speech_text(conn, card_id, sentence) -> str:
     return _card_speech_text(sentence, *_format_sentence_meaning_lines(ordered_items))
 
 
+_SENTENCE_REVIEW_LIST_LABEL_RE = re.compile(r"^(?P<number>\d+)\. ")
+
+
+def _format_sentence_review_meaning_lines(items) -> list[str]:
+    """Format sentence review labels without creating a Markdown list gutter."""
+    return [
+        _SENTENCE_REVIEW_LIST_LABEL_RE.sub(
+            lambda match: f"{match.group('number')}\\. ", line
+        )
+        for line in _format_sentence_meaning_lines(items)
+    ]
+
+
+_WORD_PHRASE_VISUAL_LABEL_RE = re.compile(r"^\d+\\\.\s+")
+
+
 def _word_phrase_card_speech_text(front, back) -> str:
     """Build word/phrase TTS text with each sense line as a speech segment."""
-    back_lines = (line.lstrip() for line in (back or "").splitlines())
+    back_lines = (
+        _WORD_PHRASE_VISUAL_LABEL_RE.sub("", line.lstrip())
+        for line in (back or "").splitlines()
+    )
     return _card_speech_text(front, *back_lines)
 
 
@@ -575,7 +595,7 @@ class ReviewControllerMixin:
 
         if flipped:
             lines = [metadata, "", highlighted, "", "---", ""]
-            meaning_lines = _format_sentence_meaning_lines(ordered)
+            meaning_lines = _format_sentence_review_meaning_lines(ordered)
             # Blank line between entries so Markdown does not collapse them.
             lines.append("\n\n".join(meaning_lines))
             # cards.back is a derived cache of the same expression+meaning

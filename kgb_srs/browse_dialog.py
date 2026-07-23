@@ -63,6 +63,7 @@ class BrowseCardsDialog(QDialog):
         layout.addLayout(filter_row)
 
         self.table = QTableWidget()
+        self.table.verticalHeader().setVisible(False)
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["ID", "Front", "Box", "Next Review"])
         header = self.table.horizontalHeader()
