@@ -14,6 +14,11 @@ All notable changes to the KGB 5-Box SRS System are documented here.
   **Settings → General**. Settings apply immediately, remain loopback-only for
   safety, and are matched through the extension’s new Options page.
 
+### Fixed
+
+- Corrected the Chromium extension's loopback host-permission match patterns so
+  they are accepted by Chromium; capture requests still use the configured port.
+
 ## [2.3.0] — 2026-07-23
 
 ### Added

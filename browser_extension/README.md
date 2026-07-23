@@ -29,7 +29,9 @@ cannot be exposed to your LAN or the internet.
 
 Then open this extension’s **Options** page from your browser’s extension
 manager and enter the identical IP and port. The extension asks the browser for
-permission to contact that exact local HTTP origin when you save the endpoint.
+permission to contact that loopback IP when you save the endpoint. Chromium
+permission match patterns are host-scoped, so the selected port directs capture
+traffic but cannot narrow the browser permission further.
 
 ## Permissions and privacy
 
@@ -37,10 +39,12 @@ The extension requests only:
 
 - `contextMenus`, to add the selection-only right-click command;
 - `storage`, to retain the endpoint you explicitly configure; and
-- access to the default local origin `http://127.0.0.1:8010/*`.
+- access to the default loopback host `http://127.0.0.1/*` (Chrome applies this
+  permission across that host's ports).
 
-For a custom endpoint, it asks for access to the exact loopback origin only
-when you save it in Options; it does not receive broad host access. The
+For a custom endpoint, it asks for access only to the selected loopback IP when
+you save it in Options. The stored endpoint still sends capture text only to the
+chosen IP and port; the extension does not receive broad host access. The
 extension does not inject scripts, read page contents beyond the text the user
 selects, or send data to a remote service. The daemon binds to IPv4 loopback
 only and intentionally does not enable CORS for webpages.

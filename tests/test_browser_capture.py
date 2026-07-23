@@ -461,7 +461,7 @@ def test_extension_manifest_declares_a_manifest_v3_context_menu_capture():
 
     assert manifest["manifest_version"] == 3
     assert manifest["permissions"] == ["contextMenus", "storage"]
-    assert manifest["host_permissions"] == ["http://127.0.0.1:8010/*"]
+    assert manifest["host_permissions"] == ["http://127.0.0.1/*"]
     assert manifest["optional_host_permissions"] == ["http://*/*"]
     assert manifest["options_ui"]["page"] == "options.html"
     assert "info.selectionText" in worker
@@ -473,4 +473,6 @@ def test_extension_manifest_declares_a_manifest_v3_context_menu_capture():
     assert options_script.is_file()
     options_source = options_script.read_text("utf-8")
     assert "chrome.permissions.request" in options_source
+    assert "return `http://${host}/*`;" in options_source
+    assert "${host}:${port}/*" not in options_source
     assert "isLoopbackIPv4" in options_source

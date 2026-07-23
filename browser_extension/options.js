@@ -1,9 +1,6 @@
 const DEFAULT_CAPTURE_HOST = "127.0.0.1";
 const DEFAULT_CAPTURE_PORT = 8010;
-const DEFAULT_CAPTURE_ORIGIN = captureOrigin(
-  DEFAULT_CAPTURE_HOST,
-  DEFAULT_CAPTURE_PORT,
-);
+const DEFAULT_CAPTURE_ORIGIN = captureOrigin(DEFAULT_CAPTURE_HOST);
 
 const form = document.querySelector("#captureOptions");
 const hostInput = document.querySelector("#captureHost");
@@ -32,7 +29,7 @@ async function saveOptions(event) {
     return;
   }
 
-  const origin = captureOrigin(host, port);
+  const origin = captureOrigin(host);
   const previous = await chrome.storage.local.get({
     captureHost: DEFAULT_CAPTURE_HOST,
     capturePort: DEFAULT_CAPTURE_PORT,
@@ -47,15 +44,15 @@ async function saveOptions(event) {
   }
 
   await chrome.storage.local.set({ captureHost: host, capturePort: port });
-  const previousOrigin = captureOrigin(previous.captureHost, previous.capturePort);
+  const previousOrigin = captureOrigin(previous.captureHost);
   if (previousOrigin !== origin && previousOrigin !== DEFAULT_CAPTURE_ORIGIN) {
     await chrome.permissions.remove({ origins: [previousOrigin] });
   }
   setStatus("Endpoint saved.");
 }
 
-function captureOrigin(host, port) {
-  return `http://${host}:${port}/*`;
+function captureOrigin(host) {
+  return `http://${host}/*`;
 }
 
 function isLoopbackIPv4(host) {
