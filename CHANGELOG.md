@@ -6,6 +6,10 @@ All notable changes to the KGB 5-Box SRS System are documented here.
 
 ### Added
 
+- Added a branded flashcard-and-five-box application icon so the app is
+  identifiable in desktop window chrome instead of using the generic Qt/X icon.
+- Added a system-tray control: closing the main window now hides it to the tray;
+  use the tray menu's **Quit** action to shut down the application completely.
 - Generate a contextual AI meaning automatically whenever a new unfamiliar
   word or phrase is added to a sentence card. Running **Generate Meaning** again
   replaces the current generated or manually entered meaning on success.

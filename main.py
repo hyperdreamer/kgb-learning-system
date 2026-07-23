@@ -23,11 +23,14 @@ def parse_args(argv=None):
 def run_application(settings_file):
     """Start the GUI using *settings_file* for all settings persistence."""
     from PyQt6.QtWidgets import QApplication
+    from kgb_srs.app_icon import configure_application
     from kgb_srs.main_window import BarskyApp
 
     # argparse owns this command line; do not pass its options on to Qt.
     app = QApplication(sys.argv[:1])
+    configure_application(app)
     window = BarskyApp(settings_file=settings_file)
+    window.install_system_tray()
     window.show()
     return app.exec()
 

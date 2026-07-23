@@ -8,6 +8,7 @@ import sqlite3
 import sys
 
 from PyQt6.QtWidgets import (
+    QApplication,
     QMainWindow,
     QDialog,
     QWidget,
@@ -34,6 +35,8 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 
+from .app_icon import APPLICATION_NAME, get_app_icon
+from .system_tray import create_system_tray
 from .config import (
     load_settings,
     save_settings,
@@ -127,7 +130,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
     def __init__(self, settings_file=None):
         super().__init__()
-        self.setWindowTitle("KGB 5-Box SRS System")
+        self.setWindowIcon(get_app_icon())
+        self.setWindowTitle(APPLICATION_NAME)
 
         self.settings_file = (
             normalize_settings_path(settings_file)
@@ -169,6 +173,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._pending_close_worker = None
         self._close_completion_requested = False
         self._terminal_closing = False
+        self._system_tray = None
+        self._quit_requested = False
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -208,7 +214,42 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         else:
             save_settings(self.settings, self.settings_file)
 
+    def install_system_tray(self):
+        """Install desktop tray controls and keep hiding from ending the app."""
+        existing_tray = getattr(self, "_system_tray", None)
+        if existing_tray is not None:
+            return existing_tray
+
+        system_tray = create_system_tray(self)
+        if system_tray is None:
+            return None
+
+        self._system_tray = system_tray
+        application = QApplication.instance()
+        if application is not None:
+            application.setQuitOnLastWindowClosed(False)
+        return system_tray
+
+    def quit_from_system_tray(self) -> None:
+        """Request a terminal close rather than the normal hide-to-tray close."""
+        if getattr(self, "_quit_requested", False):
+            return
+
+        self._quit_requested = True
+        system_tray = getattr(self, "_system_tray", None)
+        if system_tray is not None:
+            system_tray.hide()
+        self.close()
+
     def closeEvent(self, event):
+        if (
+            not getattr(self, "_quit_requested", False)
+            and getattr(self, "_system_tray", None) is not None
+        ):
+            self.hide()
+            event.ignore()
+            return
+
         worker = self.tts_worker
         if worker is not None and worker.isRunning():
             # Keep the worker alive: it may still create a temp file which its
@@ -237,6 +278,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._stop_tts_playback()
         self._cleanup_tts_temp()
         event.accept()
+
+        if getattr(self, "_quit_requested", False):
+            application = QApplication.instance()
+            if application is not None:
+                application.quit()
 
     # ------------------------------------------------------------------
     # Font / Styling

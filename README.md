@@ -34,6 +34,16 @@ python -c "from kgb_srs import __version__; print(__version__)"
 
 ---
 
+## System Tray
+
+On desktop environments with system-tray support, KGB places its application
+icon in the tray while it is running. Closing the main window hides it there
+instead of stopping the application. Use the tray menu's **Show** action (or
+double-click the icon) to restore the window, and choose **Quit** from that menu
+to shut the application down completely.
+
+---
+
 ## Database Hierarchy
 
 Databases live under a configurable **database root** (default: project `db/`).
