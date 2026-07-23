@@ -377,6 +377,19 @@ class TestBuildWordPhrasePrompt:
         assert "up to" in prompt.lower()
 
 
+class TestBuildMembershipPrompt:
+    def test_accepts_copular_idiom_with_an_inserted_degree_modifier(self):
+        from kgb_srs.ai_provider import build_membership_prompt
+
+        prompt = build_membership_prompt(
+            sentence="Our tribe is even worse off!",
+            missing_items=["be worse off"],
+        )
+
+        assert "degree modifier" in prompt
+        assert "is even worse off" in prompt
+
+
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # test_connection
