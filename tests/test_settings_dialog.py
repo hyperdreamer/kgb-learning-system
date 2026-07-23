@@ -359,6 +359,53 @@ def test_successful_save_persists_all_staged_values_then_accepts(monkeypatch, se
     assert dialog.result() == dialog.DialogCode.Accepted
 
 
+def test_general_settings_stage_browser_capture_endpoint(monkeypatch, settings):
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+
+    from PyQt6.QtWidgets import QLineEdit, QSpinBox
+
+    host_input = dialog.findChild(QLineEdit, "browserCaptureHostInput")
+    port_input = dialog.findChild(QSpinBox, "browserCapturePortInput")
+    assert host_input is not None
+    assert port_input is not None
+    assert host_input.text() == "127.0.0.1"
+    assert port_input.value() == 8010
+
+    host_input.setText("127.0.0.2")
+    port_input.setValue(9123)
+    dialog.save_button.click()
+
+    assert saved[0]["browser_capture_host"] == "127.0.0.2"
+    assert saved[0]["browser_capture_port"] == 9123
+    assert settings["browser_capture_host"] == "127.0.0.2"
+    assert settings["browser_capture_port"] == 9123
+
+
+def test_general_settings_reject_nonloopback_capture_address(monkeypatch, settings):
+    saved = []
+    dialog, _ = _dialog(
+        monkeypatch, settings, save=lambda staged: saved.append(dict(staged))
+    )
+    warnings = []
+
+    monkeypatch.setattr(
+        "kgb_srs.settings_dialog.QMessageBox.warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+    dialog.browser_capture_host_input.setText("192.168.1.20")
+    dialog.save_button.click()
+
+    assert saved == []
+    assert warnings == [
+        ("Browser Capture", "Browser capture listening IP must be a loopback address")
+    ]
+    assert dialog.result() != dialog.DialogCode.Accepted
+    dialog.reject()
+
+
 def test_collect_staged_settings_synchronizes_active_ai_profile(monkeypatch, settings):
     """Collecting settings captures unsaved AI controls in the staged profile."""
     dialog, _ = _dialog(monkeypatch, settings)
@@ -873,6 +920,10 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
         def redraw_canvas(self):
             calls.append(("redraw",))
 
+        def restart_browser_capture_server(self):
+            calls.append(("restart_capture",))
+            return True
+
     calls = []
     window = WindowStub()
 
@@ -881,8 +932,64 @@ def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monke
     assert window.voice_worker is not None
     assert FakeDialog.current_sizes == [(1111, 888)]
     module.BarskyApp.open_settings_window(window)
-    assert calls == [("resize", 777, 555), ("font",), ("redraw",)]
+    assert calls == [
+        ("resize", 777, 555),
+        ("font",),
+        ("redraw",),
+        ("restart_capture",),
+    ]
     assert FakeDialog.current_sizes == [(1111, 888), (1111, 888)]
+
+
+def test_main_window_warns_when_saved_capture_endpoint_cannot_start(monkeypatch):
+    _app()
+    import kgb_srs.main_window as module
+
+    warnings = []
+
+    class FakeDialog:
+        def __init__(self, _settings, parent=None, current_size=None):
+            self.parent = parent
+            self.current_size = current_size
+            self.voice_worker = object()
+
+        def exec(self):
+            return module.QDialog.DialogCode.Accepted
+
+    class WindowStub:
+        settings = {"width": 777, "height": 555}
+
+        def width(self):
+            return 1111
+
+        def height(self):
+            return 888
+
+        def resize(self, *_args):
+            pass
+
+        def apply_font_settings(self):
+            pass
+
+        def redraw_canvas(self):
+            pass
+
+        def restart_browser_capture_server(self):
+            return False
+
+    monkeypatch.setattr(module, "SettingsDialog", FakeDialog)
+    monkeypatch.setattr(module, "ensure_database_root_structure", lambda _root: None)
+    monkeypatch.setattr(
+        module.QMessageBox,
+        "warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    module.BarskyApp.open_settings_window(WindowStub())
+
+    assert warnings
+    assert warnings[0][0] == "Browser Capture"
+    assert "previous listener" in warnings[0][1]
 
 
 def test_font_settings_are_scoped_to_main_window_and_owned_dialog(

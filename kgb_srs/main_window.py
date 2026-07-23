@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QMenu,
 )
-from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QFont,
     QPainter,
@@ -51,6 +51,7 @@ from .senses import ProjectionOwnershipConflictError
 from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
 from .forms import SentenceCardDialog, DBCreationDialog
+from .browser_capture import CAPTURE_HOST, CAPTURE_PORT, BrowserCaptureServer
 from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 from .schema import (
@@ -123,6 +124,8 @@ def _rollback_quietly(conn):
 class BarskyApp(ReviewControllerMixin, QMainWindow):
     """Main application window for the KGB 5-Box SRS System."""
 
+    browser_capture_received = pyqtSignal(str)
+
     @staticmethod
     def _icon(name, fallback=""):
         icon = QIcon.fromTheme(name)
@@ -175,6 +178,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._terminal_closing = False
         self._system_tray = None
         self._quit_requested = False
+        self._browser_capture_server = None
+        self.browser_capture_received.connect(
+            self._handle_browser_capture,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -213,6 +221,104 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             save_settings(self.settings)
         else:
             save_settings(self.settings, self.settings_file)
+
+    def _browser_capture_endpoint(self) -> tuple[str, int]:
+        """Return the configured loopback endpoint with upgrade-safe defaults."""
+        return (
+            self.settings.get("browser_capture_host", CAPTURE_HOST),
+            self.settings.get("browser_capture_port", CAPTURE_PORT),
+        )
+
+    def start_browser_capture_server(self) -> bool:
+        """Start the configured loopback daemon used by the browser extension."""
+        if self._browser_capture_server is not None:
+            return True
+
+        capture_host, capture_port = BarskyApp._browser_capture_endpoint(self)
+        try:
+            capture_server = BrowserCaptureServer(
+                self.browser_capture_received.emit,
+                host=capture_host,
+                port=capture_port,
+            )
+            capture_server.start()
+        except (OSError, ValueError):
+            logger.warning(
+                "Could not start browser capture daemon on %s:%s",
+                capture_host,
+                capture_port,
+                exc_info=True,
+            )
+            return False
+        self._browser_capture_server = capture_server
+        return True
+
+    def restart_browser_capture_server(self) -> bool:
+        """Move the daemon to the current Settings endpoint after Save & Apply."""
+        current_server = self._browser_capture_server
+        capture_host, capture_port = BarskyApp._browser_capture_endpoint(self)
+        if (
+            current_server is not None
+            and current_server.host == capture_host
+            and current_server.port == capture_port
+        ):
+            return True
+
+        if current_server is not None:
+            current_server.stop()
+            self._browser_capture_server = None
+
+        if BarskyApp.start_browser_capture_server(self):
+            return True
+
+        if current_server is not None:
+            try:
+                current_server.start()
+            except OSError:
+                logger.exception("Could not restore the prior browser capture daemon")
+            else:
+                self._browser_capture_server = current_server
+        return False
+
+    def stop_browser_capture_server(self) -> None:
+        """Release the loopback daemon during terminal application shutdown."""
+        capture_server = self._browser_capture_server
+        self._browser_capture_server = None
+        if capture_server is not None:
+            capture_server.stop()
+
+    def _handle_browser_capture(self, sentence: str) -> None:
+        """Restore KGB and open its writable Add Entry flow with *sentence*."""
+        if self._terminal_closing:
+            return
+
+        sentence = sentence.strip()
+        if not sentence:
+            return
+
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+        if not self.conn:
+            QMessageBox.information(
+                self,
+                "Capture received",
+                "Load a writable database, then send the selection again to add it.",
+            )
+            return
+
+        if self._db_type == DatabaseType.LANGUAGE_SENTENCE:
+            self._add_sentence_card(sentence=sentence)
+        elif self._db_type == DatabaseType.KNOWLEDGE:
+            self._add_knowledge_card(initial_front=sentence)
+        else:
+            QMessageBox.information(
+                self,
+                "Read-only Word/Phrase Database",
+                "Word/phrase databases are generated from sentence cards. "
+                "Open a sentence-based database to add the captured sentence.",
+            )
 
     def install_system_tray(self):
         """Install desktop tray controls and keep hiding from ending the app."""
@@ -263,6 +369,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         # A worker may have emitted a queued payload after it stopped but
         # before this immediate close path ran.  Suppress that callback.
         self._terminal_closing = True
+        stop_capture = getattr(self, "stop_browser_capture_server", None)
+        if stop_capture is not None:
+            stop_capture()
 
         self.settings["width"] = self.width()
         self.settings["height"] = self.height()
@@ -1305,7 +1414,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         else:
             self._add_knowledge_card()
 
-    def _add_sentence_card(self, edit_card_id=None):
+    def _add_sentence_card(self, edit_card_id=None, sentence=""):
         """Show the sentence-based card dialog."""
         if edit_card_id is not None:
             existing = get_sentence_card(self.conn, edit_card_id)
@@ -1328,6 +1437,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             dialog = SentenceCardDialog(
                 self,
                 "Add Sentence Card",
+                sentence=sentence,
                 settings=self.settings,
                 settings_file=self.settings_file,
                 conn=self.conn,
@@ -1421,7 +1531,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         ensure_all_sentence_databases_linked(get_database_root(self.settings))
 
-    def _add_knowledge_card(self, edit_card_id=None, existing_front=""):
+    def _add_knowledge_card(
+        self, edit_card_id=None, existing_front="", initial_front=""
+    ):
         """Add/edit a knowledge-based (generic front/back) card.
 
         Uses a simple front/back flow with no language AI prompts.
@@ -1435,6 +1547,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 self,
                 "Add New Knowledge Card",
                 "Enter the front content. Markdown and MathJax are supported:",
+                initial_text=initial_front,
             )
             if (
                 front_dialog.exec() != QDialog.DialogCode.Accepted
@@ -1724,3 +1837,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
             # Refresh drop-zone HTML and study-card content fonts even when
             # window size is unchanged (resizeEvent would not fire).
             self.redraw_canvas()
+            restart_capture = getattr(self, "restart_browser_capture_server", None)
+            if restart_capture is not None and not restart_capture():
+                QMessageBox.warning(
+                    self,
+                    "Browser Capture",
+                    "The new listener could not start. The previous listener "
+                    "was restored; free the configured endpoint and save again.",
+                )

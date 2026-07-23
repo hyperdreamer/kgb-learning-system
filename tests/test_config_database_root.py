@@ -90,6 +90,45 @@ def test_load_settings_logs_corrupt_json_and_uses_defaults(tmp_path, caplog):
     assert str(settings_path) in caplog.text
 
 
+def test_capture_listener_settings_default_and_reject_invalid_values(tmp_path):
+    """Listener settings remain loopback-only and use safe defaults."""
+    import kgb_srs.config as config
+
+    assert config.DEFAULT_SETTINGS["browser_capture_host"] == "127.0.0.1"
+    assert config.DEFAULT_SETTINGS["browser_capture_port"] == 8010
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "browser_capture_host": "192.168.1.20",
+                "browser_capture_port": 70000,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = config.load_settings(settings_path)
+
+    assert loaded["browser_capture_host"] == "127.0.0.1"
+    assert loaded["browser_capture_port"] == 8010
+
+
+def test_load_settings_uses_valid_capture_listener_values(tmp_path):
+    import kgb_srs.config as config
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        json.dumps({"browser_capture_host": "127.0.0.2", "browser_capture_port": 9123}),
+        encoding="utf-8",
+    )
+
+    loaded = config.load_settings(settings_path)
+
+    assert loaded["browser_capture_host"] == "127.0.0.2"
+    assert loaded["browser_capture_port"] == 9123
+
+
 class TestGetDatabaseRoot:
     def test_empty_settings_falls_back_to_project_db(self):
         assert get_database_root({}) == DIR_DB

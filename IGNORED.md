@@ -33,3 +33,10 @@ be opened. All related tests pass; this is an environment/media-fixture
 diagnostic, not a failing application check. Validate real audio playback on a
 workstation with the intended FFmpeg/media backend before releasing a TTS or
 multimedia change.
+
+### Chromium extension runtime validation
+
+No Chromium-family executable is available in the current audit environment.
+The extension's JavaScript syntax, Manifest V3 JSON, and static match-pattern
+checks pass; before release, load `browser_extension/` unpacked in Chromium and
+exercise both the default and a custom loopback endpoint.

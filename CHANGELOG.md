@@ -2,6 +2,23 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Added browser-to-app sentence capture: the desktop app now runs a
+  loopback-only daemon and the bundled Manifest V3 Chromium extension sends
+  explicit webpage selections into a pre-filled Add Entry workflow. Captures
+  are never saved automatically.
+- Made the browser-capture listening IP and port configurable in
+  **Settings → General**. Settings apply immediately, remain loopback-only for
+  safety, and are matched through the extension’s new Options page.
+
+### Fixed
+
+- Corrected the Chromium extension's loopback host-permission match patterns so
+  they are accepted by Chromium; capture requests still use the configured port.
+
 ## [2.3.0] — 2026-07-23
 
 ### Added

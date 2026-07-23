@@ -40,10 +40,13 @@ from .ai_provider import (
     upsert_ai_provider,
 )
 from .config import (
+    DEFAULT_BROWSER_CAPTURE_HOST,
+    DEFAULT_BROWSER_CAPTURE_PORT,
     DIR_DB,
     ensure_database_root_structure,
     get_database_root,
     is_path_under_root,
+    normalize_browser_capture_host,
     normalize_default_database,
     relative_db_path,
     save_settings,
@@ -259,6 +262,31 @@ class SettingsDialog(QDialog):
         self.database_root_input.textChanged.connect(
             self._on_database_root_text_changed
         )
+
+        # --- Browser capture listener (loopback-only for local extension use) ---
+        capture_host = self.settings.get(
+            "browser_capture_host", DEFAULT_BROWSER_CAPTURE_HOST
+        )
+        self.browser_capture_host_input = QLineEdit(capture_host)
+        self.browser_capture_host_input.setObjectName("browserCaptureHostInput")
+        self.browser_capture_host_input.setPlaceholderText("127.0.0.1")
+        self.browser_capture_host_input.setToolTip(
+            "IPv4 loopback address only. The capture endpoint is intentionally "
+            "not exposed to the network."
+        )
+        layout.addRow("Browser Capture IP:", self.browser_capture_host_input)
+
+        capture_port = self.settings.get(
+            "browser_capture_port", DEFAULT_BROWSER_CAPTURE_PORT
+        )
+        self.browser_capture_port_input = QSpinBox()
+        self.browser_capture_port_input.setObjectName("browserCapturePortInput")
+        self.browser_capture_port_input.setRange(1, 65535)
+        self.browser_capture_port_input.setValue(capture_port)
+        self.browser_capture_port_input.setToolTip(
+            "Set the same port in KGB Sentence Capture extension options."
+        )
+        layout.addRow("Browser Capture Port:", self.browser_capture_port_input)
         self.pages.addWidget(page)
 
     def _build_appearance_page(self):
@@ -1171,6 +1199,10 @@ class SettingsDialog(QDialog):
             self.default_database_input.text().strip(),
             root,
         )
+        staged["browser_capture_host"] = normalize_browser_capture_host(
+            self.browser_capture_host_input.text()
+        )
+        staged["browser_capture_port"] = self.browser_capture_port_input.value()
         staged["tts_voice"] = self.current_voice
         staged["tts_language"] = self.current_language or ""
         # Capture current form fields into the active staged profile first.
@@ -1192,7 +1224,11 @@ class SettingsDialog(QDialog):
         return self._collect_staged_settings()
 
     def save_and_apply(self):
-        staged = self._collect_staged_settings()
+        try:
+            staged = self._collect_staged_settings()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Browser Capture", str(exc))
+            return
         root = get_database_root(staged)
         try:
             ensure_database_root_structure(root)

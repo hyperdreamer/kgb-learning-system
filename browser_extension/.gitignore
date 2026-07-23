@@ -1,0 +1,2 @@
+# Chromium may create local extension state while testing.
+*.pem

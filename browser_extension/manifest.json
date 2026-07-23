@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "KGB Sentence Capture",
+  "version": "1.0.0",
+  "description": "Send selected webpage text to the local KGB SRS app.",
+  "permissions": [
+    "contextMenus",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "KGB Sentence Capture"
+  }
+}

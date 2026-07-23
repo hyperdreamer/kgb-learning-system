@@ -1,5 +1,6 @@
 """Configuration, constants, and settings management."""
 
+import ipaddress
 import os
 import json
 import logging
@@ -19,6 +20,32 @@ SETTINGS_FILE = os.path.join(PROJECT_DIR, "barsky_settings.json")
 def normalize_settings_path(path) -> str:
     """Return an absolute, user-expanded path for a settings file."""
     return os.path.abspath(os.path.expanduser(os.fspath(path)))
+
+
+DEFAULT_BROWSER_CAPTURE_HOST = "127.0.0.1"
+DEFAULT_BROWSER_CAPTURE_PORT = 8010
+
+
+def normalize_browser_capture_host(value: object) -> str:
+    """Return a canonical IPv4 loopback address for the local capture daemon."""
+    if not isinstance(value, str):
+        raise ValueError("Browser capture listening IP must be an IPv4 address")
+    try:
+        address = ipaddress.IPv4Address(value.strip())
+    except ipaddress.AddressValueError as exc:
+        raise ValueError(
+            "Browser capture listening IP must be an IPv4 loopback address"
+        ) from exc
+    if not address.is_loopback:
+        raise ValueError("Browser capture listening IP must be a loopback address")
+    return str(address)
+
+
+def normalize_browser_capture_port(value: object) -> int:
+    """Validate the TCP port used by the local capture daemon."""
+    if type(value) is not int or not 1 <= value <= 65535:
+        raise ValueError("Browser capture port must be an integer from 1 through 65535")
+    return value
 
 
 # Canonical relative layout under the database root.
@@ -44,6 +71,9 @@ DEFAULT_SETTINGS = {
     # Root folder for all databases. Empty → project db/ (DIR_DB).
     "database_root": "",
     "default_database": "",
+    # The capture endpoint remains loopback-only because it has no authentication.
+    "browser_capture_host": DEFAULT_BROWSER_CAPTURE_HOST,
+    "browser_capture_port": DEFAULT_BROWSER_CAPTURE_PORT,
     "tts_voice": "en-US-AvaMultilingualNeural",
     # Audio page language filter ("" = All languages)
     "tts_language": "",
@@ -224,7 +254,17 @@ def load_settings(settings_file=None):
             if isinstance(raw, dict):
                 loaded = raw
                 for key, value in loaded.items():
-                    if key in _POSITIVE_INT_SETTINGS:
+                    if key == "browser_capture_host":
+                        try:
+                            settings[key] = normalize_browser_capture_host(value)
+                        except ValueError:
+                            pass
+                    elif key == "browser_capture_port":
+                        try:
+                            settings[key] = normalize_browser_capture_port(value)
+                        except ValueError:
+                            pass
+                    elif key in _POSITIVE_INT_SETTINGS:
                         if type(value) is int and value > 0:
                             settings[key] = value
                     elif key in _STRING_SETTINGS:
