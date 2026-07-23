@@ -1,6 +1,6 @@
 # KGB 5-Box SRS System
 
-**Version 2.2.1-dev**
+**Version 2.3.0**
 
 A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
@@ -285,7 +285,7 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package (__version__ = 2.2.1-dev)
+kgb_srs/                    # Python package (__version__ = 2.3.0)
 ├── __init__.py
 ├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference

@@ -2,7 +2,7 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
-## [Unreleased]
+## [2.3.0] — 2026-07-23
 
 ### Added
 
