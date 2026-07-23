@@ -89,7 +89,7 @@ class SentenceCardDialog(QDialog):
         # not shown or edited; meanings come from items pairs only.
         _ = back
         # Persistent meaning + sense_id store for every list item.
-        # Meanings are AI-assigned (reuse existing sense or create new).
+        # Meanings may be typed by the user or supplied by AI.
         self._meanings: dict[str, str] = {}
         self._sense_ids: dict[str, int | None] = {}
         # Expression → previously AI-verified residual surface form.
@@ -194,9 +194,9 @@ class SentenceCardDialog(QDialog):
         ai_row.addWidget(self._ai_status, stretch=1)
         self._generate_btn = QPushButton("🤖 Generate Meaning")
         self._generate_btn.setToolTip(
-            "AI reuses a prior sense for this word/phrase when it fits this "
-            "sentence, or creates a new sense (contextual). Primary path — "
-            "meanings are not typed manually."
+            "Use AI to reuse a prior sense for this word/phrase when it fits "
+            "this sentence, or create a new contextual meaning. You can also "
+            "type or edit a meaning directly."
         )
         self._generate_btn.clicked.connect(self._generate_ai_meanings)
         self._generate_btn.setEnabled(False)
@@ -208,7 +208,7 @@ class SentenceCardDialog(QDialog):
         ai_row.addWidget(self._ai_progress)
         layout.addLayout(ai_row)
 
-        # --- Meaning (single card for the selected item; AI-filled) ---
+        # --- Meaning (single card for the selected item) ---
         layout.addWidget(QLabel("<b>Meaning</b>"))
         self._sense_source_label = QLabel("")
         self._sense_source_label.setStyleSheet("color: #607D8B;")
@@ -323,6 +323,11 @@ class SentenceCardDialog(QDialog):
         has_items = self._items_list.count() > 0
         self._save_btn.setEnabled(has_sentence and has_items)
 
+    def _set_meaning_editor_enabled(self, enabled: bool) -> None:
+        """Enable manual meaning entry unless an AI task is in progress."""
+        for _, edit in self._meaning_widgets:
+            edit.setEnabled(enabled)
+
     def _set_membership_controls_enabled(self, enabled: bool) -> None:
         """Lock edits/cancellation while residual membership is unresolved."""
         for control in (
@@ -336,6 +341,7 @@ class SentenceCardDialog(QDialog):
             self._cancel_btn,
         ):
             control.setEnabled(enabled)
+        self._set_meaning_editor_enabled(enabled)
 
     def _on_item_selection_changed(self) -> None:
         """Selection drives Remove, Generate, and the single Meaning card."""
@@ -465,8 +471,8 @@ class SentenceCardDialog(QDialog):
         items = self._get_items()
         if not items:
             empty = QLabel(
-                "Add unfamiliar words/phrases, then select one and "
-                "click Generate Meaning."
+                "Add unfamiliar words/phrases, then select one and type a "
+                "meaning or click Generate Meaning."
             )
             empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
             empty.setWordWrap(True)
@@ -476,7 +482,10 @@ class SentenceCardDialog(QDialog):
 
         expr = self._selected_expression()
         if expr is None:
-            empty = QLabel("Select an unfamiliar word/phrase, then Generate Meaning.")
+            empty = QLabel(
+                "Select an unfamiliar word/phrase, then type a meaning or click "
+                "Generate Meaning."
+            )
             empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
             empty.setWordWrap(True)
             self._meanings_layout.addWidget(empty)
@@ -514,49 +523,20 @@ class SentenceCardDialog(QDialog):
         card_layout.addWidget(expr_label)
 
         edit = self._make_meaning_field(
-            f"Use Generate Meaning for '{expr}' in this sentence…"
+            f"Type a meaning for '{expr}' or use Generate Meaning..."
         )
         edit.setPlainText(self._meanings.get(expr, ""))
-        # AI-primary path: field is read-only display of assigned sense.
-        # Store still syncs via textChanged (programmatic fills + repair).
-        edit.setReadOnly(True)
+        edit.setReadOnly(False)
         edit.setToolTip(
-            "Filled by Generate Meaning (reuse prior sense or create new). "
-            "Double-click to unlock manual repair if AI is wrong."
+            "Type a contextual meaning, or use Generate Meaning to fill it with AI."
         )
         edit.textChanged.connect(self._on_active_meaning_changed)
-        edit.mouseDoubleClickEvent = (  # type: ignore[method-assign]
-            lambda event, e=edit: self._unlock_meaning_edit(e, event)
-        )
         card_layout.addWidget(edit)
         self._meanings_layout.addWidget(card)
         self._meaning_widgets.append((expr, edit))
         self._active_meaning_expr = expr
         self._update_sense_source_label(expr)
         self._meanings_layout.addStretch()
-
-    def _unlock_meaning_edit(self, edit: QTextEdit, event) -> None:
-        """Escape hatch: double-click unlocks manual meaning repair."""
-        edit.setReadOnly(False)
-        edit.setStyleSheet(
-            "QTextEdit {"
-            "  border: 1px solid #FFA726;"
-            "  border-radius: 6px;"
-            "  padding: 2px 6px;"
-            "  background: #FFF8E1;"
-            "}"
-            "QTextEdit:focus {"
-            "  border: 1px solid #FB8C00;"
-            "}"
-        )
-        # Clear linked sense — manual repair creates a new sense on save.
-        if self._active_meaning_expr is not None:
-            self._sense_ids[self._active_meaning_expr] = None
-            if hasattr(self, "_sense_source_label"):
-                self._sense_source_label.setText(
-                    "Manual repair — will create/match sense on Save."
-                )
-        QTextEdit.mouseDoubleClickEvent(edit, event)
 
     def _update_sense_source_label(self, expr: str) -> None:
         if not hasattr(self, "_sense_source_label"):
@@ -572,10 +552,12 @@ class SentenceCardDialog(QDialog):
                 "Meaning set — sense will be resolved on Save."
             )
         else:
-            self._sense_source_label.setText("No meaning yet — click Generate Meaning.")
+            self._sense_source_label.setText(
+                "No meaning yet - type one or click Generate Meaning."
+            )
 
     def _on_active_meaning_changed(self) -> None:
-        """Keep the store in sync when the user repairs meaning manually."""
+        """Keep the store in sync when the user types or edits a meaning."""
         if getattr(self, "_programmatic_meaning_update", False):
             return
         if self._active_meaning_expr is None or not self._meaning_widgets:
@@ -583,8 +565,9 @@ class SentenceCardDialog(QDialog):
         expr, edit = self._meaning_widgets[0]
         if expr == self._active_meaning_expr:
             self._meanings[expr] = edit.toPlainText()
-            # Manual edit detaches prior sense link.
+            # A user edit must not retain an AI-reused sense link.
             self._sense_ids[expr] = None
+            self._update_sense_source_label(expr)
 
     # ------------------------------------------------------------------
     # AI generation (nonblocking, selected item only)
@@ -638,6 +621,7 @@ class SentenceCardDialog(QDialog):
         self._item_entry.setEnabled(False)
         self._add_sel_btn.setEnabled(False)
         self._items_list.setEnabled(False)
+        self._set_meaning_editor_enabled(False)
         self._save_btn.setEnabled(False)
         self._cancel_btn.setEnabled(False)
         self._ai_progress.setVisible(True)
@@ -687,7 +671,6 @@ class SentenceCardDialog(QDialog):
 
                 if self._active_meaning_expr == target_expr and self._meaning_widgets:
                     edit = self._meaning_widgets[0][1]
-                    edit.setReadOnly(True)
                     self._programmatic_meaning_update = True
                     edit.blockSignals(True)
                     try:
@@ -724,6 +707,7 @@ class SentenceCardDialog(QDialog):
         self._item_entry.setEnabled(True)
         self._add_sel_btn.setEnabled(True)
         self._items_list.setEnabled(True)
+        self._set_meaning_editor_enabled(True)
         self._cancel_btn.setEnabled(True)
         self._ai_progress.setVisible(False)
         self._update_generate_enabled()

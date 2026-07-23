@@ -504,7 +504,9 @@ class TestFinalFormRegressions:
             '{"expression": "Hello", "action": "create", '
             '"sense_id": null, "meaning": "a greeting"}'
         )
-        dialog._ai_worker.result.emit(raw)
+        worker = dialog._ai_worker
+        worker.result.emit(raw)
+        worker.finished.emit()
         QApplication.processEvents()
 
         status = dialog._ai_status.text()
@@ -512,7 +514,10 @@ class TestFinalFormRegressions:
         assert "Hello" in status
         assert "Ready to save" in status
         assert dialog._meanings["Hello"] == "a greeting"
-        assert dialog._meaning_widgets[0][1].toPlainText() == "a greeting"
+        meaning_edit = dialog._meaning_widgets[0][1]
+        assert meaning_edit.toPlainText() == "a greeting"
+        assert meaning_edit.isReadOnly() is False
+        assert meaning_edit.isEnabled() is True
         dialog.close()
 
     @staticmethod
@@ -681,6 +686,28 @@ class TestFinalFormRegressions:
         assert dialog._meaning_widgets == []
         labels = [lab.text() for lab in dialog._meanings_container.findChildren(QLabel)]
         assert any("Add unfamiliar" in t for t in labels)
+        dialog.close()
+
+    def test_sentence_dialog_allows_manual_meaning_for_new_card(self):
+        """A new sentence card can be saved with a user-entered meaning."""
+        _qt_app()
+        from kgb_srs.forms import SentenceCardDialog
+
+        dialog = SentenceCardDialog(
+            sentence="They are tightening the noose.",
+            items=["noose"],
+        )
+        expr, edit = dialog._meaning_widgets[0]
+
+        assert expr == "noose"
+        assert edit.isReadOnly() is False
+
+        edit.setPlainText("a loop of rope that tightens")
+        dialog._accept()
+
+        assert dialog.result_items == [
+            ("noose", "a loop of rope that tightens", None, "")
+        ]
         dialog.close()
 
     def test_sentence_dialog_meaning_field_chrome_and_preserve(self):
