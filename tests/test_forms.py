@@ -464,6 +464,143 @@ class TestFinalFormRegressions:
         assert all(isinstance(w, QTextEdit) for _, w in dialog._meaning_widgets)
         dialog.close()
 
+    def test_new_sentence_items_generate_meanings_automatically(self, monkeypatch):
+        """Both add paths immediately generate a meaning for each new item."""
+        _qt_app()
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtGui import QTextCursor
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
+
+        workers = []
+        prompts = []
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+                prompts.append(prompt)
+                workers.append(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
+        dialog = SentenceCardDialog(
+            sentence="A veneer hid the cracks.",
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+        )
+
+        dialog._item_entry.setText("veneer")
+        dialog._add_item()
+
+        assert len(workers) == 1
+        assert dialog._selected_expression() == "veneer"
+        assert "veneer" in prompts[0]
+        workers[0].result.emit(
+            '{"expression": "veneer", "action": "create", '
+            '"sense_id": null, "meaning": "a superficial appearance"}'
+        )
+        workers[0].finished.emit()
+        QApplication.processEvents()
+        assert dialog._meanings["veneer"] == "a superficial appearance"
+
+        cursor = dialog._sentence_edit.textCursor()
+        start = dialog._sentence_edit.toPlainText().index("cracks")
+        cursor.setPosition(start)
+        cursor.setPosition(start + len("cracks"), QTextCursor.MoveMode.KeepAnchor)
+        dialog._sentence_edit.setTextCursor(cursor)
+        dialog._add_selected_text()
+
+        assert len(workers) == 2
+        assert dialog._selected_expression() == "cracks"
+        assert "cracks" in prompts[1]
+        workers[1].result.emit(
+            '{"expression": "cracks", "action": "create", '
+            '"sense_id": null, "meaning": "narrow breaks"}'
+        )
+        workers[1].finished.emit()
+        QApplication.processEvents()
+        assert dialog._meanings["cracks"] == "narrow breaks"
+
+        dialog._item_entry.setText("cracks")
+        dialog._add_item()
+        assert len(workers) == 2
+        dialog.close()
+
+    def test_generate_meaning_replaces_manual_meaning(self, monkeypatch):
+        """Explicit regeneration replaces the current user-entered meaning."""
+        _qt_app()
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
+
+        workers = []
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+                workers.append(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
+        dialog = SentenceCardDialog(
+            sentence="A veneer hid the cracks.",
+            items=[("veneer", "manually entered meaning")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+        )
+
+        dialog._generate_btn.click()
+        assert len(workers) == 1
+        workers[0].result.emit(
+            '{"expression": "veneer", "action": "create", '
+            '"sense_id": null, "meaning": "AI replacement meaning"}'
+        )
+        workers[0].finished.emit()
+        QApplication.processEvents()
+
+        assert dialog._meanings["veneer"] == "AI replacement meaning"
+        assert dialog._meaning_widgets[0][1].toPlainText() == "AI replacement meaning"
+        dialog.close()
+
+    def test_failed_regeneration_preserves_current_meaning_and_sense(self, monkeypatch):
+        """An AI error leaves the prior meaning and linked sense untouched."""
+        _qt_app()
+        from PyQt6.QtCore import QThread
+        from PyQt6.QtWidgets import QApplication
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
+
+        workers = []
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+                workers.append(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
+        dialog = SentenceCardDialog(
+            sentence="A veneer hid the cracks.",
+            items=[("veneer", "existing meaning", 42)],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+        )
+
+        dialog._generate_btn.click()
+        workers[0].error.emit("provider unavailable")
+        workers[0].finished.emit()
+        QApplication.processEvents()
+
+        assert dialog._meanings["veneer"] == "existing meaning"
+        assert dialog._meaning_widgets[0][1].toPlainText() == "existing meaning"
+        assert dialog._sense_ids["veneer"] == 42
+        dialog.close()
+
     def test_sentence_dialog_ai_success_status_is_ready_to_save(self, monkeypatch):
         """AI success status should report reuse/create and ready to save."""
         _qt_app()
@@ -537,7 +674,9 @@ class TestFinalFormRegressions:
         monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
         dialog._generate_ai_meanings()
         assert dialog._ai_worker is not None
-        dialog._ai_worker.result.emit(response)
+        worker = dialog._ai_worker
+        worker.result.emit(response)
+        worker.finished.emit()
         QApplication.processEvents()
 
     @staticmethod
@@ -742,6 +881,77 @@ class TestFinalFormRegressions:
 class TestQThreadLifecycle:
     """Result/error signals must not unlock controls until QThread.finished."""
 
+    def test_meaning_generation_locks_all_item_mutation_controls(self, monkeypatch):
+        """Add and Remove stay unavailable until the active worker finishes."""
+        _qt_app()
+        from PyQt6.QtCore import QThread
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
+
+        workers = []
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+                workers.append(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "a greeting")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+        )
+        dialog._item_entry.setText("world")
+
+        dialog._generate_ai_meanings()
+
+        assert len(workers) == 1
+        assert not dialog._add_btn.isEnabled()
+        assert not dialog._remove_btn.isEnabled()
+        dialog._add_btn.click()
+        dialog._remove_btn.click()
+        assert dialog._get_items() == ["Hello"]
+
+        workers[0].finished.emit()
+        assert dialog._add_btn.isEnabled()
+        assert dialog._remove_btn.isEnabled()
+        dialog.close()
+
+    def test_meaning_generation_rejects_reentry_until_finished(self, monkeypatch):
+        """A worker reference blocks another request even if isRunning is false."""
+        _qt_app()
+        from PyQt6.QtCore import QThread
+        from kgb_srs.form_helpers import _AIGenerateWorker
+        from kgb_srs.forms import SentenceCardDialog
+
+        workers = []
+
+        class FakeWorker(_AIGenerateWorker):
+            def __init__(self, config, prompt):
+                QThread.__init__(self)
+                workers.append(self)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr("kgb_srs.form_helpers._AIGenerateWorker", FakeWorker)
+        dialog = SentenceCardDialog(
+            sentence="Hello world",
+            items=[("Hello", "a greeting")],
+            settings={"ai_api_key": "test-key", "ai_model": "test-model"},
+        )
+
+        dialog._generate_ai_meanings()
+        dialog._generate_ai_meanings()
+
+        assert len(workers) == 1
+        assert dialog._ai_worker is workers[0]
+        workers[0].finished.emit()
+        dialog.close()
+
     def test_result_signal_alone_does_not_restore_ui(self):
         """Receiving result signal must keep controls locked until finished."""
         _qt_app()
@@ -892,9 +1102,8 @@ class TestQThreadLifecycle:
         """closeEvent must respect worker state through termination.
 
         When controls are disabled during generation, the Cancel button
-        is not clickable.  After QThread.finished fires, controls
-        restore and close becomes available. The reject() guard checks
-        self._ai_worker is not None AND isRunning().
+        is not clickable. After QThread.finished fires, the worker reference
+        clears, controls restore, and close becomes available.
         """
         _qt_app()
         from kgb_srs.form_helpers import _AIGenerateWorker

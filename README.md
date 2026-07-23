@@ -62,7 +62,7 @@ The selection menu reflects this category/subtype hierarchy. The app infers and 
 
 - **Front**: The sentence only, with matched unfamiliar surface forms **bolded in place** (e.g. stored lemma `insist on` highlights surface `insists on`). No separate Unfamiliar bullet list on the front.
 - **Validation**: Every unfamiliar item must appear in the sentence (Unicode-safe, case-insensitive, whitespace-normalized). Literal match is tried first; if that fails, a local inflection-tolerant check accepts common tense/number forms and a comprehensive irregular-verb map (e.g. `insist on` ↔ `insists on`, `go` ↔ `went`/`gone`, `choose` ↔ `chose`/`chosen`). Multi-word phrases must still match consecutive tokens. Continuous scripts without spaces stay on the literal path. Regex metacharacters in items are treated as literal text. **AI is not used for the local path.** If Save still has residual misses and an AI provider is configured, the dialog may optionally ask AI only for those leftovers; any AI `found=true` claim must include a surface span that is re-verified to exist in the sentence.
-- **AI generation**: In-dialog nonblocking AI generation for the **selected** unfamiliar item only. A **Generate Meaning** button starts a background QThread with the sentence + that one expression; controls are disabled during generation; on completion, that item's meaning field is filled. Meanings are always **contextual to the sentence**. Users can type or edit meanings directly, including when AI is unavailable. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor). The Meaning panel shows only the currently selected list item (not every item at once).
+- **AI generation**: When AI is configured, adding an unfamiliar item (typed manually or copied with **Add selected text**) immediately starts nonblocking generation for that newly selected item. The **Generate Meaning** button can run generation again at any time; a successful result replaces the current generated or manually entered meaning, while a failed request leaves the current meaning unchanged. Generation uses a background QThread with the sentence + selected expression, with all mutable dialog controls disabled until completion. Meanings are always **contextual to the sentence**. Users can still type or edit meanings directly, including when AI is unavailable. **Save** is a separate user action. Back text is auto-derived from expression+meaning pairs (no separate back editor). The Meaning panel shows only the currently selected list item (not every item at once).
 - **Review**: The front shows the sentence with target surface spans in bold. The back shows the same highlighted sentence, a horizontal rule, then each expression with its contextual meaning once (no bullet list; the derived `cards.back` cache is not re-appended). Every bold word or phrase in sentence review content is clickable and keyboard-accessible for focused pronunciation.
 - **TTS**: The **Listen** button reads the sentence/card content aloud; activating an individual bold word or phrase speaks only that target.
 - **Storage**: Cards table + normalized `unfamiliar_items` child records with `meaning TEXT NOT NULL DEFAULT ''`, optional `sense_id` FK to global `expression_senses`, FOREIGN KEY ON DELETE CASCADE, and UNIQUE(card_id, expression). Global sense identity is `(expression_norm, meaning_norm)`. The `cards.back` field is a rendered/cache representation. Meanings are **required** for new/edited sentence cards — bare expression strings without meanings are rejected at persistence. Migration preserves existing rows with empty meaning.
@@ -123,9 +123,9 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 ### Sentence AI Workflow
 
 1. Create/open the **Add Sentence Card** dialog.
-2. Enter the sentence and unfamiliar items (type manually or use **Add selected text** to add highlighted text from the sentence).
-3. Select one item in the list. The **Meaning** panel shows only that item.
-4. Type a contextual meaning directly, or click **Generate Meaning**. AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense; generated meanings remain editable.
+2. Enter the sentence, then add unfamiliar items by typing them or using **Add selected text** on highlighted sentence text. If AI is configured, each newly added item is selected and its meaning is generated immediately.
+3. Select any item in the list to show it in the **Meaning** panel.
+4. Type or edit a contextual meaning directly, or click **Generate Meaning** to regenerate it. AI either **reuses** a prior sense for that expression (if it fits this sentence) or **creates** a new contextual sense; a successful regeneration replaces the current generated or manual meaning, and a failed regeneration preserves it.
 5. Repeat for other items if needed. Back text is derived automatically from all expression+meaning pairs on Save.
 6. **Save** runs membership + meaning checks. On failure the dialog stays open so you can fix or Cancel. Save is dimmed while the sentence or item list is empty.
 7. On success, Save commits the card with expression+meaning pairs linked to global senses.
@@ -136,7 +136,7 @@ Use **Test** to validate the currently entered Base URL / Model / API Key / Time
 ## In-Dialog Features
 
 ### Add Selected Text
-The sentence dialog includes an **Add selected text** button. Highlight any text in the sentence editor and click it to add the selection as an unfamiliar item.
+The sentence dialog includes an **Add selected text** button. Highlight any text in the sentence editor and click it to add the selection as an unfamiliar item. With AI configured, adding the selection also starts contextual meaning generation automatically.
 
 ### Save-time validation
 There is no separate **Validate** button. **Save** is the only gate:

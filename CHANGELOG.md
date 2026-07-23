@@ -6,6 +6,9 @@ All notable changes to the KGB 5-Box SRS System are documented here.
 
 ### Added
 
+- Generate a contextual AI meaning automatically whenever a new unfamiliar
+  word or phrase is added to a sentence card. Running **Generate Meaning** again
+  replaces the current generated or manually entered meaning on success.
 - Made bold words and phrases in sentence-based review cards clickable and
   keyboard-accessible, speaking only the activated target through the existing
   TTS pipeline while leaving card metadata noninteractive.
