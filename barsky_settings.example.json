@@ -7,6 +7,8 @@
   "content_font_size": 18,
   "database_root": "",
   "default_database": "",
+  "browser_capture_host": "127.0.0.1",
+  "browser_capture_port": 8010,
   "tts_voice": "en-US-AvaMultilingualNeural",
   "tts_language": "",
   "ai_active_provider": "Default",

@@ -30,6 +30,7 @@ def run_application(settings_file):
     app = QApplication(sys.argv[:1])
     configure_application(app)
     window = BarskyApp(settings_file=settings_file)
+    window.start_browser_capture_server()
     window.install_system_tray()
     window.show()
     return app.exec()

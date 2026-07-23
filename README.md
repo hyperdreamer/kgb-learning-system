@@ -44,6 +44,25 @@ to shut the application down completely.
 
 ---
 
+## Browser Sentence Capture
+
+KGB starts a local loopback daemon at `127.0.0.1:8010` whenever the desktop
+application launches. In **Settings → General**, change **Browser Capture IP**
+and **Browser Capture Port** to replace the active listener immediately. The IP
+must remain an IPv4 loopback address (`127.0.0.0/8`) because the local capture
+endpoint has no authentication.
+
+Install the bundled unpacked Chromium extension from
+[`browser_extension/README.md`](browser_extension/README.md). If you change the
+app listener, open the extension’s **Options** page and enter the same IP and
+port before sending a selection.
+
+KGB restores its window and opens the current writable database's **Add Entry**
+workflow with the text pre-filled. Nothing is saved automatically. A
+sentence-based database opens the sentence-card editor; a knowledge-based
+database pre-fills the generic card front. Word/Phrase databases are read-only,
+and no add dialog can be shown until a writable database is loaded.
+
 ## Database Hierarchy
 
 Databases live under a configurable **database root** (default: project `db/`).
@@ -258,7 +277,7 @@ Configure:
 
 | Category | Settings |
 |----------|----------|
-| **General** | Database Directory (root folder), Default Database (file) |
+| **General** | Database Directory (root folder), Default Database (file), Browser Capture IP and Port (loopback IPv4 only) |
 | **Appearance** | Window size, UI font (app chrome + card edit dialogs), content font (study card HTML) |
 | **Audio & Speech** | TTS voice (language/gender/search filters, row preview) |
 | **AI Providers** | Named profiles, base URL, model, API key, timeout, explanation language, Test |
@@ -307,8 +326,10 @@ kgb_srs/                    # Python package (__version__ = 2.3.0-dev)
 ├── review_controller.py   # Daily-review state machine and queue scheduling
 ├── main_window.py          # QMainWindow composition and UI lifecycle
 ├── markdown_utils.py       # Markdown + safe offline LaTeX fallback
-└── tts.py                  # Text-to-speech worker
+├── tts.py                  # Text-to-speech worker
+└── browser_capture.py      # Loopback HTTP daemon for browser selection capture
 
+browser_extension/          # Unpacked Manifest V3 Chromium extension
 main.py                     # Entry point
 kgb_srs.py                  # Launcher (backwards-compatible)
 CHANGELOG.md                # Release history
@@ -332,6 +353,7 @@ python -m pytest tests/test_search_regressions.py -v
 python -m pytest tests/test_catalog_regressions.py -v
 python -m pytest tests/test_ai_parser.py -v
 python -m pytest tests/test_ai_provider.py -v
+python -m pytest tests/test_browser_capture.py -v
 ```
 
 ---

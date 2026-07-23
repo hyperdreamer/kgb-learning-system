@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KGB Sentence Capture Settings</title>
+    <style>
+      body {
+        color: #1f2933;
+        font: 16px/1.45 system-ui, sans-serif;
+        margin: 2rem auto;
+        max-width: 34rem;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-top: 1rem;
+      }
+      input {
+        box-sizing: border-box;
+        font: inherit;
+        margin-top: 0.25rem;
+        padding: 0.45rem;
+        width: 100%;
+      }
+      button {
+        font: inherit;
+        margin-top: 1.25rem;
+        padding: 0.5rem 0.9rem;
+      }
+      #status {
+        min-height: 1.5rem;
+        margin-top: 0.75rem;
+      }
+      .hint {
+        color: #52606d;
+      }
+    </style>
+    <script src="options.js" defer></script>
+  </head>
+  <body>
+    <h1>KGB Sentence Capture</h1>
+    <p class="hint">
+      Match these values to KGB’s <strong>Settings → General</strong> browser
+      capture listener. KGB accepts loopback IPv4 addresses only.
+    </p>
+    <form id="captureOptions">
+      <label for="captureHost">Listening IP</label>
+      <input id="captureHost" inputmode="decimal" required value="127.0.0.1" />
+
+      <label for="capturePort">Port</label>
+      <input
+        id="capturePort"
+        type="number"
+        min="1"
+        max="65535"
+        required
+        value="8010"
+      />
+
+      <button type="submit">Save endpoint</button>
+      <p id="status" role="status"></p>
+    </form>
+  </body>
+</html>

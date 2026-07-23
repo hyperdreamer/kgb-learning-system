@@ -187,6 +187,7 @@ def test_window_close_hides_to_an_installed_system_tray():
         _save_settings=lambda: shutdown_work.append("save"),
         _stop_tts_playback=lambda: shutdown_work.append("stop"),
         _cleanup_tts_temp=lambda: shutdown_work.append("cleanup"),
+        stop_browser_capture_server=lambda: shutdown_work.append("capture-stop"),
     )
     event = Event()
 
@@ -225,6 +226,7 @@ def test_terminal_tray_close_exits_the_qt_application(monkeypatch):
     import kgb_srs.main_window as main_window
 
     quit_calls = []
+    capture_stops = []
 
     class Application:
         def quit(self):
@@ -258,6 +260,7 @@ def test_terminal_tray_close_exits_the_qt_application(monkeypatch):
         _save_settings=lambda: None,
         _stop_tts_playback=lambda: None,
         _cleanup_tts_temp=lambda: None,
+        stop_browser_capture_server=lambda: capture_stops.append(True),
     )
     event = Event()
 
@@ -265,6 +268,7 @@ def test_terminal_tray_close_exits_the_qt_application(monkeypatch):
 
     assert event.accepted
     assert not event.ignored
+    assert capture_stops == [True]
     assert quit_calls == [True]
 
 
@@ -326,6 +330,9 @@ def test_application_launcher_installs_the_tray_before_showing_the_window(
         def __init__(self, *, settings_file):
             events.append(("window", settings_file))
 
+        def start_browser_capture_server(self):
+            events.append(("start_capture",))
+
         def install_system_tray(self):
             events.append(("install_tray",))
 
@@ -345,6 +352,7 @@ def test_application_launcher_installs_the_tray_before_showing_the_window(
         "application",
         "configure",
         "window",
+        "start_capture",
         "install_tray",
         "show",
         "exec",
