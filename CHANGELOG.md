@@ -2,6 +2,14 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Made bold words and phrases in sentence-based review cards clickable and
+  keyboard-accessible, speaking only the activated target through the existing
+  TTS pipeline while leaving card metadata noninteractive.
+
 ## [2.2.1] — 2026-07-22
 
 ### Documentation and Licensing
