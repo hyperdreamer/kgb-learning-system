@@ -105,6 +105,11 @@ class ReviewControllerMixin:
             has_db
             and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_WORD_PHRASE
         )
+        can_edit_review_card = (
+            is_active
+            and has_card
+            and getattr(self, "_db_type", None) == DatabaseType.LANGUAGE_SENTENCE
+        )
 
         # W/P is a derived projection — no manual Add/Delete Entry.
         if hasattr(self, "add_entry_btn"):
@@ -113,6 +118,9 @@ class ReviewControllerMixin:
         if hasattr(self, "delete_entry_btn"):
             self.delete_entry_btn.setVisible(has_db and not is_wp)
             self.delete_entry_btn.setEnabled(has_db and has_card and not is_wp)
+        if hasattr(self, "edit_review_btn"):
+            self.edit_review_btn.setVisible(can_edit_review_card)
+            self.edit_review_btn.setEnabled(can_edit_review_card)
         if hasattr(self, "browse_btn"):
             self.browse_btn.setEnabled(has_db)
 

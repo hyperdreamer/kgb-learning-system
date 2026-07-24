@@ -249,6 +249,45 @@ class TestActiveStateButtons:
         )
 
 
+class TestSentenceReviewEditButton:
+    """Sentence reviewers can edit the card currently being reviewed."""
+
+    def test_click_opens_current_sentence_card_for_editing(
+        self, app_with_db, monkeypatch
+    ):
+        app, _, _ = app_with_db
+        app.start_review()
+        card_id = app.current_card[0]
+        edited_card_ids = []
+        monkeypatch.setattr(
+            app,
+            "_add_sentence_card",
+            lambda *, edit_card_id: edited_card_ids.append(edit_card_id),
+        )
+
+        assert app.edit_review_btn.text().strip() == "Edit"
+        assert app.edit_review_btn.isEnabled()
+        app.edit_review_btn.click()
+
+        assert edited_card_ids == [card_id]
+
+    def test_is_available_only_while_a_sentence_card_is_under_review(self, app_with_db):
+        app, _, _ = app_with_db
+
+        assert app.edit_review_btn.isHidden()
+        assert not app.edit_review_btn.isEnabled()
+
+        app.start_review()
+
+        assert not app.edit_review_btn.isHidden()
+        assert app.edit_review_btn.isEnabled()
+
+        app.close_review()
+
+        assert app.edit_review_btn.isHidden()
+        assert not app.edit_review_btn.isEnabled()
+
+
 class TestStartReviewDispatch:
     """Primary button dispatches correctly based on state."""
 

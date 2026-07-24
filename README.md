@@ -251,6 +251,7 @@ All shortcuts use **Alt** so they never steal plain typing.
 - **Previous** — returns to the last graded card in this session (shortcut: **Alt+P**).
 - **Restart** — rebuilds the current daily queue from current eligibility and the current **All cards** / Shuffle settings, then clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
 - **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database. Shortcut: **Alt+X**.
+- **Edit** — during a sentence-based review, opens the current card in the sentence editor. Saving refreshes the card at Box 1; cancelling leaves the review unchanged. It is hidden for knowledge and word/phrase reviews.
 - **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only). Shortcut: **Alt+D**.
 
 ### 5. Browse & Edit

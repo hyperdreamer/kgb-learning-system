@@ -443,6 +443,15 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
             )
         )
+        edit_review_btn = getattr(self, "edit_review_btn", None)
+        if edit_review_btn is not None:
+            edit_review_btn.setStyleSheet(
+                self._button_style(
+                    "#FB8C00",
+                    "#FFA726",
+                    extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
+                )
+            )
 
         self.delete_entry_btn.setStyleSheet(
             self._button_style(
@@ -683,8 +692,15 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         )
         self.previous_review_btn.clicked.connect(self._previous_daily_card)
 
+        self.edit_review_btn = QPushButton(" Edit")
+        self.edit_review_btn.setIcon(self._icon("document-edit"))
+        self.edit_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_review_btn.setToolTip("Edit the current sentence card")
+        self.edit_review_btn.clicked.connect(self._edit_current_review_card)
+
         review_controls_layout.addWidget(self.restart_review_btn)
         review_controls_layout.addWidget(self.previous_review_btn)
+        review_controls_layout.addWidget(self.edit_review_btn)
 
         self.close_review_btn = QPushButton("×", self.view)
         self.close_review_btn.setToolTip("Close review (Alt+X)")
@@ -790,6 +806,17 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         card = getattr(self, "card_ui", None)
         if card is not None and hasattr(card, "trigger_tts"):
             card.trigger_tts()
+
+    def _edit_current_review_card(self):
+        """Open the current sentence card in the existing edit dialog."""
+        if (
+            self.review_mode != "daily"
+            or getattr(self, "_db_type", None) != DatabaseType.LANGUAGE_SENTENCE
+            or self.current_card is None
+        ):
+            return
+
+        self._add_sentence_card(edit_card_id=self.current_card[0])
 
     def _shortcut_browse(self):
         if self.conn is not None:
