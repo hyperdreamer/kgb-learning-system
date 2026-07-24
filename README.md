@@ -57,6 +57,9 @@ Install the bundled unpacked Chromium extension from
 app listener, open the extension’s **Options** page and enter the same IP and
 port before sending a selection.
 
+Select text on any page and either right-click **Send selected sentence to KGB** or
+press **Alt+K** (customizable at `chrome://extensions/shortcuts`).
+
 KGB restores its window and opens the current writable database's **Add Entry**
 workflow with the text pre-filled. Nothing is saved automatically. A
 sentence-based database opens the sentence-card editor; a knowledge-based
