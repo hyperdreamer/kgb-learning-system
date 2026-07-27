@@ -198,13 +198,13 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         try:
             ensure_database_root_structure(get_database_root(self.settings))
         except OSError as exc:
-            print(f"Could not create database directory structure: {exc}")
+            logger.warning("Could not create database directory structure: %s", exc)
 
         # Auto-link + sync W/P projections for every sentence DB (new or old).
         try:
             self._ensure_all_word_phrase_projections()
         except Exception as exc:
-            print(f"Word/phrase auto-link backfill failed: {exc}")
+            logger.warning("Word/phrase auto-link backfill failed: %s", exc)
 
         default_db = resolve_default_database(self.settings)
         if default_db and os.path.exists(default_db):
@@ -382,7 +382,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         try:
             self._save_settings()
         except OSError as exc:
-            print(f"Could not save settings: {exc}", file=sys.stderr)
+            logger.error("Could not save settings: %s", exc)
 
         self._stop_tts_playback()
         self._cleanup_tts_temp()

@@ -85,7 +85,7 @@ class SentenceCardDialog(QDialog):
         # Membership results are only committed after the exact worker that
         # produced them has emitted ``finished``.
         self._membership_worker = None
-        self._membership_pending_accept = None
+        self._membership_pending_accept: tuple | None = None
         # `back` is accepted for API compatibility with main_window but is
         # not shown or edited; meanings come from items pairs only.
         _ = back
@@ -269,7 +269,8 @@ class SentenceCardDialog(QDialog):
 
     def _get_items(self) -> list[str]:
         return [
-            self._items_list.item(i).text() for i in range(self._items_list.count())
+            self._items_list.item(i).text()  # type: ignore[union-attr]
+            for i in range(self._items_list.count())
         ]
 
     def _selected_expression(self) -> str | None:
@@ -280,7 +281,7 @@ class SentenceCardDialog(QDialog):
             item = selected[0] if selected else None
         if item is None:
             return None
-        text = item.text().strip()
+        text = item.text().strip()  # type: ignore[union-attr]  # guarded by None check above
         return text or None
 
     def _persist_active_meaning(self) -> None:
@@ -1000,21 +1001,11 @@ class SentenceCardDialog(QDialog):
         from .config import DEFAULT_SETTINGS
 
         try:
-            w = int(
-                self._settings.get(
-                    "sentence_dialog_width",
-                    DEFAULT_SETTINGS["sentence_dialog_width"],
-                )
-            )
-            h = int(
-                self._settings.get(
-                    "sentence_dialog_height",
-                    DEFAULT_SETTINGS["sentence_dialog_height"],
-                )
-            )
+            w = int(self._settings.get("sentence_dialog_width", DEFAULT_SETTINGS["sentence_dialog_width"]))  # type: ignore[call-overload]
+            h = int(self._settings.get("sentence_dialog_height", DEFAULT_SETTINGS["sentence_dialog_height"]))  # type: ignore[call-overload]
         except (TypeError, ValueError):
-            w = int(DEFAULT_SETTINGS["sentence_dialog_width"])
-            h = int(DEFAULT_SETTINGS["sentence_dialog_height"])
+            w = int(DEFAULT_SETTINGS["sentence_dialog_width"])  # type: ignore[call-overload]
+            h = int(DEFAULT_SETTINGS["sentence_dialog_height"])  # type: ignore[call-overload]
         self.resize(max(self.minimumWidth(), w), max(self.minimumHeight(), h))
 
     def _persist_dialog_geometry(self) -> None:

@@ -68,7 +68,7 @@ def _append_bold_range(ranges, document, start, end) -> None:
 
 def _sentence_review_bold_ranges(document) -> list[tuple[int, int, str]]:
     """Return non-metadata bold ranges eligible for sentence-review TTS."""
-    ranges = []
+    ranges: list[tuple[int, int, str]] = []
     block = document.begin()
     while block.isValid():
         if block.blockNumber() == 0 and _SENTENCE_REVIEW_METADATA_RE.fullmatch(
@@ -166,7 +166,7 @@ if QWebEnginePage is not None:
                 route_review_card_link(url)
             return ReviewCardNavigationPolicy.allows_embedded_navigation(url)
 else:
-    ReviewCardWebPage = None
+    ReviewCardWebPage = None  # type: ignore  # conditional Qt import
 
 
 def configure_review_web_view(web_view) -> None:

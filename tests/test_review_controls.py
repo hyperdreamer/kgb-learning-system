@@ -538,7 +538,7 @@ class TestDatabaseLoadFailure:
 
 
 class TestCloseEventSettingsFailure:
-    def test_settings_save_oserror_does_not_interrupt_cleanup(self, qapp, capsys):
+    def test_settings_save_oserror_does_not_interrupt_cleanup(self, qapp, caplog):
         app = BarskyApp()
         cleanup_calls = []
         close_requests = []
@@ -584,7 +584,7 @@ class TestCloseEventSettingsFailure:
         app.closeEvent(final_event)
         assert final_event.accepted
         assert cleanup_calls == [True]
-        assert "Could not save settings: disk full" in capsys.readouterr().err
+        assert "Could not save settings: disk full" in caplog.text
 
         app._save_settings = lambda: None
         app.close()

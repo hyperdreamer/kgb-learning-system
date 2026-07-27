@@ -29,9 +29,12 @@ async function sendToKGB(text) {
       throw new Error(`KGB returned HTTP ${response.status}`);
     }
     showCaptureStatus("✓", "Sentence sent to KGB");
+    // Auto-clear success badge after a brief visible confirmation.
+    setTimeout(() => clearCaptureBadge(), 2000);
   } catch (error) {
     console.error("Could not send selected sentence to KGB", error);
-    showCaptureStatus("!", "Could not reach KGB. Start the desktop app first.");
+    // Error badge persists so the user sees it even if they miss the brief flash.
+    showCaptureStatus("ERR", "Could not reach KGB. Start the desktop app first.");
   }
 }
 
@@ -59,7 +62,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
     await sendToKGB(selectedText);
   } catch (error) {
     console.error("Could not read selected text", error);
-    showCaptureStatus("!", "Could not read selection. Try the right-click menu instead.");
+    showCaptureStatus("ERR", "Could not read selection. Try the right-click menu instead.");
   }
 });
 
@@ -75,4 +78,8 @@ function showCaptureStatus(text, title) {
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color: text === "✓" ? "#2e7d32" : "#c62828" });
   chrome.action.setTitle({ title });
+}
+
+function clearCaptureBadge() {
+  chrome.action.setBadgeText({ text: "" });
 }

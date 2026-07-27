@@ -1,13 +1,10 @@
 """Shared support for card-entry dialogs."""
 
-import json
 import sys
-import urllib.error
 
-from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtGui import QFont
 
-from .ai_provider import AIClient, AIMissingConfigError, AIProviderConfig, http_request
+from .ai_provider import AIProviderConfig, _get_ai_worker_class
 
 
 def _legacy_form_helper_override(name: str, canonical):
@@ -44,37 +41,10 @@ def apply_ui_font(widget, settings: dict | None, parent=None) -> None:
     helper(widget, settings, parent)
 
 
-class _AIGenerateWorker(QThread):
-    """Background QThread for AI API calls."""
-
-    result = pyqtSignal(str)
-    error = pyqtSignal(str)
-
-    def __init__(self, config: AIProviderConfig, prompt: str):
-        super().__init__()
-        self._config = config
-        self._prompt = prompt
-
-    def run(self):
-        try:
-            client = AIClient(self._config)
-            url, headers, body = client.build_request(self._prompt)
-            raw = http_request(
-                url,
-                headers,
-                body=json.dumps(body).encode("utf-8"),
-                timeout=self._config.timeout_seconds,
-                method="POST",
-            )
-            self.result.emit(client.parse_response(raw))
-        except AIMissingConfigError as exc:
-            self.error.emit(str(exc))
-        except urllib.error.URLError as exc:
-            self.error.emit(f"Network error: {getattr(exc, 'reason', str(exc))}")
-        except ValueError as exc:
-            self.error.emit(str(exc))
-        except Exception as exc:
-            self.error.emit(f"Unexpected error: {exc}")
+# Canonical AI worker class, sourced from :mod:`ai_provider`.
+# Kept as a module-level name for backward-compatible imports and
+# monkeypatching by test suites.
+_AIGenerateWorker = _get_ai_worker_class()
 
 
 def create_ai_worker(config: AIProviderConfig, prompt: str):
