@@ -306,6 +306,10 @@ QLabel {{
   color: {tokens["text"]};
 }}
 
+QLabel[{ROLE_PROPERTY}="quiet"] {{
+  color: {tokens["text_muted"]};
+}}
+
 QPushButton,
 QToolButton {{
   background-color: {tokens["surface_subtle"]};

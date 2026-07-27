@@ -328,6 +328,27 @@ class TestReviewControls:
             patch("kgb_srs.main_window.QMessageBox.information"),
         )
 
+    @staticmethod
+    def _capture_review_context_emissions(window):
+        """Record real context emissions with their state at emission time."""
+        emissions = []
+        set_review_context = window._set_review_context
+
+        def capture(reviewed, remaining, visible):
+            emissions.append(
+                {
+                    "context": (reviewed, remaining, visible),
+                    "cards_due": tuple(window.cards_due),
+                    "history": tuple(window._daily_review_history),
+                    "current_card": window.current_card,
+                    "current_card_transition": window._current_card_transition,
+                }
+            )
+            set_review_context(reviewed, remaining, visible)
+
+        window._set_review_context = capture
+        return emissions
+
     # -- root design system and semantic chrome --------------------------
 
     def test_root_qss_has_semantic_button_state_selectors(self):
@@ -410,6 +431,41 @@ class TestReviewControls:
             assert status_label.property(ROLE_PROPERTY) == "quiet"
             assert f'QPushButton[{ROLE_PROPERTY}="primary"]' in w.styleSheet()
             assert f'QPushButton[{ROLE_PROPERTY}="secondary"]' in w.styleSheet()
+        finally:
+            w.close()
+
+    def test_review_context_uses_root_quiet_label_treatment_without_local_qss(self):
+        """The real status label inherits its muted quiet rule from root QSS."""
+        _qt_app()
+        from PyQt6.QtWidgets import QApplication, QLabel
+
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import LIGHT_TOKENS, ROLE_PROPERTY
+
+        w = BarskyApp()
+        try:
+            w.settings = dict(w.settings)
+            w.settings.update(font_family="Arial", font_size=14)
+            w.apply_font_settings()
+            w.show()
+            QApplication.processEvents()
+
+            status_label = w.findChild(QLabel, "reviewStatusLabel")
+            assert status_label is not None
+            quiet_selector = f'QLabel[{ROLE_PROPERTY}="quiet"]'
+            quiet_rule = (
+                f"{quiet_selector} {{\n  color: {LIGHT_TOKENS['text_muted']};\n}}"
+            )
+            assert status_label.property(ROLE_PROPERTY) == "quiet"
+            assert status_label.styleSheet() == ""
+            assert quiet_rule in w.styleSheet()
+
+            w._set_review_context(3, 7, True)
+            assert status_label.text() == "Reviewed 3 · Remaining 7"
+            assert status_label.isVisible()
+            w._set_review_context(3, 7, False)
+            assert status_label.text() == "Reviewed 3 · Remaining 7"
+            assert not status_label.isVisible()
         finally:
             w.close()
 
@@ -810,6 +866,136 @@ class TestReviewControls:
 
             w.close_review()
             assert_context(0, 0, False)
+        finally:
+            conn.close()
+            w.close()
+
+    def test_review_context_skip_refreshes_after_next_card_is_coherent(self):
+        """Skip emits context only after its replacement card is selected."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn)
+        try:
+            w.start_review()
+            source_card = w.current_card
+            assert source_card is not None
+            source_id = source_card[0]
+
+            emissions = self._capture_review_context_emissions(w)
+            emissions.clear()
+            w._advance_daily_queue()
+
+            assert [emission["context"] for emission in emissions] == [(0, 2, True)]
+            emission = emissions[0]
+            current_card = emission["current_card"]
+            assert current_card is not None
+            assert current_card[0] != source_id
+            assert all(card[0] != current_card[0] for card in emission["cards_due"])
+            assert [card[0] for card in emission["cards_due"]].count(source_id) == 1
+            assert [
+                (entry.card[0], entry.transition) for entry in emission["history"]
+            ] == [(source_id, "skipped")]
+        finally:
+            conn.close()
+            w.close()
+
+    def test_review_context_grade_refreshes_after_next_card_is_coherent(self):
+        """A fresh grade emits only after the next card becomes current."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn)
+        try:
+            w.start_review()
+            source_card = w.current_card
+            assert source_card is not None
+            source_id = source_card[0]
+            w.flip_card()
+
+            emissions = self._capture_review_context_emissions(w)
+            emissions.clear()
+            w.process_answer(True)
+
+            assert [emission["context"] for emission in emissions] == [(1, 1, True)]
+            emission = emissions[0]
+            current_card = emission["current_card"]
+            assert current_card is not None
+            assert current_card[0] != source_id
+            assert emission["current_card_transition"] is None
+            assert all(card[0] != current_card[0] for card in emission["cards_due"])
+            assert [
+                (entry.card[0], entry.transition) for entry in emission["history"]
+            ] == [(source_id, "graded")]
+        finally:
+            conn.close()
+            w.close()
+
+    def test_review_context_restored_grade_refreshes_after_next_card_is_coherent(
+        self,
+    ):
+        """A restored grade is not counted again while its successor is selected."""
+        conn = self._db(1, 2)
+        w = self._win(conn=conn)
+        try:
+            w.start_review()
+            restored_card = w.current_card
+            assert restored_card is not None
+            restored_id = restored_card[0]
+            w.flip_card()
+            w.process_answer(True)
+            w._previous_daily_card()
+            assert w.current_card is not None
+            assert w.current_card[0] == restored_id
+            assert w._current_card_transition == "graded"
+
+            emissions = self._capture_review_context_emissions(w)
+            emissions.clear()
+            w._advance_daily_queue()
+
+            assert [emission["context"] for emission in emissions] == [(1, 1, True)]
+            emission = emissions[0]
+            current_card = emission["current_card"]
+            assert current_card is not None
+            assert current_card[0] != restored_id
+            assert emission["current_card_transition"] is None
+            assert all(card[0] != current_card[0] for card in emission["cards_due"])
+            assert [
+                (entry.card[0], entry.transition) for entry in emission["history"]
+            ] == [(restored_id, "graded")]
+        finally:
+            conn.close()
+            w.close()
+
+    def test_review_context_completion_emits_only_cleared_state(self):
+        """Completion never emits while the last graded source remains current."""
+        from unittest.mock import patch
+
+        conn = self._db(1, 2)
+        w = self._win(conn=conn)
+        try:
+            w.start_review()
+            first_card = w.current_card
+            assert first_card is not None
+            first_id = first_card[0]
+            w.flip_card()
+            w.process_answer(True)
+            final_card = w.current_card
+            assert final_card is not None
+            final_id = final_card[0]
+            w.flip_card()
+
+            emissions = self._capture_review_context_emissions(w)
+            emissions.clear()
+            with patch("kgb_srs.review_controller.QMessageBox.information"):
+                w.process_answer(True)
+
+            contexts = [emission["context"] for emission in emissions]
+            assert contexts == [(2, 0, True)]
+            assert (2, 1, True) not in contexts
+            emission = emissions[0]
+            assert emission["current_card"] is None
+            assert emission["current_card_transition"] is None
+            assert emission["cards_due"] == ()
+            assert [
+                (entry.card[0], entry.transition) for entry in emission["history"]
+            ] == [(first_id, "graded"), (final_id, "graded")]
         finally:
             conn.close()
             w.close()

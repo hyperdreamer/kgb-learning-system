@@ -167,6 +167,19 @@ def test_root_qss_has_semantic_role_states_and_scoped_companions():
     assert "\nQPushButton {" not in card_qss
 
 
+def test_root_qss_quiet_label_role_uses_muted_token():
+    """The quiet label role must resolve at the root without widening card QSS."""
+    root_qss = stylesheet("Inter", 16)
+    card_qss = review_card_stylesheet("Inter", 16)
+    quiet_selector = f'QLabel[{ROLE_PROPERTY}="quiet"]'
+    quiet_rule = f"{quiet_selector} {{\n  color: {LIGHT_TOKENS['text_muted']};\n}}"
+
+    assert quiet_rule in root_qss
+    assert quiet_selector not in card_qss
+    assert "\nQLabel {" not in card_qss
+    assert f'QLabel[{ROLE_PROPERTY}="primary"]' not in root_qss
+
+
 def test_review_document_css_uses_only_tokens_and_the_content_font():
     """Review documents must use the content-font boundary and token palette."""
     css = review_document_css("Noto Serif", 23)

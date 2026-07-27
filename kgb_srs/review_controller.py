@@ -209,7 +209,6 @@ class ReviewControllerMixin:
         # A graded card restored by Previous has already left the queue.
         if transition != "graded":
             self.cards_due.append(self.current_card)
-        self._update_button_visibility()
         self.show_next_card()
 
     def _load_review_queue(self, cursor):
@@ -738,7 +737,5 @@ class ReviewControllerMixin:
             self._daily_review_history.append(
                 ReviewHistoryEntry((card_id, front, back, new_box), "graded")
             )
-            # Reflect Previous availability immediately (before next card draw).
-            self._update_button_visibility()
 
         self.show_next_card()
