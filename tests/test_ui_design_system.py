@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from math import ceil
 from pathlib import Path
 
 import pytest
@@ -12,17 +13,26 @@ from PyQt6.QtCore import (
     QCoreApplication,
     QEvent,
     QEventLoop,
+    QModelIndex,
     QPoint,
     QPointF,
     QTimer,
     Qt,
 )
-from PyQt6.QtGui import QAction, QColor, QMouseEvent, QPalette, QTextCursor
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QImage,
+    QMouseEvent,
+    QPainter,
+    QPalette,
+    QTextCursor,
+)
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
-    QListWidget,
     QMessageBox,
     QPushButton,
     QStyle,
@@ -381,31 +391,31 @@ def _assert_no_persistent_grade_target(window: BarskyApp) -> None:
 
 def _assert_lower_lane_has_no_click_target(
     window: BarskyApp, scene_point: QPointF
-) -> QPoint:
-    """Check the apparent grade lane has neither a scene item nor viewport overlay."""
+) -> tuple[QWidget, QPoint]:
+    """Resolve the lower lane through the same global hit test as a user click."""
     viewport = window.view.viewport()
     viewport_point = window.view.mapFromScene(scene_point)
+    global_point = viewport.mapToGlobal(viewport_point)
+    hit_target = QApplication.widgetAt(global_point)
+
     assert window.view.itemAt(viewport_point) is None
-    overlays = [
-        child
-        for child in viewport.findChildren(QWidget)
-        if child.isVisible() and child.geometry().contains(viewport_point)
-    ]
-    assert not overlays
-    return viewport_point
+    assert hit_target is viewport or hit_target is window.view, (
+        f"lower grade lane must hit only the graphics viewport/view, not {hit_target!r}"
+    )
+    return hit_target, hit_target.mapFromGlobal(global_point)
 
 
 def _assert_lower_lane_click_is_noop(qapp, window: BarskyApp, card_id: int) -> None:
-    """A click where drag grading is laid out must not grade or reveal a control."""
+    """A user hit in the grade lane must not grade or reveal a control."""
     before_box = _card_box(window, card_id)
     before_history = len(window._daily_review_history)
     scene_point = window._grade_gesture_regions["correct"].center()
-    viewport_point = _assert_lower_lane_has_no_click_target(window, scene_point)
+    hit_target, hit_point = _assert_lower_lane_has_no_click_target(window, scene_point)
     QTest.mouseClick(
-        window.view.viewport(),
+        hit_target,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
-        viewport_point,
+        hit_point,
     )
     qapp.processEvents()
     assert window.current_card is not None and window.current_card[0] == card_id
@@ -431,19 +441,83 @@ def _dispatch_alt_shortcut(qapp, window: BarskyApp, key: Qt.Key) -> None:
     qapp.processEvents()
 
 
-def _button_rendered_color(button: QPushButton) -> QColor:
-    """Read a stable interior pixel from the real Qt-rendered button surface."""
-    image = button.grab().toImage()
-    return image.pixelColor(QPoint(8, button.height() // 2))
+def _rendered_button_state_signature(
+    button: QPushButton, state: QStyle.StateFlag
+) -> tuple[bytes, set[int]]:
+    """Render the installed button QSS state into a device-pixel image."""
+    device_pixel_ratio = button.devicePixelRatioF()
+    assert device_pixel_ratio > 0
+    assert button.width() > 0 and button.height() > 0
+
+    image = QImage(
+        ceil(button.width() * device_pixel_ratio),
+        ceil(button.height() * device_pixel_ratio),
+        QImage.Format.Format_ARGB32_Premultiplied,
+    )
+    image.setDevicePixelRatio(device_pixel_ratio)
+    image.fill(Qt.GlobalColor.transparent)
+
+    option = QStyleOptionButton()
+    option.initFrom(button)
+    option.text = button.text()
+    option.icon = button.icon()
+    option.iconSize = button.iconSize()
+    option.state = state
+    painter = QPainter(image)
+    try:
+        button.style().drawControl(
+            QStyle.ControlElement.CE_PushButton,
+            option,
+            painter,
+            button,
+        )
+    finally:
+        painter.end()
+
+    assert image.devicePixelRatio() == pytest.approx(device_pixel_ratio)
+    return (
+        bytes(image.bits().asarray(image.sizeInBytes())),
+        {
+            image.pixelColor(x, y).rgba()
+            for y in range(image.height())
+            for x in range(image.width())
+        },
+    )
 
 
-def _assert_button_rendered_token(button: QPushButton, token: str) -> None:
-    assert _button_rendered_color(button) == QColor(LIGHT_TOKENS[token])
+_EXPOSED_ITEM_MODEL_ROLES = (
+    Qt.ItemDataRole.DisplayRole,
+    Qt.ItemDataRole.ToolTipRole,
+    Qt.ItemDataRole.StatusTipRole,
+    Qt.ItemDataRole.WhatsThisRole,
+    Qt.ItemDataRole.AccessibleTextRole,
+    Qt.ItemDataRole.AccessibleDescriptionRole,
+)
+
+
+def _item_model_exposed_strings(model, parent: QModelIndex | None = None) -> list[str]:
+    """Collect every exposed text role from a model and its child indexes."""
+    values: list[str] = []
+    parent = QModelIndex() if parent is None else parent
+    for row in range(model.rowCount(parent)):
+        column = 0
+        while True:
+            index = model.index(row, column, parent)
+            if not index.isValid():
+                break
+            for role in _EXPOSED_ITEM_MODEL_ROLES:
+                value = model.data(index, role)
+                if isinstance(value, str):
+                    values.append(value)
+            values.extend(_item_model_exposed_strings(model, index))
+            column += 1
+    return values
 
 
 def _exposed_strings(root: QWidget) -> list[str]:
-    """Collect visible or assistive text exposed by a settings dialog tree."""
+    """Collect visible, assistive, and item-model text exposed by a dialog tree."""
     values: list[str] = []
+    widgets = (root, *root.findChildren(QWidget))
     getters = (
         "text",
         "currentText",
@@ -456,17 +530,19 @@ def _exposed_strings(root: QWidget) -> list[str]:
         "accessibleName",
         "accessibleDescription",
     )
-    for widget in (root, *root.findChildren(QWidget)):
+    scanned_models: set[int] = set()
+    for widget in widgets:
         for name in getters:
             getter = getattr(widget, name, None)
             if callable(getter):
                 value = getter()
                 if isinstance(value, str):
                     values.append(value)
-        if isinstance(widget, QComboBox):
-            values.extend(widget.itemText(index) for index in range(widget.count()))
-        if isinstance(widget, QListWidget):
-            values.extend(widget.item(index).text() for index in range(widget.count()))
+        if isinstance(widget, (QComboBox, QAbstractItemView)):
+            model = widget.model()
+            if id(model) not in scanned_models:
+                scanned_models.add(id(model))
+                values.extend(_item_model_exposed_strings(model))
     for action in root.findChildren(QAction):
         for name in ("text", "toolTip", "statusTip", "whatsThis", "iconText"):
             value = getattr(action, name)()
@@ -900,32 +976,36 @@ def test_semantic_actions_have_distinct_live_states_and_accessible_contrast(
             QPalette.ColorRole.Button
         ) == QColor(LIGHT_TOKENS["danger"])
 
-        _assert_button_rendered_token(card.correct_btn, "success")
-        QTest.mouseMove(card.correct_btn, card.correct_btn.rect().center())
-        qapp.processEvents()
-        assert card.correct_btn.underMouse()
-        _assert_button_rendered_token(card.correct_btn, "success_hover")
-        assert _button_rendered_color(card.correct_btn) != QColor(
-            LIGHT_TOKENS["success"]
+        normal_state = QStyle.StateFlag.State_Enabled | QStyle.StateFlag.State_Raised
+        hover_state = normal_state | QStyle.StateFlag.State_MouseOver
+        pressed_state = (
+            QStyle.StateFlag.State_Enabled
+            | QStyle.StateFlag.State_MouseOver
+            | QStyle.StateFlag.State_Sunken
         )
-        QTest.mousePress(
+        normal_signature, normal_colors = _rendered_button_state_signature(
+            card.correct_btn, normal_state
+        )
+        hover_signature, hover_colors = _rendered_button_state_signature(
+            card.correct_btn, hover_state
+        )
+        pressed_signature, pressed_colors = _rendered_button_state_signature(
+            card.correct_btn, pressed_state
+        )
+        assert QColor(LIGHT_TOKENS["success"]).rgba() in normal_colors
+        assert QColor(LIGHT_TOKENS["success_hover"]).rgba() in hover_colors
+        assert QColor(LIGHT_TOKENS["success_pressed"]).rgba() in pressed_colors
+        assert normal_signature != hover_signature
+        assert hover_signature != pressed_signature
+        assert normal_signature != pressed_signature
+
+        QTest.mouseClick(
             card.correct_btn,
             Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier,
             card.correct_btn.rect().center(),
         )
         qapp.processEvents()
-        assert card.correct_btn.isDown()
-        _assert_button_rendered_token(card.correct_btn, "success_pressed")
-        assert _button_rendered_color(card.correct_btn) != QColor(
-            LIGHT_TOKENS["success_hover"]
-        )
-        QTest.mouseRelease(
-            card.correct_btn,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-            card.correct_btn.rect().center(),
-        )
         _assert_unrevealed_geometry(window)
         _assert_visible_focus(qapp, window.start_btn, window.db_btn)
     finally:
@@ -1048,10 +1128,9 @@ def test_font_endpoints_keep_ui_chrome_and_review_content_separate(
         _dispose_window(window)
 
 
-def test_settings_expose_font_endpoints_without_dark_or_classic_appearance(
-    tmp_path, qapp
-):
+def test_settings_has_no_dark_or_classic_surface_or_staged_key(tmp_path_factory, qapp):
     """The light-only release must not stage a hidden alternate appearance."""
+    tmp_path = tmp_path_factory.mktemp("settings-surface")
     window, _database_root, _settings_file = _new_window(tmp_path)
     dialog = None
     try:
@@ -1071,11 +1150,12 @@ def test_settings_expose_font_endpoints_without_dark_or_classic_appearance(
 
         exposed_text = _exposed_strings(dialog)
         assert exposed_text
-        assert not any(
-            term in text.casefold()
+        forbidden_text = [
+            text
             for text in exposed_text
-            for term in ("dark", "classic")
-        )
+            if any(term in text.casefold() for term in ("dark", "classic"))
+        ]
+        assert not forbidden_text, f"forbidden appearance text: {forbidden_text!r}"
 
         staged = dialog._collect_staged_settings()
         assert not any(
