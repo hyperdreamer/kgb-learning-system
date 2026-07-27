@@ -248,115 +248,88 @@ class TestMenuSubmenuSpacing:
         assert leaves[0].data() == str(dummy)
 
 
-class TestDropZoneLayoutDoesNotOverflow:
-    """DropZoneItems must be fully inside the viewport with a visible
-    internal inset, and the QGraphicsView must be separated from the
-    review buttons by a clear external layout gap."""
+class TestReviewCanvasGestureLayout:
+    """Gesture lanes are in-memory geometry, never scene affordances."""
 
-    # ── helpers ────────────────────────────────────────────────────────
     @staticmethod
-    def _build_and_measure(window_size):
-        """Build BarskyApp at *window_size*, process events, and return
-        the (window, view, viewport, incorrect_zone, start_btn)."""
+    def _build_review_window(window_size, *, flipped):
+        """Return the real canvas and controls after an explicit redraw."""
         from PyQt6.QtWidgets import QApplication
+
         from kgb_srs.main_window import BarskyApp
 
         win = BarskyApp()
+        win.current_card = (1, "front", "back", 1)
+        win.is_current_flipped = flipped
         win.resize(*window_size)
         win.show()
         QApplication.processEvents()
         win.redraw_canvas()
         QApplication.processEvents()
-        return win, win.view, win.view.viewport(), win.incorrect_zone, win.start_btn
+        return win, win.view, win.view.viewport(), win.start_btn
 
-    # ── tests ──────────────────────────────────────────────────────────
-    def test_zone_fully_inside_viewport_with_inset(self):
-        """At a realistic default size the full zone bounding rect must
-        lie inside the viewport, and the zone bottom must leave ≥ 10 px
-        internal inset from the viewport bottom edge."""
+    @staticmethod
+    def _assert_no_persistent_grade_target(window):
+        """No scene item or legacy field may stand in for a grade action."""
+        assert not hasattr(window, "incorrect_zone")
+        assert not hasattr(window, "correct_zone")
+        assert not hasattr(window, "_zone_y")
+        assert all(
+            item.__class__.__name__ != "DropZoneItem" for item in window.scene.items()
+        )
+
+    def test_unrevealed_canvas_has_full_boundary_without_grade_target(self):
+        """Before reveal, explicit Listen/Reveal are the only card actions."""
         _qt_app()
-
-        win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
-
-        assert zone is not None, "incorrect zone not created"
-        sr = zone.sceneBoundingRect()
-        vr = view.mapFromScene(sr).boundingRect()
-
-        # Zone must be fully inside the viewport — no clipping.
-        assert vr.y() >= 0, f"zone top clipped: {vr.y()} px above viewport"
-        assert vr.bottom() <= vp.height(), (
-            f"zone bottom {vr.bottom()} exceeds viewport height {vp.height()}"
+        win, _view, _viewport, _start_btn = self._build_review_window(
+            (900, 700), flipped=False
         )
+        try:
+            scene_rect = win.scene.sceneRect()
+            self._assert_no_persistent_grade_target(win)
+            assert win._grade_gesture_regions == {}
+            assert win._review_card_bottom == pytest.approx(scene_rect.bottom())
+            assert win.card_ui is not None
+            assert not win.card_ui.tts_btn.isHidden()
+            assert not win.card_ui.flip_btn.isHidden()
+            assert win.card_ui.incorrect_btn.isHidden()
+            assert win.card_ui.correct_btn.isHidden()
+        finally:
+            win.close()
 
-        # Internal inset: zone bottom must be ≥ 10 px above viewport bottom.
-        inset = vp.height() - vr.bottom()
-        assert inset >= 10, (
-            f"zone-bottom → viewport-bottom inset is {inset} px, need ≥ 10"
-        )
-
-        win.close()
-
-    def test_view_to_button_external_gap(self):
-        """The QGraphicsView outer bottom edge must be ≥ 8 px above the
-        Start Daily Review button top in global coordinates."""
-        _qt_app()
-        from PyQt6.QtCore import QPoint
-
-        win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
-
-        view_bottom_global = view.mapToGlobal(QPoint(0, view.height())).y()
-        btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
-        external_gap = btn_top_global - view_bottom_global
-        assert external_gap >= 8, (
-            f"view outer bottom → button top gap is {external_gap} px, need ≥ 8"
-        )
-
-        win.close()
-
-    def test_zone_to_button_total_gap(self):
-        """The total gap from zone painted bottom to button top must be
-        clearly visible (≥ 18 px in global coordinates)."""
+    @pytest.mark.parametrize("window_size", [(600, 400), (1200, 800)])
+    def test_revealed_canvas_uses_contained_nonvisual_lanes(self, window_size):
+        """Narrow and wide canvases retain geometry without scene grade lanes."""
         _qt_app()
         from PyQt6.QtCore import QPoint
 
-        win, view, vp, zone, start_btn = self._build_and_measure((900, 700))
-
-        sr = zone.sceneBoundingRect()
-        vr = view.mapFromScene(sr).boundingRect()
-        zone_bottom_global = vp.mapToGlobal(
-            QPoint(int(vr.center().x()), int(vr.bottom()))
-        ).y()
-        btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
-        total_gap = btn_top_global - zone_bottom_global
-        assert total_gap >= 18, (
-            f"zone bottom → button top total gap is {total_gap} px, need ≥ 18"
+        win, view, viewport, start_btn = self._build_review_window(
+            window_size, flipped=True
         )
+        try:
+            scene_rect = win.scene.sceneRect()
+            regions = win._grade_gesture_regions
+            self._assert_no_persistent_grade_target(win)
+            assert set(regions) == {"incorrect", "correct"}
+            for region in regions.values():
+                assert not region.isEmpty()
+                assert scene_rect.contains(region)
 
-        win.close()
+            lane_top = min(region.top() for region in regions.values())
+            assert win._review_card_bottom == pytest.approx(lane_top - 20)
+            assert win._review_card_bottom < lane_top
+            assert win.card_ui.sceneBoundingRect().bottom() <= (
+                win._review_card_bottom + 1
+            )
 
-    def test_holds_at_minimum_viable_height(self):
-        """The constraints must hold at the minimum view height of 200
-        where the viewport is still large enough for the zone."""
-        _qt_app()
-        from PyQt6.QtCore import QPoint
+            view_bottom_global = view.mapToGlobal(QPoint(0, view.height())).y()
+            button_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
+            assert button_top_global - view_bottom_global >= 8
 
-        # 600×400 keeps the view at its 200 px minimum height without
-        # pushing Qt into an unresolvable size negotiation.
-        win, view, vp, zone, start_btn = self._build_and_measure((600, 400))
-
-        assert zone is not None
-        sr = zone.sceneBoundingRect()
-        vr = view.mapFromScene(sr).boundingRect()
-
-        assert vr.y() >= 0
-        inset = vp.height() - vr.bottom()
-        assert inset >= 10, f"at min height: zone inset = {inset} px, need ≥ 10"
-
-        view_bottom_global = view.mapToGlobal(QPoint(0, view.height())).y()
-        btn_top_global = start_btn.mapToGlobal(QPoint(0, 0)).y()
-        external_gap = btn_top_global - view_bottom_global
-        assert external_gap >= 8, (
-            f"at min height: external gap = {external_gap} px, need ≥ 8"
-        )
-
-        win.close()
+            old_regions = regions
+            win.redraw_canvas()
+            assert win._grade_gesture_regions is not old_regions
+            assert set(win._grade_gesture_regions) == {"incorrect", "correct"}
+            self._assert_no_persistent_grade_target(win)
+        finally:
+            win.close()

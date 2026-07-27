@@ -2,7 +2,6 @@
 
 import logging
 import os
-import re
 
 import pytest
 
@@ -26,7 +25,7 @@ class _MockApp:
     def flip_card(self):
         pass
 
-    def check_card_drop(self, *_args):
+    def process_answer(self, *_args):
         pass
 
 
@@ -41,55 +40,64 @@ def flashcard():
     app.processEvents()
 
 
-def _background(stylesheet, selector):
-    match = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", stylesheet)
-    assert match, f"Missing stylesheet selector: {selector}"
-    color = re.search(r"background-color:\s*(#[0-9A-Fa-f]{6})", match.group(1))
-    assert color, f"Missing background color in: {selector}"
-    return color.group(1).upper()
+def test_review_card_actions_use_semantic_roles_and_container_state_qss(flashcard):
+    """The real card owns the canonical semantic QSS boundary."""
+    from kgb_srs.ui_theme import ROLE_PROPERTY, review_card_stylesheet
+
+    assert flashcard.container.objectName() == "reviewCardRoot"
+    assert flashcard.container.styleSheet() == review_card_stylesheet("Arial", 14)
+
+    expected_roles = {
+        "tts_btn": "secondary",
+        "flip_btn": "primary",
+        "incorrect_btn": "danger",
+        "correct_btn": "success",
+    }
+    for attribute, role in expected_roles.items():
+        button = getattr(flashcard, attribute)
+        assert button.property(ROLE_PROPERTY) == role
+        assert button.styleSheet() == ""
+
+    flashcard.set_text("front", is_flipped=False)
+    assert not flashcard.tts_btn.isHidden()
+    assert not flashcard.flip_btn.isHidden()
+    assert flashcard.incorrect_btn.isHidden()
+    assert flashcard.correct_btn.isHidden()
+
+    flashcard.set_text("front\n\n---\n\nback", is_flipped=True)
+    assert not flashcard.tts_btn.isHidden()
+    assert flashcard.flip_btn.isHidden()
+    assert not flashcard.incorrect_btn.isHidden()
+    assert not flashcard.correct_btn.isHidden()
 
 
-@pytest.mark.parametrize(
-    ("attribute", "object_name", "normal", "hover", "pressed"),
-    [
-        ("tts_btn", "ttsBtn", "#9C27B0", "#AB47BC", "#8E24AA"),
-        ("flip_btn", "revealBtn", "#2196F3", "#42A5F5", "#1E88E5"),
-    ],
-)
-def test_action_buttons_have_distinct_interaction_colors(
-    flashcard, attribute, object_name, normal, hover, pressed
-):
-    button = getattr(flashcard, attribute)
-    stylesheet = button.styleSheet()
+def test_review_card_container_qss_has_disabled_semantic_states(flashcard):
+    """Disabled action styling remains root-scoped and token-backed."""
+    from kgb_srs.ui_theme import LIGHT_TOKENS, ROLE_PROPERTY
 
-    assert button.objectName() == object_name
-    assert _background(stylesheet, f"QPushButton#{object_name}") == normal
-    assert _background(stylesheet, f"QPushButton#{object_name}:hover") == hover
-    assert _background(stylesheet, f"QPushButton#{object_name}:pressed") == pressed
+    card_qss = flashcard.container.styleSheet()
+    card_root = "QWidget#reviewCardRoot"
+    for role in ("primary", "secondary", "success", "danger"):
+        for control in ("QPushButton", "QToolButton"):
+            selector = f'{card_root} {control}[{ROLE_PROPERTY}="{role}"]:disabled'
+            assert selector in card_qss
+
+    assert LIGHT_TOKENS["disabled_surface"] in card_qss
+    assert LIGHT_TOKENS["disabled_text"] in card_qss
+    for attribute in ("tts_btn", "flip_btn", "incorrect_btn", "correct_btn"):
+        assert getattr(flashcard, attribute).styleSheet() == ""
 
 
-@pytest.mark.parametrize(
-    ("attribute", "object_name"),
-    [("tts_btn", "ttsBtn"), ("flip_btn", "revealBtn")],
-)
-def test_action_buttons_keep_disabled_state_muted(flashcard, attribute, object_name):
-    stylesheet = getattr(flashcard, attribute).styleSheet()
-    selector = f"QPushButton#{object_name}:disabled"
+def test_review_card_qss_uses_validated_ui_font_not_content_font(flashcard):
+    """The container uses only the validated UI-font declaration."""
+    from kgb_srs.ui_theme import font_css
 
-    assert _background(stylesheet, selector) == "#CFD8DC"
-    rule = re.search(rf"{re.escape(selector)}\s*\{{([^}}]*)\}}", stylesheet)
-    assert rule is not None
-    assert "color: #78909C" in rule.group(1)
-
-
-def test_action_buttons_use_ui_font_not_content_font(flashcard):
-    """Listen/Reveal buttons keep UI font_family/font_size in stylesheets."""
-    for attr in ("tts_btn", "flip_btn"):
-        ss = getattr(flashcard, attr).styleSheet()
-        assert "font-family: 'Arial'" in ss
-        assert "font-size: 14px" in ss
-        assert "Georgia" not in ss
-        assert "font-size: 22px" not in ss
+    card_qss = flashcard.container.styleSheet()
+    assert font_css("Arial", 14) in card_qss
+    assert "Georgia" not in card_qss
+    assert "font-size: 22px" not in card_qss
+    for attribute in ("tts_btn", "flip_btn", "incorrect_btn", "correct_btn"):
+        assert getattr(flashcard, attribute).styleSheet() == ""
 
 
 def test_set_text_uses_content_font_not_ui_font_plus_four(monkeypatch):

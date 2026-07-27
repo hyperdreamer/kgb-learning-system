@@ -1049,3 +1049,308 @@ class TestAllCardsReviewMode:
         app, _, _ = app_with_db
         assert app.all_cards_checkbox.isEnabled()
         assert not app.all_cards_checkbox.isChecked()
+
+
+class TestReviewGradeGestureLifecycle:
+    """Real-window coverage for explicit grading and nonvisual drag state."""
+
+    @staticmethod
+    def _start_visible_review(app):
+        from PyQt6.QtWidgets import QApplication
+
+        app.resize(900, 700)
+        app.show()
+        QApplication.processEvents()
+        app.start_review()
+        app.redraw_canvas()
+        QApplication.processEvents()
+        assert app.current_card is not None
+        assert app.card_ui is not None
+
+    @staticmethod
+    def _assert_unrevealed_geometry(app):
+        assert app.current_card is not None
+        assert app.is_current_flipped is False
+        assert app._grade_gesture_regions == {}
+        assert app._review_card_bottom == pytest.approx(app.scene.sceneRect().bottom())
+        assert app._review_card_home == pytest.approx(
+            (app.card_ui.pos().x(), app.card_ui.pos().y())
+        )
+
+    @staticmethod
+    def _assert_revealed_geometry(app):
+        scene_rect = app.scene.sceneRect()
+        regions = app._grade_gesture_regions
+        assert app.current_card is not None
+        assert app.is_current_flipped is True
+        assert set(regions) == {"incorrect", "correct"}
+        assert all(scene_rect.contains(region) for region in regions.values())
+        lane_top = min(region.top() for region in regions.values())
+        assert app._review_card_bottom == pytest.approx(lane_top - 20)
+        assert app.card_ui.sceneBoundingRect().bottom() <= (app._review_card_bottom + 1)
+        assert app._review_card_home == pytest.approx(
+            (app.card_ui.pos().x(), app.card_ui.pos().y())
+        )
+
+    def test_explicit_grade_buttons_keep_guard_shortcuts_and_review_semantics(
+        self, app_with_db
+    ):
+        """Buttons are accessible primary affordances without bypassing guards."""
+        from PyQt6.QtGui import QKeySequence, QShortcut
+
+        from kgb_srs.ui_theme import ROLE_PROPERTY
+
+        app, _, conn = app_with_db
+        self._start_visible_review(app)
+        card_id = app.current_card[0]
+        card = app.card_ui
+        box_before = conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (card_id,)
+        ).fetchone()[0]
+
+        expected_buttons = {
+            "incorrect_btn": (
+                "incorrectBtn",
+                "Incorrect",
+                "danger",
+                "Alt+Left",
+                "Alt+1",
+            ),
+            "correct_btn": ("correctBtn", "Correct", "success", "Alt+Right", "Alt+2"),
+        }
+        for attribute, (
+            name,
+            label,
+            role,
+            first_key,
+            second_key,
+        ) in expected_buttons.items():
+            button = getattr(card, attribute)
+            assert button.objectName() == name
+            assert button.text() == label
+            assert button.property(ROLE_PROPERTY) == role
+            assert label.lower() in button.accessibleName().lower()
+            assert first_key in button.toolTip()
+            assert second_key in button.toolTip()
+            assert first_key in button.accessibleDescription()
+            assert second_key in button.accessibleDescription()
+            assert button.isHidden()
+
+        shortcut_keys = {
+            shortcut.key().toString() for shortcut in app.findChildren(QShortcut)
+        }
+        assert {
+            QKeySequence("Alt+Left").toString(),
+            QKeySequence("Alt+1").toString(),
+        } <= shortcut_keys
+        assert {
+            QKeySequence("Alt+Right").toString(),
+            QKeySequence("Alt+2").toString(),
+        } <= shortcut_keys
+
+        card.correct_btn.click()
+        app._shortcut_incorrect()
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == box_before
+        )
+        assert app.current_card[0] == card_id
+        assert app._daily_review_history == []
+
+        app.flip_card()
+        card = app.card_ui
+        self._assert_revealed_geometry(app)
+        assert not card.incorrect_btn.isHidden()
+        assert not card.correct_btn.isHidden()
+        card.correct_btn.click()
+
+        assert conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (card_id,)
+        ).fetchone()[0] == min(box_before + 1, 5)
+        assert app._daily_review_history[-1].card[0] == card_id
+        self._assert_unrevealed_geometry(app)
+
+        shortcut_card_id = app.current_card[0]
+        shortcut_box = conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (shortcut_card_id,)
+        ).fetchone()[0]
+        app.flip_card()
+        app._shortcut_incorrect()
+        assert conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (shortcut_card_id,)
+        ).fetchone()[0] == (3 if shortcut_box >= 3 else 1)
+        assert app._daily_review_history[-1].card[0] == shortcut_card_id
+
+    def test_nonvisual_drag_routes_only_revealed_regions_and_snaps_outside_home(
+        self, app_with_db
+    ):
+        """Drag uses in-memory rectangles and preserves the queued grading path."""
+        from PyQt6.QtCore import QPointF
+        from PyQt6.QtTest import QTest
+
+        app, _, conn = app_with_db
+        self._start_visible_review(app)
+        card_id = app.current_card[0]
+        box_before = conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (card_id,)
+        ).fetchone()[0]
+        card = app.card_ui
+
+        card.setPos(QPointF(app.scene.sceneRect().center().x(), 0))
+        app.check_card_drop(card)
+        assert (card.pos().x(), card.pos().y()) == pytest.approx(
+            (app.scene.sceneRect().center().x(), 0)
+        )
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == box_before
+        )
+
+        app.flip_card()
+        card = app.card_ui
+        home = app._review_card_home
+        card.setPos(QPointF(app.scene.sceneRect().center().x(), 0))
+        app.check_card_drop(card)
+        assert (card.pos().x(), card.pos().y()) == pytest.approx(home)
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == box_before
+        )
+
+        assert all(
+            item.__class__.__name__ != "DropZoneItem" for item in app.scene.items()
+        )
+        card.setPos(app._grade_gesture_regions["correct"].center())
+        app.check_card_drop(card)
+        QTest.qWait(10)
+
+        assert conn.execute(
+            "SELECT box FROM cards WHERE id = ?", (card_id,)
+        ).fetchone()[0] == min(box_before + 1, 5)
+        assert app._daily_review_history[-1].card[0] == card_id
+        self._assert_unrevealed_geometry(app)
+
+    def test_grade_next_and_previous_recreate_unrevealed_geometry(self, app_with_db):
+        """Grade/Next and Previous never leak revealed gesture geometry."""
+        app, _, _ = app_with_db
+        self._start_visible_review(app)
+        first_id = app.current_card[0]
+
+        app.flip_card()
+        self._assert_revealed_geometry(app)
+        app._advance_daily_queue()
+        self._assert_unrevealed_geometry(app)
+
+        app._previous_daily_card()
+        assert app.current_card[0] == first_id
+        self._assert_unrevealed_geometry(app)
+
+        app.flip_card()
+        app.card_ui.incorrect_btn.click()
+        self._assert_unrevealed_geometry(app)
+
+    def test_browse_restart_resume_and_resize_refresh_gesture_lifecycle(
+        self, app_with_db
+    ):
+        """Every direct redraw route recomputes fresh full or reduced geometry."""
+        from PyQt6.QtWidgets import QApplication
+
+        app, _, _ = app_with_db
+        self._start_visible_review(app)
+        selected_id = app.cards_due[0][0]
+
+        app.flip_card()
+        self._assert_revealed_geometry(app)
+        app._start_selected_card_review(selected_id)
+        assert app.current_card[0] == selected_id
+        self._assert_unrevealed_geometry(app)
+
+        app.flip_card()
+        app._restart_daily_review()
+        self._assert_unrevealed_geometry(app)
+
+        app.flip_card()
+        app.close_review()
+        assert app.current_card is None
+        assert app._grade_gesture_regions == {}
+        assert app._review_card_bottom == pytest.approx(app.scene.sceneRect().bottom())
+        app.start_review()
+        self._assert_unrevealed_geometry(app)
+
+        app.resize(1100, 760)
+        QApplication.processEvents()
+        self._assert_unrevealed_geometry(app)
+
+        app.flip_card()
+        old_regions = app._grade_gesture_regions
+        app.resize(760, 520)
+        QApplication.processEvents()
+        self._assert_revealed_geometry(app)
+        assert app._grade_gesture_regions is not old_regions
+
+    def test_empty_start_and_reset_paths_clear_stale_gesture_geometry(
+        self, app_with_db
+    ):
+        """No-card and database-session transitions delegate cleanup to one seam."""
+        import sqlite3
+
+        from PyQt6.QtCore import QRectF
+
+        from kgb_srs.catalog import DatabaseType
+
+        app, _, conn = app_with_db
+        self._start_visible_review(app)
+        app.flip_card()
+        self._assert_revealed_geometry(app)
+
+        app.close_review()
+        app.cards_due = []
+        app._paused_cards_due = []
+        app._paused_daily_queue = []
+        app._paused_review_history = []
+        app._paused_review_card = None
+        app._paused_review_mode = ""
+        conn.execute("UPDATE cards SET next_review = '2999-01-01'")
+        conn.commit()
+        app.start_review()
+        assert app.current_card is None
+        assert app._grade_gesture_regions == {}
+        assert app._review_card_bottom == pytest.approx(app.scene.sceneRect().bottom())
+
+        def seed_stale_geometry():
+            app.current_card = (999, "stale", "back", 1)
+            app.is_current_flipped = True
+            app._grade_gesture_regions = {
+                "incorrect": QRectF(0, 500, 200, 80),
+                "correct": QRectF(300, 500, 200, 80),
+            }
+            app._review_card_bottom = 480.0
+            app._review_card_home = (300.0, 200.0)
+
+        seed_stale_geometry()
+        app._reset_review_session()
+        assert app.current_card is None
+        assert app._grade_gesture_regions == {}
+        assert app._review_card_bottom == pytest.approx(app.scene.sceneRect().bottom())
+
+        seed_stale_geometry()
+        app._clear_database_state()
+        assert app.conn is None
+        assert app.current_card is None
+        assert app._grade_gesture_regions == {}
+        assert app._review_card_bottom == pytest.approx(app.scene.sceneRect().bottom())
+
+        replacement_conn = sqlite3.connect(":memory:")
+        seed_stale_geometry()
+        app._adopt_database(
+            replacement_conn,
+            "replacement.db",
+            "Temporary",
+            DatabaseType.KNOWLEDGE,
+            False,
+            False,
+        )
+        assert app.conn is replacement_conn
+        assert app.current_card is None
+        assert app._grade_gesture_regions == {}
+        assert app._review_card_bottom == pytest.approx(app.scene.sceneRect().bottom())

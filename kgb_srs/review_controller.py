@@ -6,7 +6,7 @@ import re
 import sqlite3
 from typing import Literal, NamedTuple
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QRectF, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
 from .browse_dialog import _fetch_expressions_for_card
@@ -77,6 +77,57 @@ class ReviewHistoryEntry(NamedTuple):
 
 class ReviewControllerMixin:
     """Review behavior mixed into :class:`main_window.BarskyApp`."""
+
+    def _build_grade_gesture_regions(self, scene_rect: QRectF) -> dict[str, QRectF]:
+        """Return fresh, contained lower-lane geometry without scene effects."""
+        width = max(0.0, float(scene_rect.width()))
+        height = max(0.0, float(scene_rect.height()))
+        inset = min(24.0, width / 8, height / 8)
+        gutter = min(24.0, width / 8, height / 8)
+        lane_height = min(80.0, height)
+
+        left = scene_rect.left() + inset
+        right = scene_rect.right() - inset
+        top = scene_rect.bottom() - inset - lane_height
+        bottom = scene_rect.bottom() - inset
+        left = min(max(left, scene_rect.left()), scene_rect.right())
+        right = max(min(right, scene_rect.right()), scene_rect.left())
+        top = min(max(top, scene_rect.top()), scene_rect.bottom())
+        bottom = max(min(bottom, scene_rect.bottom()), scene_rect.top())
+
+        available_width = max(0.0, right - left - gutter)
+        lane_width = available_width / 2
+        incorrect_right = min(right, left + lane_width)
+        correct_left = min(right, max(left, incorrect_right + gutter))
+
+        return {
+            "incorrect": QRectF(
+                left,
+                top,
+                max(0.0, incorrect_right - left),
+                max(0.0, bottom - top),
+            ),
+            "correct": QRectF(
+                correct_left,
+                top,
+                max(0.0, right - correct_left),
+                max(0.0, bottom - top),
+            ),
+        }
+
+    def _sync_review_card_geometry(self) -> None:
+        """Synchronize review gesture geometry from the current scene and card."""
+        scene_rect = self.scene.sceneRect()
+        self._grade_gesture_regions = {}
+        self._review_card_bottom = float(scene_rect.bottom())
+
+        if self.current_card is not None and self.is_current_flipped:
+            regions = self._build_grade_gesture_regions(scene_rect)
+            self._grade_gesture_regions = regions
+            lane_top = min(region.top() for region in regions.values())
+            self._review_card_bottom = max(
+                float(scene_rect.top()), float(lane_top - 20)
+            )
 
     def _review_context_counts(self) -> tuple[int, int]:
         """Return display-only reviewed and remaining counts for a daily session."""
@@ -339,9 +390,11 @@ class ReviewControllerMixin:
 
         self.current_card = None
         self._current_card_transition = None
+        self.is_current_flipped = False
         self.review_mode = ""
         self._daily_review_history = []
         self._daily_queue_snapshot = []
+        self._sync_review_card_geometry()
 
         self._update_button_visibility()
 
@@ -484,6 +537,8 @@ class ReviewControllerMixin:
                 self._daily_review_history or self._daily_queue_snapshot
             ):
                 self.current_card = None
+                self.is_current_flipped = False
+                self._sync_review_card_geometry()
                 self._update_button_visibility()
                 return
             all_mode = bool(
@@ -496,10 +551,13 @@ class ReviewControllerMixin:
                 else "No cards due for review today!"
             )
             QMessageBox.information(self, "Done", empty_msg)
+            self.current_card = None
+            self.is_current_flipped = False
             self.review_mode = ""
             self._daily_queue_snapshot = []
             self._daily_review_history = []
             self._current_card_transition = None
+            self._sync_review_card_geometry()
             self._update_button_visibility()
             return
 
@@ -540,37 +598,41 @@ class ReviewControllerMixin:
             QMessageBox.information(self, "Done", "You have finished your reviews.")
             self.current_card = None
             self._current_card_transition = None
+            self.is_current_flipped = False
+            self._sync_review_card_geometry()
             self._update_button_visibility()
             return
 
         QMessageBox.information(self, "Done", "You have finished your reviews.")
         self.current_card = None
         self._current_card_transition = None
+        self.is_current_flipped = False
         self.review_mode = ""
         self._daily_review_history = []
         self._daily_queue_snapshot = []
+        self._sync_review_card_geometry()
         self._update_button_visibility()
 
     def draw_card_ui(self):
+        self._sync_review_card_geometry()
         if not self.current_card:
             return
 
         card_id, front, back, box = self.current_card
+        scene_rect = self.scene.sceneRect()
+        scene_width = max(1.0, float(scene_rect.width()))
+        scene_height = max(1.0, float(scene_rect.height()))
+        available_bottom = min(
+            max(float(self._review_card_bottom), float(scene_rect.top())),
+            float(scene_rect.bottom()),
+        )
+        available_height = max(1.0, available_bottom - float(scene_rect.top()))
 
-        zone_y = getattr(self, "_zone_y", self.scene.height() - 100)
-
-        w = max(400, self.scene.width())
-        h = max(400, self.scene.height())
-
-        cw = int(w * 0.90)
-        ch = int(h * 0.75)
-
-        available = zone_y - 20
-        if ch > available:
-            ch = max(200, available)
-
-        cx = w / 2
-        cy = available / 2
+        cw = max(1, int(scene_width * 0.90))
+        ch = max(1, min(int(scene_height * 0.75), int(available_height)))
+        cx = float(scene_rect.left()) + scene_width / 2
+        cy = float(scene_rect.top()) + available_height / 2
+        self._review_card_home = (cx, cy)
 
         self.card_ui = FlashCardItem(self, cx, cy, cw, ch)
 
@@ -660,8 +722,13 @@ class ReviewControllerMixin:
             return
 
         self.is_current_flipped = True
-        card_id, front, back, box = self.current_card
+        redraw_canvas = getattr(self, "redraw_canvas", None)
+        if callable(redraw_canvas):
+            redraw_canvas()
+            return
 
+        # Controller-only doubles deliberately omit a callable redraw seam.
+        card_id, front, back, box = self.current_card
         metadata_md = f"**Box {box}** | ID: `{card_id}`"
 
         spoken_text = _card_speech_text(front, back)
@@ -681,18 +748,25 @@ class ReviewControllerMixin:
         self.card_ui.set_text(display_md, True, spoken_text)
 
     def check_card_drop(self, card_item):
-        if not self.incorrect_zone or not self.correct_zone:
+        if not self.current_card or not self.is_current_flipped:
             return
-        card_rect = card_item.sceneBoundingRect()
-        inc_rect = self.incorrect_zone.sceneBoundingRect()
-        cor_rect = self.correct_zone.sceneBoundingRect()
 
-        if card_rect.intersects(inc_rect):
-            QTimer.singleShot(0, lambda: self.process_answer(correct=False))
-        elif card_rect.intersects(cor_rect):
-            QTimer.singleShot(0, lambda: self.process_answer(correct=True))
-        else:
-            card_item.setPos(self.scene.width() / 2, (self.scene.height() - 100) / 2)
+        regions = self._grade_gesture_regions
+        if not regions:
+            return
+
+        scene_pos = card_item.scenePos()
+        incorrect_region = regions.get("incorrect")
+        if incorrect_region is not None and incorrect_region.contains(scene_pos):
+            QTimer.singleShot(0, lambda: self.process_answer(False))
+            return
+
+        correct_region = regions.get("correct")
+        if correct_region is not None and correct_region.contains(scene_pos):
+            QTimer.singleShot(0, lambda: self.process_answer(True))
+            return
+
+        card_item.setPos(*self._review_card_home)
 
     def process_answer(self, correct):
         if not self.current_card:

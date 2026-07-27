@@ -159,10 +159,25 @@ def test_root_qss_has_semantic_role_states_and_scoped_companions():
     assert "QMenu::item:selected" in menu_qss
 
     card_qss = review_card_stylesheet("Inter", 16)
-    assert "QWidget#reviewCard {" in card_qss
-    assert "QWidget#reviewCard QLabel" in card_qss
-    assert "QWidget#reviewCard QPushButton" in card_qss
-    assert "QWidget#reviewCard QToolButton" in card_qss
+    card_root = "QWidget#reviewCardRoot"
+    assert f"{card_root} {{" in card_qss
+    for selector in (
+        f"{card_root} QLabel",
+        f"{card_root} QTextBrowser",
+        f"{card_root} QTextEdit",
+        f"{card_root} QPushButton",
+        f"{card_root} QToolButton",
+    ):
+        assert selector in card_qss
+
+    for role in ("primary", "secondary", "success", "danger"):
+        for control in ("QPushButton", "QToolButton"):
+            selector = f'{card_root} {control}[{ROLE_PROPERTY}="{role}"]'
+            for state in ("", ":hover", ":pressed", ":disabled", ":focus"):
+                assert f"{selector}{state}" in card_qss
+
+    assert font_css("Inter", 16) in card_qss
+    assert re.search(r"QWidget#reviewCard(?=[\s,{:])", card_qss) is None
     assert "\nQLabel {" not in card_qss
     assert "\nQPushButton {" not in card_qss
 

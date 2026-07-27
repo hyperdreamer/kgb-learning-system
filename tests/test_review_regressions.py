@@ -180,8 +180,8 @@ class TestReviewPresentationRegressions:
         )
         return conn, card_id, sentence, legacy_back
 
-    def test_sentence_card_tts_uses_sentence_order_after_reveal(self):
-        """TTS must follow the displayed sentence order, not a stale back cache."""
+    def test_sentence_card_tts_fallback_keeps_sentence_order_without_redraw(self):
+        """The controller-only non-callable-redraw fallback retains sentence TTS."""
         _qt_app()
         from types import SimpleNamespace
 
@@ -202,6 +202,7 @@ class TestReviewPresentationRegressions:
                 current_card=(card_id, sentence, legacy_back, 1),
                 _db_type=DatabaseType.LANGUAGE_SENTENCE,
                 card_ui=card,
+                redraw_canvas=None,
             )
             window._build_sentence_card_display = (
                 BarskyApp._build_sentence_card_display.__get__(window)
@@ -219,9 +220,12 @@ class TestReviewPresentationRegressions:
             conn.close()
 
     def test_redrawn_sentence_card_tts_uses_sentence_order(self, monkeypatch):
-        """A flipped redraw must retain the same sentence-ordered TTS input."""
+        """A real redraw seam synchronizes geometry and retains sentence TTS."""
         _qt_app()
         from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from PyQt6.QtCore import QRectF
 
         import kgb_srs.review_controller as review_controller
         from kgb_srs.catalog import DatabaseType
@@ -237,6 +241,9 @@ class TestReviewPresentationRegressions:
                 self.speech_text = speech_text
 
         class FakeScene:
+            def sceneRect(self):
+                return QRectF(0, 0, 900, 700)
+
             def width(self):
                 return 900
 
@@ -254,9 +261,16 @@ class TestReviewPresentationRegressions:
                 is_current_flipped=True,
                 _db_type=DatabaseType.LANGUAGE_SENTENCE,
                 scene=FakeScene(),
-                _zone_y=600,
+                _grade_gesture_regions={},
+                _review_card_bottom=0.0,
+                _review_card_home=(0.0, 0.0),
                 _update_button_visibility=lambda: None,
             )
+            window._build_grade_gesture_regions = (
+                BarskyApp._build_grade_gesture_regions.__get__(window)
+            )
+            sync = BarskyApp._sync_review_card_geometry.__get__(window)
+            window._sync_review_card_geometry = MagicMock(wraps=sync)
             window._build_sentence_card_display = (
                 BarskyApp._build_sentence_card_display.__get__(window)
             )
@@ -264,6 +278,8 @@ class TestReviewPresentationRegressions:
 
             BarskyApp.draw_card_ui(window)
 
+            assert window._sync_review_card_geometry.call_count == 1
+            assert set(window._grade_gesture_regions) == {"incorrect", "correct"}
             assert window.card_ui.display_text.index(
                 "1\\. **grievance**:"
             ) < window.card_ui.display_text.index("2\\. **exact**:")
@@ -531,40 +547,43 @@ class TestReviewControls:
 
         w.close()
 
-    def test_drop_zone_html_includes_ui_font(self):
-        """Correct/Incorrect drop zone HTML injects UI font-family and size."""
+    def test_post_reveal_uses_nonvisual_gesture_geometry_without_zone_html(self):
+        """Revealed cards expose controls and memory-only grade geometry."""
         _qt_app()
+        from PyQt6.QtWidgets import QApplication
+
         from kgb_srs.main_window import BarskyApp
 
         w = BarskyApp()
-        w.settings["font_family"] = "Courier New"
-        w.settings["font_size"] = 19
-        w.resize(900, 700)
-        w.show()
-        _qt_app().processEvents()
-        w.redraw_canvas()
-        _qt_app().processEvents()
+        try:
+            w.settings["font_family"] = "Courier New"
+            w.settings["font_size"] = 19
+            w.current_card = (1, "front", "back", 1)
+            w.is_current_flipped = False
+            w.resize(900, 700)
+            w.show()
+            QApplication.processEvents()
+            w.redraw_canvas()
+            QApplication.processEvents()
 
-        for zone_name in ("incorrect_zone", "correct_zone"):
-            zone = getattr(w, zone_name)
-            html = zone.text_item.toHtml()
-            assert "Courier New" in html or "font-family" in html.lower(), (
-                f"{zone_name} HTML must include UI font-family, got: {html[:200]!r}"
-            )
-            # Qt may rewrite style attributes; check either inline style or
-            # that font-size 19 is present somewhere in the HTML.
-            assert (
-                "font-size: 19" in html
-                or "font-size:19" in html
-                or 'font-size="19' in html
-                or "19pt" in html
-                or "19px" in html
-            ), f"{zone_name} HTML must include UI font-size 19, got: {html[:300]!r}"
-            assert "Courier" in html, (
-                f"{zone_name} HTML must mention Courier font family"
+            assert w._grade_gesture_regions == {}
+            assert not hasattr(w, "incorrect_zone")
+            assert not hasattr(w, "correct_zone")
+            assert not hasattr(w, "_zone_y")
+            assert all(
+                item.__class__.__name__ != "DropZoneItem" for item in w.scene.items()
             )
 
-        w.close()
+            w.flip_card()
+
+            assert set(w._grade_gesture_regions) == {"incorrect", "correct"}
+            assert not w.card_ui.incorrect_btn.isHidden()
+            assert not w.card_ui.correct_btn.isHidden()
+            assert all(
+                item.__class__.__name__ != "DropZoneItem" for item in w.scene.items()
+            )
+        finally:
+            w.close()
 
     def test_browse_dialog_inherits_ui_font(self, monkeypatch):
         """Browse Cards dialog receives main window UI font via setFont."""
@@ -1041,16 +1060,16 @@ class TestReviewControls:
         w.close()
 
     def test_shortcut_reveal_and_grade(self):
-        """Alt+R reveals; Alt+Right grades correct only after flip."""
-        from unittest.mock import MagicMock
+        """Alt+R redraws the card; Alt+Right grades only after reveal."""
+        from PyQt6.QtWidgets import QApplication
 
         conn = self._db(1)
         w = self._win(conn=conn, card=(1, "c1", "b1", 1), mode="daily")
         w.is_current_flipped = False
-        card_ui = MagicMock()
-        w.card_ui = card_ui
-        # Avoid real scene item removal when grading advances.
-        w.scene = MagicMock()
+        w.resize(900, 700)
+        w.show()
+        QApplication.processEvents()
+        w.redraw_canvas()
         q, i = self._mock_dialogs()
 
         with q, i:
@@ -1059,9 +1078,11 @@ class TestReviewControls:
             cur.execute("SELECT box FROM cards WHERE id=1")
             assert cur.fetchone()[0] == 1
 
+            before_reveal = w.card_ui
             w._shortcut_reveal()
             assert w.is_current_flipped is True
-            card_ui.set_text.assert_called()
+            assert w.card_ui is not before_reveal
+            assert not w.card_ui.correct_btn.isHidden()
 
             w._shortcut_correct()
             cur.execute("SELECT box FROM cards WHERE id=1")
@@ -1231,6 +1252,7 @@ class TestReviewControls:
         card_ui = object()
         scene = MagicMock()
         draw_card_ui = MagicMock()
+        sync_review_card_geometry = MagicMock()
         w = SimpleNamespace(
             conn=conn,
             current_card=(1, "stale", "back", 1),
@@ -1239,6 +1261,7 @@ class TestReviewControls:
             card_ui=card_ui,
             scene=scene,
             draw_card_ui=draw_card_ui,
+            _sync_review_card_geometry=sync_review_card_geometry,
         )
 
         BarskyApp._refresh_current_card(w, 1)
@@ -1249,6 +1272,7 @@ class TestReviewControls:
         assert w.card_ui is None
         scene.removeItem.assert_called_once_with(card_ui)
         draw_card_ui.assert_not_called()
+        sync_review_card_geometry.assert_called_once_with()
         conn.close()
 
     def test_refresh_missing_queued_card_prunes_without_current(self):
@@ -1258,6 +1282,7 @@ class TestReviewControls:
         from kgb_srs.main_window import BarskyApp
 
         conn = self._db(2)
+        sync_review_card_geometry = MagicMock()
         w = SimpleNamespace(
             conn=conn,
             current_card=None,
@@ -1266,6 +1291,7 @@ class TestReviewControls:
             card_ui=None,
             scene=MagicMock(),
             draw_card_ui=MagicMock(),
+            _sync_review_card_geometry=sync_review_card_geometry,
         )
 
         BarskyApp._refresh_current_card(w, 1)
@@ -1275,6 +1301,7 @@ class TestReviewControls:
         assert w.card_ui is None
         w.scene.removeItem.assert_not_called()
         w.draw_card_ui.assert_not_called()
+        sync_review_card_geometry.assert_called_once_with()
         conn.close()
 
     def test_daily_start_without_pause_fresh_query(self):
@@ -1694,54 +1721,63 @@ class TestReviewControls:
 
     # -- card geometry ------------------------------------------------------
 
-    def _draw_card_at(self, w, scene_w, scene_h, zone_y):
-        """Helper: resize scene, draw card, return (width, centre_x)."""
+    def _draw_card_at(self, w, scene_w, scene_h, flipped: bool):
+        """Draw a card from state only; geometry derives at the lifecycle seam."""
         w.scene.clear()
         w.card_ui = None
         w.scene.setSceneRect(0, 0, scene_w, scene_h)
-        w._zone_y = zone_y
         w.current_card = (1, "front", "back", 1)
+        w.is_current_flipped = flipped
         w.draw_card_ui()
         card = w.card_ui
         assert card is not None, "card_ui not created"
-        return card.rect().width(), card.pos().x()
+        return card
 
     def test_review_card_occupies_90_percent_scene_width(self):
-        """Card width ≈ 90 % of scene width, centred, contained, and wider
-        scenes produce wider cards."""
+        """Card sizing, home, and full/reduced boundaries come from one owner."""
         _qt_app()
         from kgb_srs.main_window import BarskyApp
 
         w = BarskyApp()
         try:
-            cw_narrow, cx_narrow = self._draw_card_at(w, 800, 600, 500)
-            cw_wide, cx_wide = self._draw_card_at(w, 1200, 800, 700)
+            narrow_card = self._draw_card_at(w, 800, 600, flipped=False)
+            narrow_width = narrow_card.rect().width()
+            narrow_center = narrow_card.pos().x()
+            narrow_bounds = narrow_card.sceneBoundingRect()
+            narrow_scene = w.scene.sceneRect()
+            assert w._grade_gesture_regions == {}
+            assert w._review_card_bottom == pytest.approx(narrow_scene.bottom())
+            assert w._review_card_home == pytest.approx(
+                (narrow_card.pos().x(), narrow_card.pos().y())
+            )
 
-            # approximate 90 % width
-            assert cw_narrow == pytest.approx(720, abs=5), (
-                f"Expected ~720 (90 % of 800), got {cw_narrow}"
+            wide_card = self._draw_card_at(w, 1200, 800, flipped=False)
+            wide_width = wide_card.rect().width()
+            wide_center = wide_card.pos().x()
+            wide_bounds = wide_card.sceneBoundingRect()
+
+            assert narrow_width == pytest.approx(720, abs=5)
+            assert wide_width == pytest.approx(1080, abs=5)
+            assert wide_width > narrow_width
+            assert narrow_center == pytest.approx(400, abs=1)
+            assert wide_center == pytest.approx(600, abs=1)
+            for bounds, scene in (
+                (narrow_bounds, narrow_scene),
+                (wide_bounds, w.scene.sceneRect()),
+            ):
+                assert bounds.left() >= scene.left()
+                assert bounds.right() <= scene.right()
+
+            flipped_card = self._draw_card_at(w, 800, 600, flipped=True)
+            lane_top = min(region.top() for region in w._grade_gesture_regions.values())
+            assert set(w._grade_gesture_regions) == {"incorrect", "correct"}
+            assert w._review_card_bottom == pytest.approx(lane_top - 20)
+            assert flipped_card.sceneBoundingRect().bottom() <= (
+                w._review_card_bottom + 1
             )
-            assert cw_wide == pytest.approx(1080, abs=5), (
-                f"Expected ~1080 (90 % of 1200), got {cw_wide}"
+            assert w._review_card_home == pytest.approx(
+                (flipped_card.pos().x(), flipped_card.pos().y())
             )
-            # wider scene → wider card
-            assert cw_wide > cw_narrow, f"Card should grow: {cw_wide} not > {cw_narrow}"
-            # centred
-            assert cx_narrow == pytest.approx(400, abs=1), (
-                f"Card not centred at 800/2, got {cx_narrow}"
-            )
-            assert cx_wide == pytest.approx(600, abs=1), (
-                f"Card not centred at 1200/2, got {cx_wide}"
-            )
-            # contained within scene bounds
-            for cw, cx, limit in [
-                (cw_narrow, cx_narrow, 800),
-                (cw_wide, cx_wide, 1200),
-            ]:
-                left = cx - cw / 2
-                right = cx + cw / 2
-                assert left >= 0, f"Card left edge outside scene ({left})"
-                assert right <= limit, f"Card right edge outside scene ({right})"
         finally:
             w.close()
 

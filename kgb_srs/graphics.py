@@ -1,7 +1,4 @@
-"""Graphics items: DropZoneItem, FlashCardItem.
-
-These are QGraphicsItem subclasses for the canvas-based review UI.
-"""
+"""Graphics items for the canvas-based review UI."""
 
 import logging
 import re
@@ -12,7 +9,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QGraphicsProxyWidget,
-    QGraphicsTextItem,
     QGraphicsRectItem,
     QTextBrowser,
 )
@@ -21,7 +17,6 @@ from PyQt6.QtGui import (
     QColor,
     QBrush,
     QPen,
-    QPainterPath,
     QIcon,
     QDesktopServices,
     QFont,
@@ -46,6 +41,7 @@ except ImportError:
 
 from .catalog import DatabaseType
 from .markdown_utils import build_review_html
+from .ui_theme import LIGHT_TOKENS, apply_semantic_role, review_card_stylesheet
 
 
 logger = logging.getLogger(__name__)
@@ -198,103 +194,6 @@ def _set_transparent_web_view_background(web_view) -> None:
         )
 
 
-# ── Reusable button stylesheet helper ────────────────────────────────────────
-
-
-def _button_stylesheet(
-    object_name, base_color, hover_color, pressed_color, font_fam, font_sz, dyn_pad
-):
-    """Return a full QPushButton stylesheet covering normal, hover, pressed,
-    and disabled states."""
-    shared = (
-        f"color: white; "
-        f"padding: {dyn_pad}px; "
-        f"font-family: '{font_fam}'; "
-        f"font-size: {font_sz}px; "
-        f"font-weight: bold; "
-        f"border-radius: 5px;"
-    )
-
-    return (
-        f"QPushButton#{object_name} {{ background-color: {base_color}; {shared} }}\n"
-        f"QPushButton#{object_name}:hover {{ background-color: {hover_color}; }}\n"
-        f"QPushButton#{object_name}:pressed {{ background-color: {pressed_color}; }}\n"
-        f"QPushButton#{object_name}:disabled "
-        f"{{ background-color: #CFD8DC; color: #78909C; }}"
-    )
-
-
-class DropZoneItem(QGraphicsRectItem):
-    """A rounded drop zone (correct/incorrect) at the bottom of the canvas."""
-
-    def __init__(self, x, y, w, h, pen, brush, text_html, is_correct, app_ref):
-        super().__init__()
-
-        self.is_correct = is_correct
-        self.app_ref = app_ref
-        self._hovered = False
-
-        self.setAcceptHoverEvents(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        self.text_item = QGraphicsTextItem(self)
-        self.text_item.setHtml(text_html)
-        self.text_item.setTextWidth(w - 24)  # pad for rounded corners
-
-        text_rect = self.text_item.boundingRect()
-        actual_h = max(h, text_rect.height() + 20)
-
-        bottom_y = y + h
-        adjusted_y = bottom_y - actual_h
-        # Never allow the zone to extend above the scene origin —
-        # the viewport clips from below automatically.
-        if adjusted_y < 0:
-            adjusted_y = 0
-
-        self.setRect(0, 0, w, actual_h)
-        self.setPos(x, adjusted_y)
-        self._pen = pen
-        self._brush = brush
-        self._brush_dim = QBrush(brush.color().darker(115))
-        self.setPen(QPen(Qt.PenStyle.NoPen))
-        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-
-        text_y = (actual_h - text_rect.height()) / 2
-        self.text_item.setPos(12, text_y)
-
-    def paint(self, painter, option, widget):
-        painter.setRenderHint(painter.RenderHint.Antialiasing)
-        rect = self.rect()
-        radius = 12
-
-        path = QPainterPath()
-        path.addRoundedRect(rect, radius, radius)
-
-        brush = self._brush_dim if self._hovered else self._brush
-        painter.fillPath(path, brush)
-        painter.setPen(
-            self._pen if self._hovered else QPen(self._pen.color().darker(120), 2)
-        )
-        painter.drawPath(path)
-
-        # let text paint via child item
-
-    def hoverEnterEvent(self, event):
-        self._hovered = True
-        self.update()
-        super().hoverEnterEvent(event)
-
-    def hoverLeaveEvent(self, event):
-        self._hovered = False
-        self.update()
-        super().hoverLeaveEvent(event)
-
-    def mousePressEvent(self, event):
-        if self.app_ref.current_card:
-            self.app_ref.process_answer(self.is_correct)
-        super().mousePressEvent(event)
-
-
 class FlashCardItem(QGraphicsRectItem):
     """The draggable, flippable flash card in the center of the canvas."""
 
@@ -306,12 +205,17 @@ class FlashCardItem(QGraphicsRectItem):
         self.setPos(cx, cy)
 
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable)
-        self.setBrush(QBrush(QColor("white")))
-        self.setPen(QPen(QColor("black"), 2))
+        self.setBrush(QBrush(QColor(LIGHT_TOKENS["surface"])))
+        self.setPen(QPen(QColor(LIGHT_TOKENS["border"]), 1))
 
         self.proxy = QGraphicsProxyWidget(self)
         self.container = QWidget()
-        self.container.setStyleSheet("background-color: transparent;")
+        self.container.setObjectName("reviewCardRoot")
+        ui_font_family = self.app_ref.settings.get("font_family", "Arial")
+        ui_font_size = self.app_ref.settings.get("font_size", 14)
+        self.container.setStyleSheet(
+            review_card_stylesheet(ui_font_family, ui_font_size)
+        )
 
         self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -325,9 +229,6 @@ class FlashCardItem(QGraphicsRectItem):
         self.text_widget.setReadOnly(True)
         self.text_widget.setOpenLinks(False)
         self.text_widget.setOpenExternalLinks(False)
-        self.text_widget.setStyleSheet(
-            "background-color: transparent; border: none; color: black;"
-        )
         self.text_widget.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction
         )
@@ -335,47 +236,62 @@ class FlashCardItem(QGraphicsRectItem):
 
         self.btn_layout = QHBoxLayout()
 
-        font_fam = self.app_ref.settings.get("font_family", "Arial")
-        font_sz = self.app_ref.settings.get("font_size", 14)
-        dyn_pad = max(10, int(font_sz * 0.6))
-
         self.tts_btn = QPushButton(" Listen")
         self.tts_btn.setIcon(QIcon.fromTheme("audio-volume-high"))
         self.tts_btn.setObjectName("ttsBtn")
         self.tts_btn.setToolTip("Speak this card (Alt+L)")
-        self.tts_btn.setStyleSheet(
-            _button_stylesheet(
-                "ttsBtn",
-                "#9C27B0",
-                "#AB47BC",
-                "#8E24AA",
-                font_fam,
-                font_sz,
-                dyn_pad,
-            )
-        )
+        self.tts_btn.setAccessibleName("Listen to card")
+        self.tts_btn.setAccessibleDescription("Speak this review card (Alt+L).")
         self.tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.tts_btn.clicked.connect(self.trigger_tts)
 
         self.flip_btn = QPushButton(" Reveal Answer")
         self.flip_btn.setObjectName("revealBtn")
         self.flip_btn.setToolTip("Reveal the answer (Alt+R)")
-        self.flip_btn.setStyleSheet(
-            _button_stylesheet(
-                "revealBtn",
-                "#2196F3",
-                "#42A5F5",
-                "#1E88E5",
-                font_fam,
-                font_sz,
-                dyn_pad,
-            )
-        )
+        self.flip_btn.setAccessibleName("Reveal answer")
+        self.flip_btn.setAccessibleDescription("Reveal this card's answer (Alt+R).")
         self.flip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.flip_btn.clicked.connect(self.app_ref.flip_card)
 
+        self.incorrect_btn = QPushButton("Incorrect")
+        self.incorrect_btn.setObjectName("incorrectBtn")
+        self.incorrect_btn.setToolTip("Mark incorrect (Alt+Left or Alt+1)")
+        self.incorrect_btn.setAccessibleName("Incorrect answer")
+        self.incorrect_btn.setAccessibleDescription(
+            "Mark this answer incorrect. Shortcuts: Alt+Left and Alt+1."
+        )
+        self.incorrect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.incorrect_btn.clicked.connect(
+            lambda _checked=False: self.app_ref.process_answer(False)
+        )
+
+        self.correct_btn = QPushButton("Correct")
+        self.correct_btn.setObjectName("correctBtn")
+        self.correct_btn.setToolTip("Mark correct (Alt+Right or Alt+2)")
+        self.correct_btn.setAccessibleName("Correct answer")
+        self.correct_btn.setAccessibleDescription(
+            "Mark this answer correct. Shortcuts: Alt+Right and Alt+2."
+        )
+        self.correct_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.correct_btn.clicked.connect(
+            lambda _checked=False: self.app_ref.process_answer(True)
+        )
+
         self.btn_layout.addWidget(self.tts_btn)
-        self.btn_layout.addWidget(self.flip_btn)
+        self.btn_layout.addWidget(self.flip_btn, 1)
+        self.btn_layout.addWidget(self.incorrect_btn, 1)
+        self.btn_layout.addWidget(self.correct_btn, 1)
+
+        for button, role in (
+            (self.tts_btn, "secondary"),
+            (self.flip_btn, "primary"),
+            (self.incorrect_btn, "danger"),
+            (self.correct_btn, "success"),
+        ):
+            apply_semantic_role(button, role)
+
+        self.incorrect_btn.hide()
+        self.correct_btn.hide()
 
         self.layout.addWidget(self.text_widget)
         self.layout.addLayout(self.btn_layout)
@@ -390,22 +306,6 @@ class FlashCardItem(QGraphicsRectItem):
 
         self.proxy.setWidget(self.container)
         self.proxy.setPos(-cw / 2 + self.side_margin, -ch / 2 + self.top_margin)
-
-    def paint(self, painter, option, widget):
-        super().paint(painter, option, widget)
-
-        painter.save()
-        painter.setPen(
-            QPen(QColor("#bbbbbb"), 3, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-        )
-        grip_w = 40
-        grip_x = -grip_w / 2
-        grip_y = -self.rect().height() / 2 + 10
-
-        for i in range(3):
-            y = grip_y + (i * 6)
-            painter.drawLine(int(grip_x), int(y), int(grip_x + grip_w), int(y))
-        painter.restore()
 
     def trigger_tts(self):
         if self.speech_text:
@@ -459,8 +359,12 @@ class FlashCardItem(QGraphicsRectItem):
 
         if is_flipped:
             self.flip_btn.hide()
+            self.incorrect_btn.show()
+            self.correct_btn.show()
         else:
             self.flip_btn.show()
+            self.incorrect_btn.hide()
+            self.correct_btn.hide()
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)

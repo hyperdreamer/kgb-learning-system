@@ -74,7 +74,8 @@ class TestTtsRegressions:
         finally:
             conn.close()
 
-    def test_word_phrase_card_tts_pauses_between_senses_and_examples(self):
+    def test_word_phrase_card_tts_fallback_keeps_pauses_without_redraw(self):
+        """The controller-only non-callable-redraw fallback retains TTS pauses."""
         _qt_app()
         from types import SimpleNamespace
 
@@ -117,6 +118,7 @@ class TestTtsRegressions:
             current_card=(1, "bank", back, 1),
             _db_type=DatabaseType.LANGUAGE_WORD_PHRASE,
             card_ui=card,
+            redraw_canvas=None,
         )
         window._build_word_phrase_card_display = (
             BarskyApp._build_word_phrase_card_display.__get__(window)
@@ -133,8 +135,12 @@ class TestTtsRegressions:
         )
 
     def test_redrawn_word_phrase_card_keeps_tts_pauses(self, monkeypatch):
+        """A real redraw seam synchronizes geometry while preserving TTS pauses."""
         _qt_app()
         from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from PyQt6.QtCore import QRectF
 
         import kgb_srs.review_controller as review_controller
         from kgb_srs.catalog import DatabaseType
@@ -149,6 +155,9 @@ class TestTtsRegressions:
                 self.speech_text = speech_text
 
         class FakeScene:
+            def sceneRect(self):
+                return QRectF(0, 0, 900, 700)
+
             def width(self):
                 return 900
 
@@ -170,10 +179,17 @@ class TestTtsRegressions:
             is_current_flipped=True,
             _db_type=DatabaseType.LANGUAGE_WORD_PHRASE,
             scene=FakeScene(),
-            _zone_y=600,
             card_ui=None,
+            _grade_gesture_regions={},
+            _review_card_bottom=0.0,
+            _review_card_home=(0.0, 0.0),
             _update_button_visibility=lambda: None,
         )
+        window._build_grade_gesture_regions = (
+            BarskyApp._build_grade_gesture_regions.__get__(window)
+        )
+        sync = BarskyApp._sync_review_card_geometry.__get__(window)
+        window._sync_review_card_geometry = MagicMock(wraps=sync)
         window._build_word_phrase_card_display = (
             BarskyApp._build_word_phrase_card_display.__get__(window)
         )
@@ -181,6 +197,8 @@ class TestTtsRegressions:
 
         BarskyApp.draw_card_ui(window)
 
+        assert window._sync_review_card_geometry.call_count == 1
+        assert set(window._grade_gesture_regions) == {"incorrect", "correct"}
         assert prepare_tts_text(window.card_ui.speech_text) == (
             "bank.\n"
             "a financial institution.\n"

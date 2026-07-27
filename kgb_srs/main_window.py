@@ -22,13 +22,10 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QMenu,
 )
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QUrl, QRectF, pyqtSignal
 from PyQt6.QtGui import (
     QFont,
     QPainter,
-    QPen,
-    QColor,
-    QBrush,
     QIcon,
     QShortcut,
     QKeySequence,
@@ -52,7 +49,7 @@ from .tts import TTSWorker
 from .dialogs import DynamicInputDialog  # still used for knowledge cards
 from .forms import SentenceCardDialog, DBCreationDialog
 from .browser_capture import CAPTURE_HOST, CAPTURE_PORT, BrowserCaptureServer
-from .graphics import DropZoneItem, FlashCardItem, HAS_WEBENGINE
+from .graphics import HAS_WEBENGINE
 from .markdown_utils import markdown_to_plain_text
 from .schema import (
     insert_sentence_card,
@@ -570,6 +567,9 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.view.setViewportUpdateMode(
             QGraphicsView.ViewportUpdateMode.BoundingRectViewportUpdate
         )
+        self._grade_gesture_regions: dict[str, QRectF] = {}
+        self._review_card_bottom: float = 0.0
+        self._review_card_home: tuple[float, float] = (0.0, 0.0)
 
         self.view.setMinimumHeight(200)
 
@@ -626,8 +626,6 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         main_layout.addLayout(review_controls_layout)
 
         self.card_ui = None
-        self.incorrect_zone = None
-        self.correct_zone = None
 
         self._update_button_visibility()
 
@@ -868,6 +866,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self._paused_cards_due = []
         self._paused_daily_queue = []
         self._paused_review_history = []
+        self._sync_review_card_geometry()
 
     def _clear_database_state(self):
         """Clear all UI and session state tied to the current database."""
@@ -1141,60 +1140,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         vp_w = self.view.viewport().width()
         vp_h = self.view.viewport().height()
         self.scene.setSceneRect(0, 0, vp_w, vp_h)
-        w = vp_w
-        h = vp_h
-
-        zone_h = 80
-        # Clamp zone bottom anchor so the drop zone never starts
-        # above the viewport origin when the view is too short.
-        zone_y = max(0, h - 100)
-        margin = 50
-
-        max_zone_w = max(100, (w - 3 * margin) / 2)
-        zone_w = min(max(260, int(w * 0.3)), int(max_zone_w))
-
-        ui_font_family = self.settings.get("font_family", "Arial")
-        ui_font_size = self.settings.get("font_size", 14)
-        # Escape quotes for safe inline CSS
-        safe_ui_font = str(ui_font_family).replace("\\", "\\\\").replace("'", "\\'")
-        zone_font_style = f"font-family: '{safe_ui_font}'; font-size: {ui_font_size}px;"
-
-        self.incorrect_zone = DropZoneItem(
-            margin,
-            zone_y,
-            zone_w,
-            zone_h,
-            QPen(QColor("red")),
-            QBrush(QColor("#ffcccc")),
-            f"<div align='center' style=\"{zone_font_style}\">"
-            f"<b>Click or Drop Here</b><br>"
-            f"if <span style='color:red;'>INCORRECT</span><br>"
-            f"(Drops to Box 1 or 3)</div>",
-            False,
-            self,
-        )
-        self.scene.addItem(self.incorrect_zone)
-
-        self.correct_zone = DropZoneItem(
-            w - margin - zone_w,
-            zone_y,
-            zone_w,
-            zone_h,
-            QPen(QColor("green")),
-            QBrush(QColor("#ccffcc")),
-            f"<div align='center' style=\"{zone_font_style}\">"
-            f"<b>Click or Drop Here</b><br>"
-            f"if <span style='color:green;'>CORRECT</span><br>"
-            f"(Advances 1 Box)</div>",
-            True,
-            self,
-        )
-        self.scene.addItem(self.correct_zone)
-
-        self._zone_y = zone_y
-
-        if self.current_card:
-            self.draw_card_ui()
+        self.draw_card_ui()
 
         # Reposition the overlay close button at the top-right of the view.
         btn = self.close_review_btn
@@ -1602,6 +1548,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                     pass
                 finally:
                     self.card_ui = None
+            if self.current_card is None:
+                self._sync_review_card_geometry()
             return
 
         if self.current_card is not None and self.current_card[0] == card_id:
@@ -1752,8 +1700,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
                 )
             self.resize(self.settings["width"], self.settings["height"])
             self.apply_font_settings()
-            # Refresh drop-zone HTML and study-card content fonts even when
-            # window size is unchanged (resizeEvent would not fire).
+            # Refresh review-card UI and content fonts even when window size
+            # is unchanged (resizeEvent would not fire).
             self.redraw_canvas()
             restart_capture = getattr(self, "restart_browser_capture_server", None)
             if restart_capture is not None and not restart_capture():

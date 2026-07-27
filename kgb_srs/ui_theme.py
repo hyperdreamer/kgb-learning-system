@@ -602,10 +602,10 @@ def review_card_stylesheet(font_family: object, font_size: object) -> str:
     """Return QSS restricted to the proxy-widget review-card subtree."""
     font_declaration = font_css(font_family, font_size)
     tokens = LIGHT_TOKENS
-    role_styles = _role_styles("QWidget#reviewCard")
+    role_styles = _role_styles("QWidget#reviewCardRoot")
 
     return f"""
-QWidget#reviewCard {{
+QWidget#reviewCardRoot {{
   background-color: {tokens["surface"]};
   color: {tokens["text"]};
   border: 1px solid {tokens["border"]};
@@ -613,17 +613,17 @@ QWidget#reviewCard {{
   {font_declaration}
 }}
 
-QWidget#reviewCard QLabel {{
+QWidget#reviewCardRoot QLabel {{
   background-color: transparent;
   color: {tokens["text"]};
 }}
 
-QWidget#reviewCard QLabel#reviewMeaning {{
+QWidget#reviewCardRoot QLabel#reviewMeaning {{
   color: {tokens["review_meaning"]};
 }}
 
-QWidget#reviewCard QTextBrowser,
-QWidget#reviewCard QTextEdit {{
+QWidget#reviewCardRoot QTextBrowser,
+QWidget#reviewCardRoot QTextEdit {{
   background-color: {tokens["surface"]};
   color: {tokens["text"]};
   border: none;
@@ -631,13 +631,13 @@ QWidget#reviewCard QTextEdit {{
   selection-color: {tokens["surface"]};
 }}
 
-QWidget#reviewCard QTextBrowser:focus,
-QWidget#reviewCard QTextEdit:focus {{
+QWidget#reviewCardRoot QTextBrowser:focus,
+QWidget#reviewCardRoot QTextEdit:focus {{
   border: 2px solid {tokens["focus"]};
 }}
 
-QWidget#reviewCard QPushButton,
-QWidget#reviewCard QToolButton {{
+QWidget#reviewCardRoot QPushButton,
+QWidget#reviewCardRoot QToolButton {{
   background-color: {tokens["surface_subtle"]};
   color: {tokens["text"]};
   border: 1px solid {tokens["border"]};
@@ -645,39 +645,39 @@ QWidget#reviewCard QToolButton {{
   padding: 6px 12px;
 }}
 
-QWidget#reviewCard QPushButton:hover,
-QWidget#reviewCard QToolButton:hover {{
+QWidget#reviewCardRoot QPushButton:hover,
+QWidget#reviewCardRoot QToolButton:hover {{
   background-color: {tokens["surface_hover"]};
   border-color: {tokens["focus"]};
 }}
 
-QWidget#reviewCard QPushButton:pressed,
-QWidget#reviewCard QToolButton:pressed {{
+QWidget#reviewCardRoot QPushButton:pressed,
+QWidget#reviewCardRoot QToolButton:pressed {{
   background-color: {tokens["surface_subtle"]};
 }}
 
-QWidget#reviewCard QPushButton:disabled,
-QWidget#reviewCard QToolButton:disabled {{
+QWidget#reviewCardRoot QPushButton:disabled,
+QWidget#reviewCardRoot QToolButton:disabled {{
   background-color: {tokens["disabled_surface"]};
   color: {tokens["disabled_text"]};
 }}
 
-QWidget#reviewCard QPushButton:focus,
-QWidget#reviewCard QToolButton:focus {{
+QWidget#reviewCardRoot QPushButton:focus,
+QWidget#reviewCardRoot QToolButton:focus {{
   border: 2px solid {tokens["focus"]};
 }}
 
 {role_styles}
 
-QWidget#reviewCard QWidget[{STATUS_TONE_PROPERTY}="neutral"] {{
+QWidget#reviewCardRoot QWidget[{STATUS_TONE_PROPERTY}="neutral"] {{
   color: {tokens["text_muted"]};
 }}
 
-QWidget#reviewCard QWidget[{STATUS_TONE_PROPERTY}="success"] {{
+QWidget#reviewCardRoot QWidget[{STATUS_TONE_PROPERTY}="success"] {{
   color: {tokens["success"]};
 }}
 
-QWidget#reviewCard QWidget[{STATUS_TONE_PROPERTY}="danger"] {{
+QWidget#reviewCardRoot QWidget[{STATUS_TONE_PROPERTY}="danger"] {{
   color: {tokens["danger"]};
 }}
 """.strip()
