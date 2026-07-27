@@ -460,12 +460,18 @@ def test_extension_manifest_declares_a_manifest_v3_context_menu_capture():
     )
 
     assert manifest["manifest_version"] == 3
-    assert manifest["permissions"] == ["contextMenus", "storage"]
+    assert set(manifest["permissions"]) == {
+        "contextMenus", "storage", "activeTab", "scripting"
+    }
     assert manifest["host_permissions"] == ["http://127.0.0.1/*"]
     assert manifest["optional_host_permissions"] == ["http://*/*"]
     assert manifest["options_ui"]["page"] == "options.html"
+    assert "commands" in manifest
+    assert "send-selected-text" in manifest["commands"]
     assert "info.selectionText" in worker
     assert "chrome.storage.local" in worker
+    assert "chrome.commands.onCommand" in worker
+    assert "chrome.scripting.executeScript" in worker
     assert "options.html" == (extension_directory / "options.html").name
     options_page = extension_directory / "options.html"
     options_script = extension_directory / "options.js"

@@ -1,6 +1,6 @@
 # KGB 5-Box SRS System
 
-**Version 2.4.0**
+**Version 2.4.0-dev**
 
 A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
@@ -56,6 +56,9 @@ Install the bundled unpacked Chromium extension from
 [`browser_extension/README.md`](browser_extension/README.md). If you change the
 app listener, open the extension’s **Options** page and enter the same IP and
 port before sending a selection.
+
+Select text on any page and either right-click **Send selected sentence to KGB** or
+press **Alt+K** (customizable at `chrome://extensions/shortcuts`).
 
 KGB restores its window and opens the current writable database's **Add Entry**
 workflow with the text pre-filled. Nothing is saved automatically. A
@@ -248,6 +251,7 @@ All shortcuts use **Alt** so they never steal plain typing.
 - **Previous** — returns to the last graded card in this session (shortcut: **Alt+P**).
 - **Restart** — rebuilds the current daily queue from current eligibility and the current **All cards** / Shuffle settings, then clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
 - **Close Review** — pauses the active review without grading or advancing. The current card, remaining queue, original queue, and session history are preserved. The inactive primary button becomes **Resume Daily Review**, which restores the paused card first. Closing has no effect on the database. Shortcut: **Alt+X**.
+- **Edit** — during a sentence-based review, opens the current card in the sentence editor. Saving refreshes the card at Box 1; cancelling leaves the review unchanged. It is hidden for knowledge and word/phrase reviews.
 - **Delete Entry** — permanently deletes the currently displayed card from the database after confirmation. The review advances to the next queued card. If the deleted card was the paused card, paused state is cleared. Enabled when a non–word/phrase database is loaded and a card is displayed. Hidden on word/phrase databases (projection-only). Shortcut: **Alt+D**.
 
 ### 5. Browse & Edit
@@ -304,7 +308,7 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package (__version__ = 2.4.0)
+kgb_srs/                    # Python package (__version__ = 2.4.0-dev)
 ├── __init__.py
 ├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference

@@ -8,6 +8,9 @@ db/
 # AI prompt files (not part of the application)
 prompt
 
+# Local CodeGraph index
+.codegraph/
+
 # Python artifacts
 __pycache__/
 *.py[cod]
