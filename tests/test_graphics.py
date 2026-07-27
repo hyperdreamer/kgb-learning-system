@@ -130,6 +130,7 @@ def test_set_text_uses_content_font_not_ui_font_plus_four(monkeypatch):
     assert captured["font_family"] == "Georgia"
     assert captured["font_size"] == 22  # not 14+4=18
     assert captured["markdown_text"] == "hello **world**"
+    assert captured["include_mathjax"] is False
     del item
     app.processEvents()
 
@@ -354,7 +355,7 @@ def test_review_card_uses_proxy_safe_text_renderer_when_webengine_is_available(
     monkeypatch,
 ):
     """An optional WebEngine install must not blank a proxy-embedded card."""
-    from PyQt6.QtWidgets import QTextEdit
+    from PyQt6.QtWidgets import QTextBrowser
     from kgb_srs import graphics as graphics_mod
     from kgb_srs.graphics import FlashCardItem
 
@@ -371,7 +372,10 @@ def test_review_card_uses_proxy_safe_text_renderer_when_webengine_is_available(
     item = FlashCardItem(_MockApp(), 200, 150, 350, 200)
     item.set_text("Visible **review content**", is_flipped=False)
 
-    assert isinstance(item.text_widget, QTextEdit)
+    assert isinstance(item.text_widget, QTextBrowser)
+    assert item.text_widget.isReadOnly()
+    assert item.text_widget.openLinks() is False
+    assert item.text_widget.openExternalLinks() is False
     assert item.text_widget.toPlainText().strip() == "Visible review content"
 
     del item

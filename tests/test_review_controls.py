@@ -31,6 +31,7 @@ import os
 import tempfile
 import pytest
 
+from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 
@@ -114,6 +115,7 @@ def app_with_db(qapp):
         app.conn.close()
     app.close()
     app.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     conn.close()
     os.unlink(db_path)
 
@@ -1228,6 +1230,82 @@ class TestReviewGradeGestureLifecycle:
             "SELECT box FROM cards WHERE id = ?", (card_id,)
         ).fetchone()[0] == min(box_before + 1, 5)
         assert app._daily_review_history[-1].card[0] == card_id
+        self._assert_unrevealed_geometry(app)
+
+    def test_incorrect_button_uses_false_grade_db_history_and_next_geometry(
+        self, app_with_db
+    ):
+        """Visible Incorrect uses the false-grade path and advances cleanly."""
+        app, _, conn = app_with_db
+        self._start_visible_review(app)
+        card_id, front, back, _ = app.current_card
+        conn.execute("UPDATE cards SET box = 4 WHERE id = ?", (card_id,))
+        conn.commit()
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == 4
+        )
+
+        app.flip_card()
+        self._assert_revealed_geometry(app)
+        assert not app.card_ui.incorrect_btn.isHidden()
+        app.card_ui.incorrect_btn.click()
+
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == 3
+        )
+        assert app._daily_review_history[-1] == ReviewHistoryEntry(
+            (card_id, front, back, 3), "graded"
+        )
+        assert app.current_card is not None
+        assert app.current_card[0] != card_id
+        self._assert_unrevealed_geometry(app)
+
+    def test_incorrect_drag_region_queues_false_grade_db_history_and_next_geometry(
+        self, app_with_db
+    ):
+        """The incorrect gesture region queues the false-grade path."""
+        from PyQt6.QtTest import QTest
+
+        app, _, conn = app_with_db
+        self._start_visible_review(app)
+        card_id, front, back, _ = app.current_card
+        conn.execute("UPDATE cards SET box = 4 WHERE id = ?", (card_id,))
+        conn.commit()
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == 4
+        )
+
+        app.flip_card()
+        self._assert_revealed_geometry(app)
+        card = app.card_ui
+        incorrect_region = app._grade_gesture_regions["incorrect"]
+        card.setPos(incorrect_region.center())
+        assert incorrect_region.contains(card.scenePos())
+        app.check_card_drop(card)
+
+        # The drop handler queues grading through its zero-delay timer.
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == 4
+        )
+        assert app._daily_review_history == []
+        assert app.current_card is not None
+        assert app.current_card[0] == card_id
+
+        QTest.qWait(10)
+
+        assert (
+            conn.execute("SELECT box FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+            == 3
+        )
+        assert app._daily_review_history[-1] == ReviewHistoryEntry(
+            (card_id, front, back, 3), "graded"
+        )
+        assert app.current_card is not None
+        assert app.current_card[0] != card_id
         self._assert_unrevealed_geometry(app)
 
     def test_grade_next_and_previous_recreate_unrevealed_geometry(self, app_with_db):

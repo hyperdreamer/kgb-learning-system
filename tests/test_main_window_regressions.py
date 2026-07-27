@@ -22,6 +22,15 @@ def _dispose_top_level_widgets():
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+def _dispose_root_window(window):
+    """Close and deterministically delete a root-styled test window."""
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    window.close()
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 class TestNoSyncHTTPInMainWindow:
     """Main window must not contain processEvents or synchronous HTTP calls."""
 
@@ -295,7 +304,7 @@ class TestReviewCanvasGestureLayout:
             assert win.card_ui.incorrect_btn.isHidden()
             assert win.card_ui.correct_btn.isHidden()
         finally:
-            win.close()
+            _dispose_root_window(win)
 
     @pytest.mark.parametrize("window_size", [(600, 400), (1200, 800)])
     def test_revealed_canvas_uses_contained_nonvisual_lanes(self, window_size):
@@ -332,4 +341,4 @@ class TestReviewCanvasGestureLayout:
             assert set(win._grade_gesture_regions) == {"incorrect", "correct"}
             self._assert_no_persistent_grade_target(win)
         finally:
-            win.close()
+            _dispose_root_window(win)

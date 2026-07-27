@@ -771,7 +771,7 @@ class ReviewControllerMixin:
     def process_answer(self, correct):
         if not self.current_card:
             return
-        # Drop zones and other paths must not grade an unrevealed card.
+        # Nonvisual gestures and other grading paths must not grade unrevealed cards.
         if not self.is_current_flipped:
             return
 
