@@ -2,6 +2,17 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [3.0.0] — 2026-07-26
+
+### Added
+
+- Added an **Edit** button to sentence-card reviews: the current card opens
+  in the sentence editor so it can be corrected in place. Saving refreshes
+  the card at Box 1; cancelling leaves the review unchanged.
+- Added a customizable keyboard shortcut for the browser extension's
+  **Send selected text to KGB** command. The default remains **Alt+K**
+  (**MacCtrl+K** on macOS); customize it at `chrome://extensions/shortcuts`.
+
 ## [2.4.0] — 2026-07-24
 
 ### Added
