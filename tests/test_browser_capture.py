@@ -461,7 +461,10 @@ def test_extension_manifest_declares_a_manifest_v3_context_menu_capture():
 
     assert manifest["manifest_version"] == 3
     assert set(manifest["permissions"]) == {
-        "contextMenus", "storage", "activeTab", "scripting"
+        "contextMenus",
+        "storage",
+        "activeTab",
+        "scripting",
     }
     assert manifest["host_permissions"] == ["http://127.0.0.1/*"]
     assert manifest["optional_host_permissions"] == ["http://*/*"]
