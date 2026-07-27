@@ -7,18 +7,24 @@ import json
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PyQt6.QtGui import QColor, QPalette, QTextCursor
+from PyQt6 import sip
+from PyQt6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QEventLoop,
+    QPoint,
+    QPointF,
+    QTimer,
+    Qt,
+)
+from PyQt6.QtGui import QAction, QColor, QMouseEvent, QPalette, QTextCursor
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
-    QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
-    QRadioButton,
     QStyle,
     QStyleOptionButton,
     QWidget,
@@ -58,7 +64,33 @@ def _keep_acceptance_tests_modal_and_network_safe(monkeypatch):
         "question",
         lambda *args, **kwargs: QMessageBox.StandardButton.No,
     )
-    monkeypatch.setattr(SettingsDialog, "_start_voice_worker", lambda self: None)
+
+    def fail_on_external_start(*_args, **_kwargs):
+        pytest.fail(
+            "acceptance-test construction attempted external worker/listener startup"
+        )
+
+    def suppress_voice_list_worker(dialog):
+        dialog.voice_worker = None
+
+    monkeypatch.setattr(
+        BarskyApp, "start_browser_capture_server", fail_on_external_start
+    )
+    monkeypatch.setattr(
+        "kgb_srs.main_window.BrowserCaptureServer", fail_on_external_start
+    )
+    monkeypatch.setattr(
+        "kgb_srs.settings_dialog.VoiceListWorker", fail_on_external_start
+    )
+    monkeypatch.setattr(
+        "kgb_srs.settings_dialog.create_ai_test_worker", fail_on_external_start
+    )
+    monkeypatch.setattr(
+        "kgb_srs.settings_dialog.create_ai_models_worker", fail_on_external_start
+    )
+    monkeypatch.setattr(
+        SettingsDialog, "_start_voice_worker", suppress_voice_list_worker
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -69,9 +101,12 @@ def _dispose_top_level_widgets():
     if app is None:
         return
     for widget in app.topLevelWidgets():
-        widget.close()
-        widget.deleteLater()
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        if sip.isdeleted(widget):
+            continue
+        if isinstance(widget, BarskyApp):
+            _dispose_window(widget)
+        else:
+            _dispose_widget(widget)
 
 
 def _temporary_settings_file(
@@ -116,7 +151,10 @@ def _new_window(
         ui_font_size=ui_font_size,
         content_font_size=content_font_size,
     )
-    return BarskyApp(settings_file=str(settings_file)), database_root, settings_file
+    window = BarskyApp(settings_file=str(settings_file))
+    assert window._browser_capture_server is None
+    assert window.voice_worker is None
+    return window, database_root, settings_file
 
 
 def _database_path(root: Path, database_type: DatabaseType, name: str) -> Path:
@@ -199,6 +237,37 @@ def _dispose_widget(widget: QWidget) -> None:
     widget.close()
     widget.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _dispose_window(window: BarskyApp) -> None:
+    """Close a test-owned database before Qt disposes its owning window."""
+    try:
+        window._clear_database_state()
+        assert window.conn is None
+    finally:
+        if window.conn is not None:
+            window.conn.close()
+            window.conn = None
+        _dispose_widget(window)
+
+
+def _wait_for_observable_state(predicate, description: str, *, timeout_ms: int = 1000):
+    """Run Qt's event loop until a named postcondition holds or fail diagnostically."""
+    if predicate():
+        return
+
+    loop = QEventLoop()
+    timeout = QTimer()
+    timeout.setSingleShot(True)
+    timeout.timeout.connect(loop.quit)
+    probe = QTimer()
+    probe.setInterval(1)
+    probe.timeout.connect(lambda: loop.quit() if predicate() else None)
+    timeout.start(timeout_ms)
+    probe.start()
+    loop.exec()
+    probe.stop()
+    assert predicate(), f"timed out after {timeout_ms} ms waiting for {description}"
 
 
 def _font_size(widget: QWidget) -> int:
@@ -310,6 +379,102 @@ def _assert_no_persistent_grade_target(window: BarskyApp) -> None:
     assert all(item is card or item is card.proxy for item in window.scene.items())
 
 
+def _assert_lower_lane_has_no_click_target(
+    window: BarskyApp, scene_point: QPointF
+) -> QPoint:
+    """Check the apparent grade lane has neither a scene item nor viewport overlay."""
+    viewport = window.view.viewport()
+    viewport_point = window.view.mapFromScene(scene_point)
+    assert window.view.itemAt(viewport_point) is None
+    overlays = [
+        child
+        for child in viewport.findChildren(QWidget)
+        if child.isVisible() and child.geometry().contains(viewport_point)
+    ]
+    assert not overlays
+    return viewport_point
+
+
+def _assert_lower_lane_click_is_noop(qapp, window: BarskyApp, card_id: int) -> None:
+    """A click where drag grading is laid out must not grade or reveal a control."""
+    before_box = _card_box(window, card_id)
+    before_history = len(window._daily_review_history)
+    scene_point = window._grade_gesture_regions["correct"].center()
+    viewport_point = _assert_lower_lane_has_no_click_target(window, scene_point)
+    QTest.mouseClick(
+        window.view.viewport(),
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        viewport_point,
+    )
+    qapp.processEvents()
+    assert window.current_card is not None and window.current_card[0] == card_id
+    assert window.is_current_flipped
+    assert _card_box(window, card_id) == before_box
+    assert len(window._daily_review_history) == before_history
+
+
+def _card_box(window: BarskyApp, card_id: int) -> int:
+    row = window.conn.execute(
+        "SELECT box FROM cards WHERE id = ?", (card_id,)
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _dispatch_alt_shortcut(qapp, window: BarskyApp, key: Qt.Key) -> None:
+    """Send a real Alt shortcut through the focused review window."""
+    window.view.setFocus(Qt.FocusReason.OtherFocusReason)
+    window.activateWindow()
+    qapp.processEvents()
+    QTest.keyClick(window, key, Qt.KeyboardModifier.AltModifier)
+    qapp.processEvents()
+
+
+def _button_rendered_color(button: QPushButton) -> QColor:
+    """Read a stable interior pixel from the real Qt-rendered button surface."""
+    image = button.grab().toImage()
+    return image.pixelColor(QPoint(8, button.height() // 2))
+
+
+def _assert_button_rendered_token(button: QPushButton, token: str) -> None:
+    assert _button_rendered_color(button) == QColor(LIGHT_TOKENS[token])
+
+
+def _exposed_strings(root: QWidget) -> list[str]:
+    """Collect visible or assistive text exposed by a settings dialog tree."""
+    values: list[str] = []
+    getters = (
+        "text",
+        "currentText",
+        "placeholderText",
+        "toPlainText",
+        "windowTitle",
+        "toolTip",
+        "statusTip",
+        "whatsThis",
+        "accessibleName",
+        "accessibleDescription",
+    )
+    for widget in (root, *root.findChildren(QWidget)):
+        for name in getters:
+            getter = getattr(widget, name, None)
+            if callable(getter):
+                value = getter()
+                if isinstance(value, str):
+                    values.append(value)
+        if isinstance(widget, QComboBox):
+            values.extend(widget.itemText(index) for index in range(widget.count()))
+        if isinstance(widget, QListWidget):
+            values.extend(widget.item(index).text() for index in range(widget.count()))
+    for action in root.findChildren(QAction):
+        for name in ("text", "toolTip", "statusTip", "whatsThis", "iconText"):
+            value = getattr(action, name)()
+            if isinstance(value, str):
+                values.append(value)
+    return values
+
+
 def _relative_luminance(color: str) -> float:
     values = [int(color[index : index + 2], 16) / 255 for index in (1, 3, 5)]
 
@@ -359,6 +524,9 @@ def test_major_surfaces_share_light_palette_roles_and_visible_focus(tmp_path, qa
 
         browse = BrowseCardsDialog(window)
         settings = SettingsDialog(window.settings, window)
+        assert settings.voice_worker is None
+        assert settings.ai_test_worker is None
+        assert settings.ai_models_worker is None
         sentence = SentenceCardDialog(
             window,
             sentence="I study a sentence.",
@@ -423,7 +591,7 @@ def test_major_surfaces_share_light_palette_roles_and_visible_focus(tmp_path, qa
     finally:
         for dialog in dialogs:
             _dispose_widget(dialog)
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 def test_daily_and_browse_review_context_follow_the_all_daily_formula(tmp_path, qapp):
@@ -469,7 +637,7 @@ def test_daily_and_browse_review_context_follow_the_all_daily_formula(tmp_path, 
         window.close_review()
         assert window.review_status_label.isHidden()
     finally:
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 def test_review_affordances_keep_explicit_grades_shortcuts_and_nonvisual_drag(
@@ -482,54 +650,39 @@ def test_review_affordances_keep_explicit_grades_shortcuts_and_nonvisual_drag(
             database_root,
             DatabaseType.LANGUAGE_SENTENCE,
             "review-affordances",
+            cards=[(f"card {index}", f"answer {index}", 1) for index in range(1, 8)],
         )
         _load_database(window, sentence_path, DatabaseType.LANGUAGE_SENTENCE)
         _show_window(window, qapp)
         window.start_review()
 
         first_id = window.current_card[0]
-        first_box = window.conn.execute(
-            "SELECT box FROM cards WHERE id = ?", (first_id,)
-        ).fetchone()[0]
+        first_box = _card_box(window, first_id)
         card = window.card_ui
         assert card is not None
         assert not card.tts_btn.isHidden()
         assert not card.flip_btn.isHidden()
         assert card.flip_btn.property(ROLE_PROPERTY) == "primary"
-        assert card.btn_layout.stretch(card.btn_layout.indexOf(card.flip_btn)) == 1
+        assert card.flip_btn.width() >= card.tts_btn.width() * 2
         assert card.incorrect_btn.isHidden()
         assert card.correct_btn.isHidden()
         assert window._grade_gesture_regions == {}
         _assert_no_persistent_grade_target(window)
 
-        # Hidden post-reveal actions and grade shortcuts retain the authoritative guard.
-        card.correct_btn.click()
-        window._shortcut_incorrect()
-        assert window.current_card[0] == first_id
-        assert (
-            window.conn.execute(
-                "SELECT box FROM cards WHERE id = ?", (first_id,)
-            ).fetchone()[0]
-            == first_box
-        )
+        # All four real shortcut aliases must be ignored before answer reveal.
+        for key in (Qt.Key.Key_Left, Qt.Key.Key_1, Qt.Key.Key_Right, Qt.Key.Key_2):
+            _dispatch_alt_shortcut(qapp, window, key)
+            assert (
+                window.current_card is not None and window.current_card[0] == first_id
+            )
+            assert _card_box(window, first_id) == first_box
 
-        # Use real shortcut objects rather than invoking a synthetic key binding.
-        from PyQt6.QtGui import QKeySequence, QShortcut
-
-        shortcut_keys = {
-            shortcut.key().toString() for shortcut in window.findChildren(QShortcut)
-        }
-        assert {
-            QKeySequence("Alt+Left").toString(),
-            QKeySequence("Alt+1").toString(),
-            QKeySequence("Alt+Right").toString(),
-            QKeySequence("Alt+2").toString(),
-        } <= shortcut_keys
-
-        window.flip_card()
+        card.flip_btn.click()
+        qapp.processEvents()
         card = window.card_ui
         _assert_revealed_geometry(window)
         _assert_no_persistent_grade_target(window)
+        _assert_lower_lane_click_is_noop(qapp, window, first_id)
         for button, role, first_shortcut, second_shortcut in (
             (card.incorrect_btn, "danger", "Alt+Left", "Alt+1"),
             (card.correct_btn, "success", "Alt+Right", "Alt+2"),
@@ -543,44 +696,74 @@ def test_review_affordances_keep_explicit_grades_shortcuts_and_nonvisual_drag(
             assert second_shortcut in button.accessibleDescription()
 
         card.correct_btn.click()
-        assert (
-            window.conn.execute(
-                "SELECT box FROM cards WHERE id = ?", (first_id,)
-            ).fetchone()[0]
-            == first_box + 1
-        )
+        assert _card_box(window, first_id) == first_box + 1
         _assert_unrevealed_geometry(window)
 
-        second_id = window.current_card[0]
-        window.conn.execute("UPDATE cards SET box = 4 WHERE id = ?", (second_id,))
-        window.conn.commit()
-        window.flip_card()
-        window._shortcut_incorrect()
-        assert (
-            window.conn.execute(
-                "SELECT box FROM cards WHERE id = ?", (second_id,)
-            ).fetchone()[0]
-            == 3
-        )
-        _assert_unrevealed_geometry(window)
+        for key in (Qt.Key.Key_Left, Qt.Key.Key_1):
+            card_id = window.current_card[0]
+            window.conn.execute("UPDATE cards SET box = 4 WHERE id = ?", (card_id,))
+            window.conn.commit()
+            window.flip_card()
+            _dispatch_alt_shortcut(qapp, window, key)
+            assert _card_box(window, card_id) == 3
+            _assert_unrevealed_geometry(window)
 
-        third_id = window.current_card[0]
-        third_box = window.conn.execute(
-            "SELECT box FROM cards WHERE id = ?", (third_id,)
-        ).fetchone()[0]
+        for key in (Qt.Key.Key_Right, Qt.Key.Key_2):
+            card_id = window.current_card[0]
+            before_box = _card_box(window, card_id)
+            window.flip_card()
+            _dispatch_alt_shortcut(qapp, window, key)
+            assert _card_box(window, card_id) == min(before_box + 1, 5)
+            _assert_unrevealed_geometry(window)
+
+        drag_id = window.current_card[0]
+        before_box = _card_box(window, drag_id)
+        before_history = len(window._daily_review_history)
         window.flip_card()
         card = window.card_ui
         correct_region = window._grade_gesture_regions["correct"]
-        card.setPos(QPointF(correct_region.center()))
-        window.check_card_drop(card)
-        QTest.qWait(10)
-        assert window.conn.execute(
-            "SELECT box FROM cards WHERE id = ?", (third_id,)
-        ).fetchone()[0] == min(third_box + 1, 5)
+        start_scene = card.sceneBoundingRect().topLeft() + QPointF(5, 5)
+        start = window.view.mapFromScene(start_scene)
+        destination = window.view.mapFromScene(
+            correct_region.center() + start_scene - card.scenePos()
+        )
+        QTest.mousePress(
+            window.view.viewport(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            start,
+        )
+        qapp.processEvents()
+        QCoreApplication.sendEvent(
+            window.view.viewport(),
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(destination),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            ),
+        )
+        qapp.processEvents()
+        assert card.pos() != QPointF(*window._review_card_home)
+        assert correct_region.contains(card.scenePos())
+        QTest.mouseRelease(
+            window.view.viewport(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            destination,
+        )
+        _wait_for_observable_state(
+            lambda: (
+                _card_box(window, drag_id) == min(before_box + 1, 5)
+                and len(window._daily_review_history) == before_history + 1
+            ),
+            f"queued drag grading for card {drag_id}",
+        )
         assert window._daily_review_history[-1].transition == "graded"
         _assert_unrevealed_geometry(window)
     finally:
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 def test_review_geometry_lifecycle_clears_or_rebuilds_on_every_major_transition(
@@ -669,7 +852,7 @@ def test_review_geometry_lifecycle_clears_or_rebuilds_on_every_major_transition(
         assert window.conn is replacement_connection
         _assert_empty_geometry(window)
     finally:
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 def test_semantic_actions_have_distinct_live_states_and_accessible_contrast(
@@ -717,16 +900,26 @@ def test_semantic_actions_have_distinct_live_states_and_accessible_contrast(
             QPalette.ColorRole.Button
         ) == QColor(LIGHT_TOKENS["danger"])
 
+        _assert_button_rendered_token(card.correct_btn, "success")
         QTest.mouseMove(card.correct_btn, card.correct_btn.rect().center())
         qapp.processEvents()
         assert card.correct_btn.underMouse()
+        _assert_button_rendered_token(card.correct_btn, "success_hover")
+        assert _button_rendered_color(card.correct_btn) != QColor(
+            LIGHT_TOKENS["success"]
+        )
         QTest.mousePress(
             card.correct_btn,
             Qt.MouseButton.LeftButton,
             Qt.KeyboardModifier.NoModifier,
             card.correct_btn.rect().center(),
         )
+        qapp.processEvents()
         assert card.correct_btn.isDown()
+        _assert_button_rendered_token(card.correct_btn, "success_pressed")
+        assert _button_rendered_color(card.correct_btn) != QColor(
+            LIGHT_TOKENS["success_hover"]
+        )
         QTest.mouseRelease(
             card.correct_btn,
             Qt.MouseButton.LeftButton,
@@ -736,7 +929,7 @@ def test_semantic_actions_have_distinct_live_states_and_accessible_contrast(
         _assert_unrevealed_geometry(window)
         _assert_visible_focus(qapp, window.start_btn, window.db_btn)
     finally:
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 def test_sentence_knowledge_and_word_phrase_modes_preserve_controls_and_browse(
@@ -792,7 +985,7 @@ def test_sentence_knowledge_and_word_phrase_modes_preserve_controls_and_browse(
                 assert not window.delete_entry_btn.isHidden()
                 assert window.delete_entry_btn.isEnabled()
     finally:
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 @pytest.mark.parametrize(
@@ -852,7 +1045,7 @@ def test_font_endpoints_keep_ui_chrome_and_review_content_separate(
     finally:
         if dialog is not None:
             _dispose_widget(dialog)
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
 def test_settings_expose_font_endpoints_without_dark_or_classic_appearance(
@@ -876,27 +1069,8 @@ def test_settings_expose_font_endpoints_without_dark_or_classic_appearance(
             dialog.content_font_size_input.maximum(),
         ) == (8, 48)
 
-        exposed_text = []
-        for button_type in (QPushButton, QCheckBox, QRadioButton):
-            exposed_text.extend(
-                button.text() for button in dialog.findChildren(button_type)
-            )
-        category_list = dialog.findChild(QListWidget, "settingsCategoryList")
-        assert category_list is not None
-        exposed_text.extend(
-            category_list.item(index).text() for index in range(category_list.count())
-        )
-        for combo in dialog.findChildren(QComboBox):
-            if combo.objectName() not in {
-                "fontFamilyInput",
-                "contentFontFamilyInput",
-            }:
-                exposed_text.extend(
-                    combo.itemText(index) for index in range(combo.count())
-                )
-        exposed_text.extend(
-            line_edit.text() for line_edit in dialog.findChildren(QLineEdit)
-        )
+        exposed_text = _exposed_strings(dialog)
+        assert exposed_text
         assert not any(
             term in text.casefold()
             for text in exposed_text
@@ -912,10 +1086,10 @@ def test_settings_expose_font_endpoints_without_dark_or_classic_appearance(
     finally:
         if dialog is not None:
             _dispose_widget(dialog)
-        _dispose_widget(window)
+        _dispose_window(window)
 
 
-def test_temporary_config_startup_stays_inside_its_empty_database_root(tmp_path):
+def test_temporary_config_startup_stays_inside_its_empty_database_root(tmp_path, qapp):
     """Startup must not open a repository or user database when default is empty."""
     database_root = tmp_path / "isolated-root"
     settings_file = _temporary_settings_file(
@@ -936,4 +1110,4 @@ def test_temporary_config_startup_stays_inside_its_empty_database_root(tmp_path)
             (database_root / relative).is_dir() for relative in CANONICAL_DB_SUBDIRS
         )
     finally:
-        _dispose_widget(window)
+        _dispose_window(window)
