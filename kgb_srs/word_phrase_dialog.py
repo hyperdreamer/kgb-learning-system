@@ -26,6 +26,7 @@ from .ai_parser import (
 )
 from .ai_provider import AIProviderConfig, build_word_phrase_prompt
 from . import form_helpers
+from .ui_theme import apply_semantic_role, apply_status_tone
 
 
 def _create_ai_worker(config, prompt):
@@ -83,11 +84,13 @@ class WordPhraseCardDialog(QDialog):
         # --- AI controls ---
         ai_row = QHBoxLayout()
         self._ai_status = QLabel("")
+        apply_status_tone(self._ai_status, "neutral")
         ai_row.addWidget(self._ai_status, stretch=1)
         self._generate_btn = QPushButton("🤖 Generate Meanings")
         self._generate_btn.setToolTip(
             "Use AI to generate meanings with examples for this word/phrase."
         )
+        apply_semantic_role(self._generate_btn, "secondary")
         self._generate_btn.clicked.connect(self._generate_ai_meanings)
         ai_row.addWidget(self._generate_btn)
         self._ai_progress = QProgressBar()
@@ -106,6 +109,7 @@ class WordPhraseCardDialog(QDialog):
         self._add_meaning_btn.setToolTip(
             f"Add another meaning tab (max {MAX_WORD_PHRASE_MEANINGS})."
         )
+        apply_semantic_role(self._add_meaning_btn, "secondary")
         # clicked emits a bool; wrap so it is not bound to meaning=
         self._add_meaning_btn.clicked.connect(
             lambda _checked=False: self._add_meaning_row()
@@ -127,6 +131,7 @@ class WordPhraseCardDialog(QDialog):
 
         # Status
         self._status_label = QLabel("")
+        apply_status_tone(self._status_label, "neutral")
         self._status_label.setWordWrap(True)
         layout.addWidget(self._status_label)
 
@@ -134,15 +139,13 @@ class WordPhraseCardDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self._cancel_btn = QPushButton("Cancel")
+        apply_semantic_role(self._cancel_btn, "secondary")
         self._cancel_btn.clicked.connect(self._cancel_or_reject)
         btn_layout.addWidget(self._cancel_btn)
 
         self._save_btn = QPushButton("Save")
         self._save_btn.setObjectName("wordPhraseSaveButton")
-        self._save_btn.setStyleSheet(
-            "background-color: #43A047; color: white; "
-            "font-weight: bold; padding: 8px 20px;"
-        )
+        apply_semantic_role(self._save_btn, "primary")
         self._save_btn.clicked.connect(self._accept)
         btn_layout.addWidget(self._save_btn)
         layout.addLayout(btn_layout)
@@ -164,7 +167,7 @@ class WordPhraseCardDialog(QDialog):
 
     @staticmethod
     def _make_meaning_field(placeholder: str, min_height: int = 72) -> QTextEdit:
-        """Multi-line field with clean chrome; expands inside the tab page."""
+        """Return a shared-system multi-line field in a meaning tab."""
         edit = QTextEdit()
         edit.setAcceptRichText(False)
         edit.setMinimumHeight(min_height)
@@ -176,17 +179,6 @@ class WordPhraseCardDialog(QDialog):
         doc = edit.document()
         if doc is not None:
             doc.setDocumentMargin(6)
-        edit.setStyleSheet(
-            "QTextEdit {"
-            "  border: 1px solid #CFD8DC;"
-            "  border-radius: 6px;"
-            "  padding: 2px 6px;"
-            "  background: #FFFFFF;"
-            "}"
-            "QTextEdit:focus {"
-            "  border: 1px solid #42A5F5;"
-            "}"
-        )
         return edit
 
     def _add_meaning_row(self, meaning="", example=""):
@@ -200,8 +192,7 @@ class WordPhraseCardDialog(QDialog):
         page_layout.setSpacing(6)
 
         meaning_label = QLabel("Meaning")
-        # Color only — do not hard-code font-size so UI Font applies.
-        meaning_label.setStyleSheet("color: #607D8B;")
+        apply_semantic_role(meaning_label, "quiet")
         page_layout.addWidget(meaning_label)
         meaning_edit = self._make_meaning_field(
             "Meaning in your explanation language...", min_height=72
@@ -210,7 +201,7 @@ class WordPhraseCardDialog(QDialog):
         page_layout.addWidget(meaning_edit, stretch=1)
 
         example_label = QLabel("Example sentence")
-        example_label.setStyleSheet("color: #607D8B;")
+        apply_semantic_role(example_label, "quiet")
         page_layout.addWidget(example_label)
         example_edit = self._make_meaning_field(
             "Example sentence showing usage...", min_height=72
@@ -272,21 +263,7 @@ class WordPhraseCardDialog(QDialog):
         painter.drawLine(8, 2, 2, 8)
         painter.end()
         btn.setIcon(QIcon(pix))
-        btn.setStyleSheet(
-            "QToolButton#meaningTabClose {"
-            "  border: none;"
-            "  background: transparent;"
-            "  padding: 0;"
-            "  margin: 0;"
-            "}"
-            "QToolButton#meaningTabClose:hover {"
-            "  background: rgba(0, 0, 0, 0.10);"
-            "  border-radius: 3px;"
-            "}"
-            "QToolButton#meaningTabClose:pressed {"
-            "  background: rgba(0, 0, 0, 0.16);"
-            "}"
-        )
+        apply_semantic_role(btn, "icon")
         return btn
 
     def _attach_owned_close_button(self, index: int):
@@ -366,6 +343,7 @@ class WordPhraseCardDialog(QDialog):
             self._ai_status.setText(
                 "AI not configured — set API key under Settings → AI Providers."
             )
+        apply_status_tone(self._ai_status, "neutral")
 
     # ------------------------------------------------------------------
     # AI generation (nonblocking)
@@ -376,13 +354,13 @@ class WordPhraseCardDialog(QDialog):
         front = self._front_edit.text().strip()
         if not front:
             self._ai_status.setText("Enter a word/phrase first.")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
             return
 
         ai_config = AIProviderConfig.from_settings(self._settings)
         if not ai_config.configured:
             self._ai_status.setText("AI is not configured.")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
             return
 
         explanation = self._settings.get("explanation_language", "Chinese")
@@ -393,7 +371,7 @@ class WordPhraseCardDialog(QDialog):
         self._generate_btn.setEnabled(False)
         self._ai_progress.setVisible(True)
         self._ai_status.setText("Generating meanings...")
-        self._ai_status.setStyleSheet("color: #666;")
+        apply_status_tone(self._ai_status, "neutral")
 
         self._ai_worker = _create_ai_worker(ai_config, prompt)
 
@@ -412,14 +390,14 @@ class WordPhraseCardDialog(QDialog):
                 self._ai_status.setText(
                     f"Generated {len(meanings)} meaning(s). Review and edit before saving."
                 )
-                self._ai_status.setStyleSheet("color: #393;")
+                apply_status_tone(self._ai_status, "success")
             except (AIParseError, AIValidationError) as e:
                 self._ai_status.setText(f"AI parse error: {e}")
-                self._ai_status.setStyleSheet("color: #c00;")
+                apply_status_tone(self._ai_status, "danger")
 
         def on_error(err):
             self._ai_status.setText(f"AI error: {err}")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
 
         worker = self._ai_worker
         worker.result.connect(on_finished)

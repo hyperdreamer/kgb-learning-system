@@ -170,39 +170,64 @@ class TestFinalFormRegressions:
         assert all("kgb_srs.form_helpers" in message for message in messages)
 
     def test_legacy_form_helper_monkeypatches_remain_effective(self, monkeypatch):
-        """Explicit facade overrides continue to reach dialog helpers in 2.x."""
+        """Legacy overrides run before a real widget receives generated QSS."""
         _qt_app()
+        from PyQt6.QtCore import QCoreApplication, QEvent
+        from PyQt6.QtGui import QFont
+        from PyQt6.QtWidgets import QMainWindow, QWidget
+
         from kgb_srs import form_helpers
         import kgb_srs.forms as forms
         from kgb_srs.sentence_card_dialog import _create_ai_worker
 
         font_calls = []
+        install_calls = []
+        parent = QMainWindow()
+        widget = QWidget(parent)
+        settings = {"font_size": 19}
 
         class FakeWorker:
             def __init__(self, config, prompt):
                 self.config = config
                 self.prompt = prompt
 
-        def fake_apply_ui_font(widget, settings, parent):
-            font_calls.append((widget, settings, parent))
+        def fake_apply_ui_font(received_widget, received_settings, received_parent):
+            font_calls.append((received_widget, received_settings, received_parent))
+            received_widget.setFont(QFont("Arial", 19))
+
+        real_install = form_helpers.install_design_system
+
+        def spy_install_design_system(received_widget, family, size):
+            install_calls.append((received_widget, family, size))
+            return real_install(received_widget, family, size)
 
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 monkeypatch.setattr(forms, "_AIGenerateWorker", FakeWorker)
                 monkeypatch.setattr(forms, "_apply_ui_font", fake_apply_ui_font)
+            monkeypatch.setattr(
+                form_helpers, "install_design_system", spy_install_design_system
+            )
 
             worker = _create_ai_worker("config", "prompt")
-            form_helpers.apply_ui_font("widget", {"font_size": 19}, "parent")
+            form_helpers.apply_ui_font(widget, settings, parent)
 
             assert isinstance(worker, FakeWorker)
             assert worker.config == "config"
             assert worker.prompt == "prompt"
-            assert font_calls == [("widget", {"font_size": 19}, "parent")]
+            assert font_calls == [(widget, settings, parent)]
+            assert widget.font().family() == "Arial"
+            assert widget.font().pointSize() == 19 or widget.font().pixelSize() == 19
+            assert install_calls == [(widget, "Arial", 19)]
+            assert widget.styleSheet()
         finally:
             monkeypatch.undo()
             forms.__dict__.pop("_AIGenerateWorker", None)
             forms.__dict__.pop("_apply_ui_font", None)
+            parent.close()
+            parent.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_sentence_dialog_preserves_meanings_and_rebuild_content(self):
         _qt_app()
@@ -252,6 +277,129 @@ class TestFinalFormRegressions:
         assert w_dialog.font().family() == "DejaVu Sans"
         assert w_dialog.font().pointSize() == 19
         w_dialog.close()
+
+    def test_dialogs_use_semantic_roles_tones_and_shared_root_qss(self):
+        """Every Task 5 dialog uses root QSS rather than local color styles."""
+        _qt_app()
+        from PyQt6.QtCore import QCoreApplication, QEvent, Qt
+        from PyQt6.QtGui import QFont
+        from PyQt6.QtWidgets import QMainWindow, QPushButton, QToolButton, QWidget
+
+        from kgb_srs.database_creation_dialog import DBCreationDialog
+        from kgb_srs.dialogs import DynamicInputDialog
+        from kgb_srs.sentence_card_dialog import SentenceCardDialog
+        from kgb_srs.ui_theme import (
+            ROLE_PROPERTY,
+            STATUS_TONE_PROPERTY,
+            stylesheet,
+        )
+        from kgb_srs.word_phrase_dialog import WordPhraseCardDialog
+
+        parent = QMainWindow()
+        parent.setFont(QFont("Arial", 19))
+        settings = {"font_family": "Arial", "font_size": 19}
+        sentence = SentenceCardDialog(
+            parent=parent,
+            sentence="Hello world",
+            items=[("Hello", "greeting")],
+            settings=settings,
+        )
+        word_phrase = WordPhraseCardDialog(parent=parent, settings=settings)
+        database = DBCreationDialog(parent=parent)
+        dynamic = DynamicInputDialog(parent=parent)
+        try:
+            for dialog in (sentence, word_phrase, database, dynamic):
+                assert dialog.styleSheet() == stylesheet("Arial", 19)
+                assert "QTextEdit:focus" in dialog.styleSheet()
+
+            expected_roles = {
+                sentence._add_sel_btn: "secondary",
+                sentence._add_btn: "secondary",
+                sentence._remove_btn: "secondary",
+                sentence._generate_btn: "secondary",
+                sentence._cancel_btn: "secondary",
+                sentence._save_btn: "primary",
+                word_phrase._add_meaning_btn: "secondary",
+                word_phrase._generate_btn: "secondary",
+                word_phrase._cancel_btn: "secondary",
+                word_phrase._save_btn: "primary",
+            }
+            for widget, role in expected_roles.items():
+                assert widget.property(ROLE_PROPERTY) == role
+                assert widget.styleSheet() == ""
+
+            database_buttons = {
+                button.text(): button for button in database.findChildren(QPushButton)
+            }
+            dynamic_buttons = {
+                button.text(): button for button in dynamic.findChildren(QPushButton)
+            }
+            assert database_buttons["Create"].property(ROLE_PROPERTY) == "primary"
+            assert database_buttons["Cancel"].property(ROLE_PROPERTY) == "secondary"
+            assert dynamic_buttons["OK"].property(ROLE_PROPERTY) == "primary"
+            assert dynamic_buttons["Cancel"].property(ROLE_PROPERTY) == "secondary"
+            assert database._dir_label.property(ROLE_PROPERTY) == "quiet"
+            assert sentence._sense_source_label.property(ROLE_PROPERTY) == "quiet"
+
+            meaning_card = sentence.findChild(QWidget, "sentenceMeaningCard")
+            assert meaning_card is not None
+            assert meaning_card.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            assert meaning_card.styleSheet() == ""
+            assert sentence._meaning_widgets[0][1].styleSheet() == ""
+            assert word_phrase._meaning_rows[0]["meaning_edit"].styleSheet() == ""
+
+            word_phrase._add_meaning_row()
+            tab_bar = word_phrase._meanings_tabs.tabBar()
+            close_button = tab_bar.tabButton(0, tab_bar.ButtonPosition.RightSide)
+            assert isinstance(close_button, QToolButton)
+            assert close_button.property(ROLE_PROPERTY) == "icon"
+            assert close_button.styleSheet() == ""
+
+            sentence._add_selected_text()
+            assert sentence._status_label.property(STATUS_TONE_PROPERTY) == "danger"
+            word_phrase._generate_ai_meanings()
+            assert word_phrase._ai_status.property(STATUS_TONE_PROPERTY) == "danger"
+        finally:
+            for dialog in (sentence, word_phrase, database, dynamic):
+                dialog.close()
+                dialog.deleteLater()
+            parent.close()
+            parent.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_dialog_design_system_keeps_ui_and_content_fonts_separate_at_bounds(self):
+        """Dialog focus QSS follows UI font while review HTML keeps content font."""
+        _qt_app()
+        from kgb_srs.markdown_utils import build_review_html
+        from kgb_srs.sentence_card_dialog import SentenceCardDialog
+        from kgb_srs.ui_theme import font_css
+
+        dialogs = []
+        try:
+            for ui_size, content_size in ((8, 8), (36, 48)):
+                dialog = SentenceCardDialog(
+                    sentence="Hello world",
+                    items=[("Hello", "greeting")],
+                    settings={
+                        "font_family": "Arial",
+                        "font_size": ui_size,
+                        "content_font_family": "Courier New",
+                        "content_font_size": content_size,
+                    },
+                )
+                dialogs.append(dialog)
+                assert font_css("Arial", ui_size) in dialog.styleSheet()
+                assert "QTextEdit:focus" in dialog.styleSheet()
+
+                review_html = build_review_html(
+                    "**content**", "Courier New", content_size
+                )
+                assert font_css("Courier New", content_size) in review_html
+                assert font_css("Arial", ui_size) not in review_html
+        finally:
+            for dialog in dialogs:
+                dialog.close()
+                dialog.deleteLater()
 
     def test_sentence_dialog_meaning_shows_selected_only(self):
         """Meaning panel lists only the selected unfamiliar item."""

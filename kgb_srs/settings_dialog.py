@@ -54,25 +54,10 @@ from .config import (
 from .db import DB_SUFFIX
 from .secret_line_edit import SecretLineEdit
 from .tts import TTSWorker, VoiceListWorker
+from .ui_theme import apply_semantic_role, apply_status_tone, install_design_system
 from .version import get_app_version
 
 _PREVIEW_SAMPLE = "Hello. This is a preview of the selected voice."
-
-_GENDER_BUTTON_STYLE = """
-QPushButton {
-    padding: 4px 12px;
-    border: 1px solid #aaa;
-    background: #f5f5f5;
-}
-QPushButton:checked {
-    background: #2b6cb0;
-    color: white;
-    border-color: #2b6cb0;
-}
-QPushButton:hover:!checked {
-    background: #e8e8e8;
-}
-"""
 
 
 class _VoiceRowWidget(QWidget):
@@ -89,9 +74,11 @@ class _VoiceRowWidget(QWidget):
         text_col.setContentsMargins(0, 0, 0, 0)
         text_col.setSpacing(0)
         name_label = QLabel(short_name)
-        name_label.setStyleSheet("font-weight: 600;")
+        name_font = name_label.font()
+        name_font.setBold(True)
+        name_label.setFont(name_font)
         meta_label = QLabel(f"{locale} · {gender}")
-        meta_label.setStyleSheet("color: #666;")
+        apply_semantic_role(meta_label, "quiet")
         text_col.addWidget(name_label)
         text_col.addWidget(meta_label)
         layout.addLayout(text_col, 1)
@@ -100,6 +87,7 @@ class _VoiceRowWidget(QWidget):
         play_btn.setFixedWidth(32)
         play_btn.setToolTip("Preview this voice")
         play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        apply_semantic_role(play_btn, "secondary")
         play_btn.clicked.connect(lambda: on_preview(short_name))
         layout.addWidget(play_btn)
         self.preview_button = play_btn
@@ -120,6 +108,11 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         if parent is not None:
             self.setFont(parent.font())
+        font = self.font()
+        font_size = font.pointSize()
+        if font_size <= 0:
+            font_size = font.pixelSize()
+        install_design_system(self, font.family(), font_size)
         self.settings = settings
         self.settings_file = settings_file
         # Staged AI provider bag (mutated by switch/add/rename/delete before Save).
@@ -194,9 +187,10 @@ class SettingsDialog(QDialog):
         button_layout.addStretch()
         self.save_button = QPushButton("Save && Apply")
         self.save_button.setObjectName("saveSettingsButton")
-        self.save_button.setStyleSheet("background-color: #ccffcc;")
+        apply_semantic_role(self.save_button, "primary")
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setObjectName("cancelSettingsButton")
+        apply_semantic_role(self.cancel_button, "secondary")
         button_layout.addWidget(self.save_button)
         button_layout.addWidget(self.cancel_button)
         outer_layout.addLayout(button_layout)
@@ -229,6 +223,7 @@ class SettingsDialog(QDialog):
         )
         self.database_root_browse_button = QPushButton("Browse…")
         self.database_root_browse_button.setObjectName("databaseRootBrowseButton")
+        apply_semantic_role(self.database_root_browse_button, "secondary")
 
         root_row = QWidget()
         root_row_layout = QHBoxLayout(root_row)
@@ -251,6 +246,7 @@ class SettingsDialog(QDialog):
         self.default_database_input.setReadOnly(True)
         self.database_browse_button = QPushButton("Browse…")
         self.database_browse_button.setObjectName("databaseBrowseButton")
+        apply_semantic_role(self.database_browse_button, "secondary")
 
         row = QWidget()
         row_layout = QHBoxLayout(row)
@@ -370,7 +366,7 @@ class SettingsDialog(QDialog):
             (self.tts_gender_female, "Female"),
         ):
             btn.setCheckable(True)
-            btn.setStyleSheet(_GENDER_BUTTON_STYLE)
+            apply_semantic_role(btn, "secondary")
             btn.setProperty("genderFilter", value)
             self.tts_gender_group.addButton(btn)
             gender_row.addWidget(btn)
@@ -408,6 +404,7 @@ class SettingsDialog(QDialog):
         page, layout = self._page()
         version_label = QLabel(f"KGB 5-Box SRS System {get_app_version()}")
         version_label.setObjectName("aboutVersionLabel")
+        apply_semantic_role(version_label, "quiet")
         layout.addRow("Version:", version_label)
         self.pages.addWidget(page)
 
@@ -439,6 +436,9 @@ class SettingsDialog(QDialog):
         self.ai_provider_delete_btn.setToolTip(
             "Delete the selected profile (at least one must remain)."
         )
+        apply_semantic_role(self.ai_provider_add_btn, "secondary")
+        apply_semantic_role(self.ai_provider_rename_btn, "secondary")
+        apply_semantic_role(self.ai_provider_delete_btn, "danger")
         profile_btns_layout.addWidget(self.ai_provider_add_btn)
         profile_btns_layout.addWidget(self.ai_provider_rename_btn)
         profile_btns_layout.addWidget(self.ai_provider_delete_btn)
@@ -467,6 +467,7 @@ class SettingsDialog(QDialog):
         self.ai_models_refresh_btn.setToolTip(
             "Fetch available models from Base URL + API Key (/v1/models)."
         )
+        apply_semantic_role(self.ai_models_refresh_btn, "secondary")
         model_layout.addWidget(self.ai_model_input, 1)
         model_layout.addWidget(self.ai_models_refresh_btn)
         layout.addRow("Model:", model_row)
@@ -492,8 +493,10 @@ class SettingsDialog(QDialog):
 
         self.ai_test_button = QPushButton("Test")
         self.ai_test_button.setObjectName("aiTestButton")
+        apply_semantic_role(self.ai_test_button, "secondary")
         self.ai_test_status_label = QLabel("")
         self.ai_test_status_label.setObjectName("aiTestStatusLabel")
+        apply_status_tone(self.ai_test_status_label, "neutral")
         self.ai_test_status_label.setWordWrap(True)
 
         test_row = QWidget()
@@ -549,7 +552,7 @@ class SettingsDialog(QDialog):
         finally:
             self._ai_loading_profile = False
         self.ai_test_status_label.setText("")
-        self.ai_test_status_label.setStyleSheet("")
+        apply_status_tone(self.ai_test_status_label, "neutral")
         self._update_ai_profile_buttons()
 
     def _reload_ai_provider_combo(self) -> None:
@@ -1103,7 +1106,7 @@ class SettingsDialog(QDialog):
         if self.ai_test_worker is not None or self._deferred_close_action is not None:
             return
         self.ai_test_button.setEnabled(False)
-        self.ai_test_status_label.setStyleSheet("")
+        apply_status_tone(self.ai_test_status_label, "neutral")
         self.ai_test_status_label.setText("Testing…")
         config = self._staged_ai_config()
         self._ai_test_token = self._ai_models_token(
@@ -1127,10 +1130,10 @@ class SettingsDialog(QDialog):
         if ok:
             ms = int(round(latency_ms)) if latency_ms >= 0 else "?"
             text = f"OK — {ms} ms ({model})"
-            self.ai_test_status_label.setStyleSheet("color: #1a7f37;")
+            apply_status_tone(self.ai_test_status_label, "success")
         else:
             text = f"Failed — {message}"
-            self.ai_test_status_label.setStyleSheet("color: #cf222e;")
+            apply_status_tone(self.ai_test_status_label, "danger")
         self.ai_test_status_label.setText(text)
 
     def _on_ai_test_finished(self, worker):
@@ -1143,7 +1146,7 @@ class SettingsDialog(QDialog):
         if self.ai_models_worker is not None or self._deferred_close_action is not None:
             return
         self.ai_models_refresh_btn.setEnabled(False)
-        self.ai_test_status_label.setStyleSheet("")
+        apply_status_tone(self.ai_test_status_label, "neutral")
         self.ai_test_status_label.setText("Loading models…")
         config = self._staged_ai_config()
         provider_name = self._current_ai_provider_name()
@@ -1165,10 +1168,10 @@ class SettingsDialog(QDialog):
         if ok:
             self._populate_ai_models(list(models or []), keep=self._ai_model_text())
             count = len(models or [])
-            self.ai_test_status_label.setStyleSheet("color: #1a7f37;")
+            apply_status_tone(self.ai_test_status_label, "success")
             self.ai_test_status_label.setText(f"OK — {count} model(s) available")
         else:
-            self.ai_test_status_label.setStyleSheet("color: #cf222e;")
+            apply_status_tone(self.ai_test_status_label, "danger")
             self.ai_test_status_label.setText(f"Models — {message}")
 
     def _on_ai_models_finished(self, worker):

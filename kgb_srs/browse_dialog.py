@@ -23,6 +23,7 @@ from .catalog import DatabaseType
 from .db import rollback_after_failure
 from .dialogs import DynamicInputDialog
 from .search import search_sentence_cards, search_word_phrase_cards
+from .ui_theme import apply_semantic_role, install_design_system
 
 
 def _fetch_expressions_for_card(conn, card_id):
@@ -50,11 +51,18 @@ class BrowseCardsDialog(QDialog):
         self.controller = controller
         self.setWindowTitle(f"Browse Cards: {controller.current_lang}")
         self.setFont(controller.font())
+        font = self.font()
+        font_size = font.pointSize()
+        if font_size <= 0:
+            font_size = font.pixelSize()
+        install_design_system(self, font.family(), font_size)
         self.resize(800, 500)
 
         layout = QVBoxLayout(self)
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Search:"))
+        search_label = QLabel("Search:")
+        apply_semantic_role(search_label, "quiet")
+        filter_row.addWidget(search_label)
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText(
             "Type to search; use AND or OR to combine terms"
@@ -80,11 +88,15 @@ class BrowseCardsDialog(QDialog):
         self.review_btn = QPushButton("Review Selected")
         self.edit_btn = QPushButton("Edit Selected")
         self.delete_btn = QPushButton("Delete Selected")
-        self.delete_btn.setStyleSheet("background-color: #ffcccc;")
         self.review_btn.setToolTip("Review the selected card (Alt+R)")
         self.edit_btn.setToolTip("Edit the selected card (Alt+E)")
         self.delete_btn.setToolTip("Delete the selected card (Alt+D)")
-        for button in (self.review_btn, self.edit_btn, self.delete_btn):
+        for button, role in (
+            (self.review_btn, "primary"),
+            (self.edit_btn, "secondary"),
+            (self.delete_btn, "danger"),
+        ):
+            apply_semantic_role(button, role)
             button_row.addWidget(button)
         layout.addLayout(button_row)
 

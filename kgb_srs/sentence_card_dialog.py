@@ -30,6 +30,7 @@ from .ai_provider import (
 )
 from . import form_helpers
 from .senses import get_sense, list_senses_for_expression
+from .ui_theme import apply_semantic_role, apply_status_tone
 from .validation import (
     apply_ai_membership_claims,
     deduplicate_unfamiliar_items,
@@ -139,6 +140,7 @@ class SentenceCardDialog(QDialog):
             "Select text inside the sentence box above and click to add it "
             "as an unfamiliar item."
         )
+        apply_semantic_role(self._add_sel_btn, "secondary")
         self._add_sel_btn.clicked.connect(self._add_selected_text)
         sel_row.addWidget(self._add_sel_btn)
         layout.addLayout(sel_row)
@@ -164,6 +166,7 @@ class SentenceCardDialog(QDialog):
         entry_layout.addWidget(self._item_entry)
 
         self._add_btn = QPushButton("Add")
+        apply_semantic_role(self._add_btn, "secondary")
         self._add_btn.clicked.connect(self._add_item)
         entry_layout.addWidget(self._add_btn)
 
@@ -171,6 +174,7 @@ class SentenceCardDialog(QDialog):
         remove_btn.clicked.connect(self._remove_selected)
         remove_btn.setEnabled(False)
         remove_btn.setToolTip("Select one or more items in the list to remove.")
+        apply_semantic_role(remove_btn, "secondary")
         self._remove_btn = remove_btn
         entry_layout.addWidget(remove_btn)
         layout.addLayout(entry_layout)
@@ -185,13 +189,13 @@ class SentenceCardDialog(QDialog):
 
         # --- Validation ---
         self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #888;")
+        apply_status_tone(self._status_label, "neutral")
         layout.addWidget(self._status_label)
 
         # --- AI controls (selected item only) ---
         ai_row = QHBoxLayout()
         self._ai_status = QLabel("")
-        self._ai_status.setStyleSheet("color: #666;")
+        apply_status_tone(self._ai_status, "neutral")
         ai_row.addWidget(self._ai_status, stretch=1)
         self._generate_btn = QPushButton("🤖 Generate Meaning")
         self._generate_btn.setToolTip(
@@ -199,6 +203,7 @@ class SentenceCardDialog(QDialog):
             "automatically; click again to replace the current generated or "
             "manually entered meaning."
         )
+        apply_semantic_role(self._generate_btn, "secondary")
         self._generate_btn.clicked.connect(self._generate_ai_meanings)
         self._generate_btn.setEnabled(False)
         ai_row.addWidget(self._generate_btn)
@@ -212,7 +217,7 @@ class SentenceCardDialog(QDialog):
         # --- Meaning (single card for the selected item) ---
         layout.addWidget(QLabel("<b>Meaning</b>"))
         self._sense_source_label = QLabel("")
-        self._sense_source_label.setStyleSheet("color: #607D8B;")
+        apply_semantic_role(self._sense_source_label, "quiet")
         self._sense_source_label.setWordWrap(True)
         layout.addWidget(self._sense_source_label)
         self._meanings_layout = QVBoxLayout()
@@ -230,15 +235,13 @@ class SentenceCardDialog(QDialog):
         btn_layout.addStretch()
 
         self._cancel_btn = QPushButton("Cancel")
+        apply_semantic_role(self._cancel_btn, "secondary")
         self._cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self._cancel_btn)
 
         self._save_btn = QPushButton("Save")
         self._save_btn.setObjectName("sentenceSaveButton")
-        self._save_btn.setStyleSheet(
-            "background-color: #43A047; color: white; "
-            "font-weight: bold; padding: 8px 20px;"
-        )
+        apply_semantic_role(self._save_btn, "primary")
         self._save_btn.clicked.connect(self._accept)
         btn_layout.addWidget(self._save_btn)
         layout.addLayout(btn_layout)
@@ -363,7 +366,7 @@ class SentenceCardDialog(QDialog):
                 self._status_label.setText(
                     "Item already in list (or duplicate after normalization)."
                 )
-                self._status_label.setStyleSheet("color: #c00;")
+                apply_status_tone(self._status_label, "danger")
             else:
                 self._persist_active_meaning()
                 self._meanings.setdefault(text, "")
@@ -371,6 +374,7 @@ class SentenceCardDialog(QDialog):
                 self._items_list.addItem(text)
                 self._item_entry.clear()
                 self._status_label.setText("")
+                apply_status_tone(self._status_label, "neutral")
                 # Select the newly added item so its Meaning card shows.
                 self._items_list.setCurrentRow(self._items_list.count() - 1)
                 self._on_item_selection_changed()
@@ -382,7 +386,7 @@ class SentenceCardDialog(QDialog):
         selected = cursor.selectedText().strip()
         if not selected:
             self._status_label.setText("No text selected in the sentence box.")
-            self._status_label.setStyleSheet("color: #c00;")
+            apply_status_tone(self._status_label, "danger")
             return
 
         existing = self._get_items()
@@ -390,14 +394,14 @@ class SentenceCardDialog(QDialog):
         deduped = deduplicate_unfamiliar_items(all_items)
         if len(deduped) <= len(existing):
             self._status_label.setText("Selection already in list (or duplicate).")
-            self._status_label.setStyleSheet("color: #c00;")
+            apply_status_tone(self._status_label, "danger")
         else:
             self._persist_active_meaning()
             self._meanings.setdefault(selected, "")
             self._sense_ids.setdefault(selected, None)
             self._items_list.addItem(selected)
             self._status_label.setText(f"Added: {selected[:50]}")
-            self._status_label.setStyleSheet("color: #393;")
+            apply_status_tone(self._status_label, "success")
             self._items_list.setCurrentRow(self._items_list.count() - 1)
             self._on_item_selection_changed()
             self._generate_new_item_meaning()
@@ -417,6 +421,7 @@ class SentenceCardDialog(QDialog):
             self._sense_ids.pop(expr, None)
             self._persisted_verified_surfaces.pop(expr, None)
         self._status_label.setText("")
+        apply_status_tone(self._status_label, "neutral")
         self._on_item_selection_changed()
 
     # ------------------------------------------------------------------
@@ -431,6 +436,7 @@ class SentenceCardDialog(QDialog):
             self._ai_status.setText(
                 "AI not configured — set API key under Settings → AI Providers."
             )
+        apply_status_tone(self._ai_status, "neutral")
         self._update_generate_enabled()
 
     # ------------------------------------------------------------------
@@ -439,7 +445,7 @@ class SentenceCardDialog(QDialog):
 
     @staticmethod
     def _make_meaning_field(placeholder: str, min_height: int = 52) -> QTextEdit:
-        """Soft-bordered multi-line field matching WordPhrase chrome."""
+        """Return a shared-system multi-line field for a selected meaning."""
         edit = QTextEdit()
         edit.setAcceptRichText(False)
         edit.setMinimumHeight(min_height)
@@ -452,17 +458,6 @@ class SentenceCardDialog(QDialog):
         doc = edit.document()
         if doc is not None:
             doc.setDocumentMargin(6)
-        edit.setStyleSheet(
-            "QTextEdit {"
-            "  border: 1px solid #CFD8DC;"
-            "  border-radius: 6px;"
-            "  padding: 2px 6px;"
-            "  background: #FFFFFF;"
-            "}"
-            "QTextEdit:focus {"
-            "  border: 1px solid #42A5F5;"
-            "}"
-        )
         return edit
 
     def _rebuild_meaning_editors(self):
@@ -485,7 +480,10 @@ class SentenceCardDialog(QDialog):
                 "Add unfamiliar words/phrases, then select one and type a "
                 "meaning or click Generate Meaning."
             )
-            empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
+            empty_font = empty.font()
+            empty_font.setItalic(True)
+            empty.setFont(empty_font)
+            apply_semantic_role(empty, "quiet")
             empty.setWordWrap(True)
             self._meanings_layout.addWidget(empty)
             self._meanings_layout.addStretch()
@@ -497,7 +495,10 @@ class SentenceCardDialog(QDialog):
                 "Select an unfamiliar word/phrase, then type a meaning or click "
                 "Generate Meaning."
             )
-            empty.setStyleSheet("color: #90A4AE; font-style: italic; padding: 8px 2px;")
+            empty_font = empty.font()
+            empty_font.setItalic(True)
+            empty.setFont(empty_font)
+            apply_semantic_role(empty, "quiet")
             empty.setWordWrap(True)
             self._meanings_layout.addWidget(empty)
             self._meanings_layout.addStretch()
@@ -513,15 +514,8 @@ class SentenceCardDialog(QDialog):
 
         card = QWidget()
         card.setObjectName("sentenceMeaningCard")
-        # Needed so background/border QSS paints under all styles.
+        # Named card containers need a styled background under all Qt styles.
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        card.setStyleSheet(
-            "QWidget#sentenceMeaningCard {"
-            "  background: #FAFBFC;"
-            "  border: 1px solid #E0E6EA;"
-            "  border-radius: 8px;"
-            "}"
-        )
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(10, 8, 10, 8)
         card_layout.setSpacing(4)
@@ -602,19 +596,19 @@ class SentenceCardDialog(QDialog):
         expr = self._selected_expression()
         if not expr:
             self._ai_status.setText("Select one unfamiliar item first.")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
             return
 
         sentence = self._sentence_edit.toPlainText().strip()
         if not sentence:
             self._ai_status.setText("Enter a sentence first.")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
             return
 
         ai_config = AIProviderConfig.from_settings(self._settings)
         if not ai_config.configured:
             self._ai_status.setText("AI is not configured.")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
             return
 
         self._persist_active_meaning()
@@ -638,7 +632,7 @@ class SentenceCardDialog(QDialog):
             )
         else:
             self._ai_status.setText(f"Creating first sense for '{expr}'…")
-        self._ai_status.setStyleSheet("color: #666;")
+        apply_status_tone(self._ai_status, "neutral")
 
         self._ai_worker = _create_ai_worker(ai_config, prompt)
         target_expr = expr
@@ -687,14 +681,14 @@ class SentenceCardDialog(QDialog):
                         self._programmatic_meaning_update = False
                 self._update_sense_source_label(target_expr)
                 self._ai_status.setText(status + " Ready to save.")
-                self._ai_status.setStyleSheet("color: #393;")
+                apply_status_tone(self._ai_status, "success")
             except (AIParseError, AIValidationError) as e:
                 self._ai_status.setText(f"AI parse error: {e}")
-                self._ai_status.setStyleSheet("color: #c00;")
+                apply_status_tone(self._ai_status, "danger")
 
         def on_error(err):
             self._ai_status.setText(f"AI error: {err}")
-            self._ai_status.setStyleSheet("color: #c00;")
+            apply_status_tone(self._ai_status, "danger")
 
         worker = self._ai_worker
         worker.result.connect(on_finished)
@@ -819,7 +813,7 @@ class SentenceCardDialog(QDialog):
         self._membership_pending_accept = None
 
         self._status_label.setText(f"🤖 AI checking {len(missing)} residual item(s)…")
-        self._status_label.setStyleSheet("color: #666;")
+        apply_status_tone(self._status_label, "neutral")
         self._ai_progress.setVisible(True)
         self._ai_progress.setRange(0, 0)
         self._set_ai_controls_enabled(False)
@@ -876,14 +870,14 @@ class SentenceCardDialog(QDialog):
                 "Please remove them or fix the sentence before saving.",
             )
             self._status_label.setText(f"❌ Still not found: {missing_str}")
-            self._status_label.setStyleSheet("color: #c00;")
+            apply_status_tone(self._status_label, "danger")
             return
 
         recovered = len(missing)
         self._status_label.setText(
             f"✅ AI residual check accepted {recovered} item(s); finalizing…"
         )
-        self._status_label.setStyleSheet("color: #393;")
+        apply_status_tone(self._status_label, "success")
         verified_surfaces = dict(getattr(self, "_membership_retained_surfaces", {}))
         verified_surfaces.update(residual.accepted_surfaces or {})
         self._membership_pending_accept = (
@@ -906,7 +900,7 @@ class SentenceCardDialog(QDialog):
         self._status_label.setText(
             f"❌ AI residual check failed; still missing: {missing_str}"
         )
-        self._status_label.setStyleSheet("color: #c00;")
+        apply_status_tone(self._status_label, "danger")
 
     def _on_membership_ai_finished(self, worker=None) -> None:
         """Clear only the matching worker, then commit a queued valid result."""
@@ -1001,8 +995,16 @@ class SentenceCardDialog(QDialog):
         from .config import DEFAULT_SETTINGS
 
         try:
-            w = int(self._settings.get("sentence_dialog_width", DEFAULT_SETTINGS["sentence_dialog_width"]))  # type: ignore[call-overload]
-            h = int(self._settings.get("sentence_dialog_height", DEFAULT_SETTINGS["sentence_dialog_height"]))  # type: ignore[call-overload]
+            w = int(
+                self._settings.get(
+                    "sentence_dialog_width", DEFAULT_SETTINGS["sentence_dialog_width"]
+                )
+            )  # type: ignore[call-overload]
+            h = int(
+                self._settings.get(
+                    "sentence_dialog_height", DEFAULT_SETTINGS["sentence_dialog_height"]
+                )
+            )  # type: ignore[call-overload]
         except (TypeError, ValueError):
             w = int(DEFAULT_SETTINGS["sentence_dialog_width"])  # type: ignore[call-overload]
             h = int(DEFAULT_SETTINGS["sentence_dialog_height"])  # type: ignore[call-overload]

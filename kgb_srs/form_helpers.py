@@ -5,6 +5,7 @@ import sys
 from PyQt6.QtGui import QFont
 
 from .ai_provider import AIProviderConfig, _get_ai_worker_class
+from .ui_theme import install_design_system
 
 
 def _legacy_form_helper_override(name: str, canonical):
@@ -39,6 +40,7 @@ def apply_ui_font(widget, settings: dict | None, parent=None) -> None:
     """Apply the UI font while honoring an explicit legacy facade override."""
     helper = _legacy_form_helper_override("_apply_ui_font", _apply_ui_font)
     helper(widget, settings, parent)
+    install_design_system(widget, widget.font().family(), widget.font().pointSize())
 
 
 # Canonical AI worker class, sourced from :mod:`ai_provider`.

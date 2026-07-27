@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QMainWindow,
-    QPushButton,
     QStackedWidget,
     QWidget,
 )
@@ -993,47 +992,125 @@ def test_main_window_warns_when_saved_capture_endpoint_cannot_start(monkeypatch)
 
 
 def test_font_settings_are_scoped_to_main_window_and_owned_dialog(
-    monkeypatch, settings
+    monkeypatch, settings, tmp_path
 ):
+    """A real temporary-root app scopes generated UI QSS to its owned dialog."""
     app = _app()
     original_font = QFont(app.font())
     baseline = QFont("Sans Serif", 9)
     app.setFont(baseline)
     baseline_font = (app.font().family(), app.font().pointSize())
 
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from kgb_srs.config import save_settings
     from kgb_srs.main_window import BarskyApp
     import kgb_srs.settings_dialog as module
+    from kgb_srs.ui_theme import stylesheet
+
+    settings_file = tmp_path / "settings.json"
+    database_root = tmp_path / "databases"
+    configured = dict(settings)
+    configured.update(
+        {
+            "font_family": "Arial",
+            "font_size": 23,
+            "database_root": str(database_root),
+            "default_database": "",
+        }
+    )
+    save_settings(configured, settings_file)
 
     worker = FakeVoiceWorker()
     monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
-    window = QMainWindow()
+    window = None
+    dialog = None
     try:
-        child = QWidget(window)
-        for name in (
-            "start_btn",
-            "restart_review_btn",
-            "previous_review_btn",
-            "delete_entry_btn",
-        ):
-            setattr(window, name, QPushButton(window))
-        window.settings = {"font_family": "Arial", "font_size": 23}
-        window._button_style = BarskyApp._button_style
-        window._toolbar_button_style = BarskyApp._toolbar_button_style
-        window._apply_toolbar_font_styles = lambda ff, fs: (
-            BarskyApp._apply_toolbar_font_styles(window, ff, fs)
+        window = BarskyApp(settings_file=str(settings_file))
+        dialog = module.SettingsDialog(
+            window.settings,
+            parent=window,
+            current_size=(window.width(), window.height()),
+            settings_file=str(settings_file),
         )
 
-        BarskyApp.apply_font_settings(window)
-        dialog = module.SettingsDialog(settings, parent=window, current_size=(900, 700))
-
         assert (app.font().family(), app.font().pointSize()) == baseline_font
-        assert window.font().pointSize() == 23
-        assert child.font().pointSize() == 23
-        assert dialog.font().pointSize() == 23
-        dialog.reject()
+        for widget in (window.start_btn, window.settings_btn, dialog):
+            assert widget.font().family() == "Arial"
+            assert widget.font().pointSize() == 23 or widget.font().pixelSize() == 23
+        assert window.styleSheet() == stylesheet("Arial", 23)
+        assert dialog.styleSheet() == stylesheet("Arial", 23)
+        assert "QLineEdit:focus" in dialog.styleSheet()
+        assert dialog.parent() is window
     finally:
-        window.close()
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        if window is not None:
+            window.close()
+            window.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.setFont(original_font)
+
+
+def test_settings_dialog_uses_semantic_roles_and_status_tones(monkeypatch, settings):
+    """Settings actions and async outcomes use shared roles rather than QSS."""
+    dialog, worker = _dialog(monkeypatch, settings)
+    from kgb_srs.ui_theme import ROLE_PROPERTY, STATUS_TONE_PROPERTY
+
+    try:
+        expected_roles = {
+            dialog.save_button: "primary",
+            dialog.cancel_button: "secondary",
+            dialog.database_root_browse_button: "secondary",
+            dialog.database_browse_button: "secondary",
+            dialog.tts_gender_all: "secondary",
+            dialog.tts_gender_male: "secondary",
+            dialog.tts_gender_female: "secondary",
+            dialog.ai_provider_add_btn: "secondary",
+            dialog.ai_provider_rename_btn: "secondary",
+            dialog.ai_provider_delete_btn: "danger",
+            dialog.ai_models_refresh_btn: "secondary",
+            dialog.ai_test_button: "secondary",
+        }
+        for control, role in expected_roles.items():
+            assert control.property(ROLE_PROPERTY) == role
+            assert control.styleSheet() == ""
+        assert "QLineEdit:focus" in dialog.styleSheet()
+        assert dialog.ai_test_status_label.property(STATUS_TONE_PROPERTY) == "neutral"
+
+        _emit_voices(dialog, worker)
+        voice_row = dialog.tts_voice_list.itemWidget(dialog.tts_voice_list.item(0))
+        assert voice_row.preview_button.property(ROLE_PROPERTY) == "secondary"
+        metadata = next(
+            label for label in voice_row.findChildren(QLabel) if " · " in label.text()
+        )
+        assert metadata.property(ROLE_PROPERTY) == "quiet"
+        assert all(label.styleSheet() == "" for label in voice_row.findChildren(QLabel))
+
+        dialog.ai_test_button.click()
+        test_worker = FakeAITestWorker.instances[-1]
+        assert dialog.ai_test_status_label.property(STATUS_TONE_PROPERTY) == "neutral"
+        test_worker.result.emit(True, "reachable", 12.0)
+        assert dialog.ai_test_status_label.property(STATUS_TONE_PROPERTY) == "success"
+        test_worker.finished.emit()
+
+        dialog.ai_models_refresh_btn.click()
+        models_worker = FakeAIModelsWorker.instances[-1]
+        assert dialog.ai_test_status_label.property(STATUS_TONE_PROPERTY) == "neutral"
+        models_worker.result.emit(False, "invalid API key", [])
+        assert dialog.ai_test_status_label.property(STATUS_TONE_PROPERTY) == "danger"
+        models_worker.finished.emit()
+        _app().processEvents()
+
+        staged = dialog._collect_staged_settings()
+        assert "theme" not in staged
+        assert not any(
+            "dark" in control.objectName().lower()
+            or "classic" in control.objectName().lower()
+            for control in dialog.findChildren(QWidget)
+        )
+    finally:
+        dialog.reject()
 
 
 def test_cancel_button_rejects_without_saving(monkeypatch, settings):
@@ -1077,9 +1154,11 @@ def test_appearance_page_has_ui_and_content_font_controls(monkeypatch, settings)
 
     # QComboBox may not resolve missing families; value() / staged path is
     # the source of truth. Check size control and that family control exists.
+    assert dialog.font_size_input.minimum() == 8
+    assert dialog.font_size_input.maximum() == 36
     assert dialog.content_font_size_input.value() == settings["content_font_size"]
-    assert dialog.content_font_size_input.minimum() <= 8
-    assert dialog.content_font_size_input.maximum() >= 36
+    assert dialog.content_font_size_input.minimum() == 8
+    assert dialog.content_font_size_input.maximum() == 48
     assert dialog.content_font_family_input.count() > 0
     dialog.reject()
 

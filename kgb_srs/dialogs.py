@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import (
     QTextEdit,
 )
 
+from .ui_theme import apply_semantic_role, install_design_system
+
 
 class DynamicInputDialog(QDialog):
     """Resizable text input dialog for front/back content with Markdown/Math support."""
@@ -22,6 +24,13 @@ class DynamicInputDialog(QDialog):
         initial_text="",
     ):
         super().__init__(parent)
+        if parent is not None:
+            self.setFont(parent.font())
+        font = self.font()
+        font_size = font.pointSize()
+        if font_size <= 0:
+            font_size = font.pixelSize()
+        install_design_system(self, font.family(), font_size)
         self.setWindowTitle(title)
         self.text_value = None
         self.setMinimumSize(480, 340)
@@ -46,13 +55,11 @@ class DynamicInputDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("OK")
-        ok_btn.setStyleSheet(
-            "background-color: #ccffcc; font-weight: bold; padding: 10px;"
-        )
+        apply_semantic_role(ok_btn, "primary")
         ok_btn.clicked.connect(self.accept_input)
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("padding: 10px;")
+        apply_semantic_role(cancel_btn, "secondary")
         cancel_btn.clicked.connect(self.reject)
 
         btn_layout.addWidget(ok_btn)

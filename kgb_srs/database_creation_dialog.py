@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .catalog import DatabaseType
+from .ui_theme import apply_semantic_role, install_design_system
 
 
 class DBCreationDialog(QDialog):
@@ -22,6 +23,13 @@ class DBCreationDialog(QDialog):
 
     def __init__(self, parent=None, base_dir: str = ""):
         super().__init__(parent)
+        if parent is not None:
+            self.setFont(parent.font())
+        font = self.font()
+        font_size = font.pointSize()
+        if font_size <= 0:
+            font_size = font.pixelSize()
+        install_design_system(self, font.family(), font_size)
         self.setWindowTitle("Create New Database")
         self.setMinimumWidth(500)
         self._base_dir = base_dir
@@ -76,7 +84,7 @@ class DBCreationDialog(QDialog):
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(QLabel("Location:"))
         self._dir_label = QLabel("(auto)")
-        self._dir_label.setStyleSheet("color: #888;")
+        apply_semantic_role(self._dir_label, "quiet")
         dir_layout.addWidget(self._dir_label, stretch=1)
         layout.addLayout(dir_layout)
 
@@ -89,14 +97,12 @@ class DBCreationDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         create_btn = QPushButton("Create")
-        create_btn.setStyleSheet(
-            "background-color: #43A047; color: white; "
-            "font-weight: bold; padding: 8px 20px;"
-        )
+        apply_semantic_role(create_btn, "primary")
         create_btn.clicked.connect(self._on_create)
         btn_layout.addWidget(create_btn)
 
         cancel_btn = QPushButton("Cancel")
+        apply_semantic_role(cancel_btn, "secondary")
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
