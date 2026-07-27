@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 
 from PyQt6.QtGui import QTextDocument
 
+from .ui_theme import LIGHT_TOKENS, review_document_css
+
 # --- Constants ---
 MATH_PLACEHOLDER_PREFIX = "BARSKYMATHPLACEHOLDER"
 
@@ -105,7 +107,7 @@ def sanitize_review_html_fragment(fragment: str) -> str:
         if _REVIEW_SAFE_ITALIC_STYLE_RE.search(style_value):
             safe_declarations.append("font-style: italic")
         if _REVIEW_SAFE_WORD_PHRASE_MEANING_COLOR_RE.search(style_value):
-            safe_declarations.append("color: #D32F2F")
+            safe_declarations.append(f"color: {LIGHT_TOKENS['review_meaning']}")
         quote_indent = _REVIEW_SAFE_QT_BLOCK_INDENT_RE.search(style_value)
         if quote_indent and _REVIEW_SAFE_QT_INDENT_MARGIN_RE.search(style_value):
             safe_declarations.extend(
@@ -240,134 +242,14 @@ def build_review_html(markdown_text, font_family, font_size, include_mathjax=Tru
     but review HTML intentionally never loads a network MathJax script.
     """
     html_body = sanitize_review_html_fragment(markdown_to_html_fragment(markdown_text))
-    safe_font = str(font_family).replace("\\", "\\\\").replace("'", "\\'")
-    try:
-        safe_font_size = max(1, int(font_size))
-    except (TypeError, ValueError):
-        safe_font_size = 18
+    document_css = review_document_css(font_family, font_size)
 
     return f"""
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<style>
-  html, body {{
-    margin: 0;
-    padding: 0;
-    background-color: transparent;
-  }}
-
-  body {{
-    font-family: '{safe_font}', Arial, sans-serif;
-    font-size: {safe_font_size}px;
-    color: #222;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    box-sizing: border-box;
-    overflow: auto;
-  }}
-
-  .content-wrapper {{
-    text-align: left;
-    display: inline-block;
-    max-width: 100%;
-    width: auto;
-    padding: 20px;
-    box-sizing: border-box;
-    overflow-wrap: anywhere;
-    word-wrap: break-word;
-  }}
-
-  .content-wrapper > *:first-child {{
-    margin-top: 0;
-  }}
-
-  .content-wrapper > *:last-child {{
-    margin-bottom: 0;
-  }}
-
-  p {{
-    margin: 0.45em 0;
-  }}
-
-  h1, h2, h3, h4, h5, h6 {{
-    margin: 0.65em 0 0.35em;
-    line-height: 1.2;
-  }}
-
-  ul, ol {{
-    margin: 0.45em 0 0.45em 1.3em;
-    padding-left: 1.2em;
-  }}
-
-  li {{
-    margin: 0.2em 0;
-  }}
-
-  blockquote {{
-    border-left: 4px solid #bdbdbd;
-    margin: 0.7em 0;
-    padding: 0.2em 0 0.2em 0.8em;
-    color: #555;
-    background: rgba(0, 0, 0, 0.03);
-  }}
-
-  hr {{
-    width: 100%;
-    border: 0;
-    border-top: 2px solid #cccccc;
-    margin: 1em 0;
-  }}
-
-  pre {{
-    background: #f6f8fa;
-    border: 1px solid #dddddd;
-    border-radius: 6px;
-    padding: 10px;
-    overflow-x: auto;
-    white-space: pre-wrap;
-  }}
-
-  code {{
-    background: #f3f3f3;
-    border-radius: 4px;
-    padding: 2px 4px;
-    font-family: Consolas, Menlo, Monaco, monospace;
-  }}
-
-  pre code {{
-    background: transparent;
-    padding: 0;
-  }}
-
-  table {{
-    border-collapse: collapse;
-    margin: 0.7em 0;
-    max-width: 100%;
-  }}
-
-  th, td {{
-    border: 1px solid #cccccc;
-    padding: 5px 8px;
-  }}
-
-  th {{
-    background: #eeeeee;
-    font-weight: bold;
-  }}
-
-  img {{
-    max-width: 100%;
-    height: auto;
-  }}
-
-  a {{
-    color: #1565c0;
-  }}
-</style>
+<style>{document_css}</style>
 </head>
 <body>
   <div class="content-wrapper">

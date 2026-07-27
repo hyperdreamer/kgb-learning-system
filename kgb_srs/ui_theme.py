@@ -84,6 +84,134 @@ def font_css(font_family: object, font_size: object) -> str:
     return f"font-family: '{escaped_family}'; font-size: {size}px;"
 
 
+def review_document_css(font_family: object, font_size: object) -> str:
+    """Return token-backed CSS for the isolated review document renderer."""
+    font_declaration = font_css(font_family, font_size)
+    tokens = LIGHT_TOKENS
+
+    return f"""
+html, body {{
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+}}
+
+body {{
+  {font_declaration}
+  color: {tokens["text"]};
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  box-sizing: border-box;
+  overflow: auto;
+}}
+
+.content-wrapper {{
+  text-align: left;
+  display: inline-block;
+  max-width: 100%;
+  width: auto;
+  padding: 20px;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-wrap: break-word;
+}}
+
+.content-wrapper > *:first-child {{
+  margin-top: 0;
+}}
+
+.content-wrapper > *:last-child {{
+  margin-bottom: 0;
+}}
+
+p {{
+  margin: 0.45em 0;
+}}
+
+h1, h2, h3, h4, h5, h6 {{
+  margin: 0.65em 0 0.35em;
+  color: {tokens["text"]};
+  line-height: 1.2;
+}}
+
+ul, ol {{
+  margin: 0.45em 0 0.45em 1.3em;
+  padding-left: 1.2em;
+}}
+
+li {{
+  margin: 0.2em 0;
+}}
+
+blockquote {{
+  border-left: 4px solid {tokens["border"]};
+  margin: 0.7em 0;
+  padding: 0.2em 0 0.2em 0.8em;
+  color: {tokens["text_muted"]};
+  background-color: {tokens["surface_subtle"]};
+}}
+
+hr {{
+  width: 100%;
+  border: 0;
+  border-top: 2px solid {tokens["border"]};
+  margin: 1em 0;
+}}
+
+pre {{
+  background-color: {tokens["surface_subtle"]};
+  border: 1px solid {tokens["border"]};
+  border-radius: 6px;
+  padding: 10px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}}
+
+code {{
+  background-color: {tokens["surface_hover"]};
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-family: Consolas, Menlo, Monaco, monospace;
+}}
+
+pre code {{
+  background: inherit;
+  padding: 0;
+}}
+
+table {{
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  max-width: 100%;
+}}
+
+th, td {{
+  border: 1px solid {tokens["border"]};
+  padding: 5px 8px;
+}}
+
+th {{
+  background-color: {tokens["surface_hover"]};
+  font-weight: bold;
+}}
+
+img {{
+  max-width: 100%;
+  height: auto;
+}}
+
+a {{
+  color: {tokens["primary"]};
+}}
+
+.review-meaning {{
+  color: {tokens["review_meaning"]};
+}}
+"""
+
+
 def _rule(selectors: Sequence[str], declarations: Sequence[str]) -> str:
     """Format a static QSS rule from trusted module-owned tokens."""
     joined_selectors = ",\n".join(selectors)

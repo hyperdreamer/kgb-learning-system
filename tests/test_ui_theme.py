@@ -1,6 +1,7 @@
 """Focused behavior tests for the internal semantic light-theme module."""
 
 import os
+import re
 
 import pytest
 
@@ -20,6 +21,7 @@ from kgb_srs.ui_theme import (
     normalized_font_family,
     normalized_font_size,
     review_card_stylesheet,
+    review_document_css,
     stylesheet,
 )
 
@@ -163,6 +165,70 @@ def test_root_qss_has_semantic_role_states_and_scoped_companions():
     assert "QWidget#reviewCard QToolButton" in card_qss
     assert "\nQLabel {" not in card_qss
     assert "\nQPushButton {" not in card_qss
+
+
+def test_review_document_css_uses_only_tokens_and_the_content_font():
+    """Review documents must use the content-font boundary and token palette."""
+    css = review_document_css("Noto Serif", 23)
+
+    assert font_css("Noto Serif", 23) in css
+    assert "font-family: 'Arial'" not in css
+    assert "font-size: 14px" not in css
+
+    for selector in (
+        "html, body",
+        "body",
+        "h1, h2, h3, h4, h5, h6",
+        "blockquote",
+        "hr",
+        "pre",
+        "code",
+        "table",
+        "th, td",
+        "th",
+        "img",
+        "a",
+    ):
+        assert selector in css
+
+    for token_name in (
+        "text",
+        "text_muted",
+        "border",
+        "surface_subtle",
+        "surface_hover",
+        "primary",
+        "review_meaning",
+    ):
+        assert LIGHT_TOKENS[token_name] in css
+
+    rendered_colors = {color.upper() for color in re.findall(r"#[0-9a-fA-F]{6}", css)}
+    assert rendered_colors
+    assert rendered_colors <= {color.upper() for color in LIGHT_TOKENS.values()}
+    assert "rgba(" not in css.lower()
+    for legacy_color in (
+        "#222",
+        "#555",
+        "#bdbdbd",
+        "#cccccc",
+        "#dddddd",
+        "#eeeeee",
+        "#f3f3f3",
+        "#f6f8fa",
+        "#1565c0",
+        "#d32f2f",
+    ):
+        assert legacy_color not in css.lower()
+
+
+def test_review_document_css_reuses_font_css_validation():
+    """Hostile content-font settings cannot escape the review CSS boundary."""
+    hostile_family = "Arial'; } body { color: #000; /*"
+    css = review_document_css(hostile_family, "23")
+
+    assert font_css(hostile_family, "23") in css
+    assert "body { color" not in css
+    assert "#000" not in css
 
 
 def test_qss_generators_only_embed_the_validated_font_declaration():

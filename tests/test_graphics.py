@@ -223,9 +223,12 @@ def test_bold_text_outside_sentence_review_is_not_repurposed_for_tts():
     app.processEvents()
 
 
-def test_word_phrase_single_meaning_is_unindented_and_red(flashcard):
-    """A single word/phrase meaning is flush and visually distinct."""
+def test_word_phrase_single_meaning_is_unindented_and_uses_review_meaning_token(
+    flashcard,
+):
+    """A single word/phrase meaning is flush and uses its non-grade token."""
     from kgb_srs.senses import Sense, build_word_phrase_back_from_senses
+    from kgb_srs.ui_theme import LIGHT_TOKENS
 
     sense = Sense(
         id=1,
@@ -250,7 +253,9 @@ def test_word_phrase_single_meaning_is_unindented_and_red(flashcard):
     assert meaning_block.textList() is None
     assert meaning_block.blockFormat().leftMargin() == 0
     meaning_cursor = flashcard.text_widget.document().find("a metal fastener")
-    assert meaning_cursor.charFormat().foreground().color().name().upper() == "#D32F2F"
+    meaning_color = meaning_cursor.charFormat().foreground().color().name().upper()
+    assert meaning_color == LIGHT_TOKENS["review_meaning"]
+    assert meaning_color != LIGHT_TOKENS["danger"]
     assert (
         example_block.blockFormat().leftMargin()
         > meaning_block.blockFormat().leftMargin()
@@ -397,6 +402,54 @@ def test_webengine_background_failure_is_logged_and_nonfatal(caplog):
         assert _set_transparent_web_view_background(_View()) is None
 
     assert "background unavailable" in caplog.text
+
+
+def test_review_html_embeds_owned_token_css_with_the_content_font():
+    """Review HTML must embed the safe document seam rather than local CSS."""
+    from kgb_srs.markdown_utils import build_review_html
+    from kgb_srs.ui_theme import LIGHT_TOKENS, font_css, review_document_css
+
+    document = build_review_html(
+        "Safe **review content**", "Noto Serif", 23, include_mathjax=False
+    )
+
+    assert review_document_css("Noto Serif", 23) in document
+    assert font_css("Noto Serif", 23) in document
+    assert "font-family: 'Arial'" not in document
+    assert "font-size: 14px" not in document
+    assert LIGHT_TOKENS["review_meaning"] in document
+    for legacy_color in (
+        "#222",
+        "#555",
+        "#bdbdbd",
+        "#cccccc",
+        "#dddddd",
+        "#eeeeee",
+        "#f3f3f3",
+        "#f6f8fa",
+        "#1565c0",
+        "#d32f2f",
+    ):
+        assert legacy_color not in document.lower()
+
+
+def test_sanitize_review_html_allows_only_legacy_meaning_marker_as_fixed_token():
+    """Only the exact compatibility marker may retain a tokenized color."""
+    from kgb_srs.markdown_utils import sanitize_review_html_fragment
+    from kgb_srs.ui_theme import LIGHT_TOKENS
+
+    fragment = sanitize_review_html_fragment(
+        '<span style="color: #D32F2F">meaning</span>'
+        '<span style="color: #3949AB">primary</span>'
+        '<span style="color: #B42318">danger</span>'
+        '<span style="color: #123456">arbitrary</span>'
+    )
+
+    assert fragment == (
+        f'<span style="color: {LIGHT_TOKENS["review_meaning"]};">meaning</span>'
+        "<span>primary</span><span>danger</span><span>arbitrary</span>"
+    )
+    assert LIGHT_TOKENS["danger"] not in fragment
 
 
 def test_review_html_is_offline_and_sanitizes_resource_markup():
