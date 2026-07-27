@@ -78,6 +78,30 @@ class ReviewHistoryEntry(NamedTuple):
 class ReviewControllerMixin:
     """Review behavior mixed into :class:`main_window.BarskyApp`."""
 
+    def _review_context_counts(self) -> tuple[int, int]:
+        """Return display-only reviewed and remaining counts for a daily session."""
+        reviewed = sum(
+            entry.transition == "graded" for entry in self._daily_review_history
+        ) + int(
+            self.current_card is not None and self._current_card_transition == "graded"
+        )
+        remaining = len(self.cards_due) + int(
+            self.current_card is not None and self._current_card_transition != "graded"
+        )
+        return reviewed, remaining
+
+    def _update_review_context(self) -> None:
+        """Refresh context when the real window supplies its presentation seam."""
+        if not hasattr(self, "_set_review_context"):
+            return
+
+        reviewed, remaining = self._review_context_counts()
+        self._set_review_context(
+            reviewed,
+            remaining,
+            visible=self.review_mode == "daily",
+        )
+
     def _update_button_visibility(self):
         """Review-control state machine: idle vs active.
 
@@ -129,6 +153,7 @@ class ReviewControllerMixin:
             self.restart_review_btn.setEnabled(False)
             self.previous_review_btn.setEnabled(False)
             self.close_review_btn.setEnabled(False)
+            self._update_review_context()
             return
 
         if is_active:
@@ -150,6 +175,8 @@ class ReviewControllerMixin:
             self.restart_review_btn.setEnabled(False)
             self.previous_review_btn.setEnabled(False)
             self.close_review_btn.setEnabled(False)
+
+        self._update_review_context()
 
     # ------------------------------------------------------------------
     # Review Flow

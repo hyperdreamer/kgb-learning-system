@@ -9,6 +9,21 @@ from kgb_srs.review_controller import ReviewHistoryEntry
 from .qt_helpers import qt_app as _qt_app
 
 
+@pytest.fixture(autouse=True)
+def _dispose_top_level_widgets():
+    """Keep root-local QSS from one Qt test out of the next test."""
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 class TestReviewQueuePreservation:
     """Editing an unrelated card must not disrupt the current review card."""
 
@@ -313,89 +328,123 @@ class TestReviewControls:
             patch("kgb_srs.main_window.QMessageBox.information"),
         )
 
-    # -- stylesheet: disabled-rule required for visual fading --------------
+    # -- root design system and semantic chrome --------------------------
 
-    def test_button_style_includes_disabled_rule(self):
-        """_button_style() must include QPushButton:disabled with faded
-        background (#CFD8DC) and muted text (#78909C)."""
-        from kgb_srs.main_window import BarskyApp
-
-        style = BarskyApp._button_style("#D32F2F", "#F44336")
-        assert "QPushButton:disabled" in style, "Missing QPushButton:disabled selector"
-        assert "#CFD8DC" in style, "Missing disabled background-color #CFD8DC"
-        assert "#78909C" in style, "Missing disabled color #78909C"
-        # Ensure enabled colors are untouched
-        assert "#D32F2F" in style
-        assert "#F44336" in style
-        assert "QPushButton:hover" in style
-
-    # -- stylesheet: font-size + dynamic padding must be inside QPushButton ---
-
-    def test_button_style_font_size_and_padding_inside_qpushbutton(self):
-        """_button_style(..., extra="font-size: 16px; padding: 10px;")
-        must place those declarations INSIDE the QPushButton {{...}} rule,
-        not after the closing brace."""
-        from kgb_srs.main_window import BarskyApp
-
-        style = BarskyApp._button_style(
-            "#43A047",
-            "#66BB6A",
-            extra="font-size: 16px; padding: 10px;",
-        )
-        import re
-
-        m = re.search(r"QPushButton\s*\{([^}]*)\}", style)
-        assert m is not None, "QPushButton rule must exist in the stylesheet"
-        block = m.group(1)
-        assert "font-size: 16px" in block, (
-            "font-size must be INSIDE the QPushButton rule block"
-        )
-        assert "padding: 10px" in block, (
-            "padding must be INSIDE the QPushButton rule block"
-        )
-        trailing = style.rsplit("}", 1)[-1].strip()
-        assert trailing == "", (
-            f"No declarations allowed outside CSS rules, got: {trailing!r}"
-        )
-
-    def test_apply_font_settings_stylesheet_has_correct_padding_and_size(self):
-        """apply_font_settings() must produce a stylesheet where the
-        dynamic padding and font-size are inside a QPushButton rule."""
+    def test_root_qss_has_semantic_button_state_selectors(self):
+        """The root design system exposes token-backed button states by role."""
         _qt_app()
+        from PyQt6.QtWidgets import QWidget
+
         from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import LIGHT_TOKENS, ROLE_PROPERTY, stylesheet
 
         w = BarskyApp()
-        w.settings["font_size"] = 20
-        w.settings["font_family"] = "Arial"
-        w.apply_font_settings()
+        try:
+            w.settings = dict(w.settings)
+            w.settings.update(font_family="Arial", font_size=14)
+            w.apply_font_settings()
 
-        expected_fs = 22  # font_size + 2
-        expected_pad = max(10, int(20 * 0.8))  # 16
+            root_qss = w.styleSheet()
+            assert w.objectName() == "appRoot"
+            assert w.findChild(QWidget, "appToolbar") is not None
+            assert w.view.objectName() == "reviewCanvas"
+            assert root_qss == stylesheet("Arial", 14)
 
-        for btn_name in (
-            "start_btn",
-            "restart_review_btn",
-            "previous_review_btn",
-            "delete_entry_btn",
-        ):
-            btn = getattr(w, btn_name)
-            ss = btn.styleSheet()
-            assert ss, f"{btn_name} stylesheet must not be empty"
-            import re
+            role_tokens = {
+                "primary": ("primary", "primary_hover", "primary_pressed"),
+                "secondary": ("surface", "surface_hover", "surface_subtle"),
+                "success": ("success", "success_hover", "success_pressed"),
+                "danger": ("danger", "danger_hover", "danger_pressed"),
+            }
+            for role, tokens in role_tokens.items():
+                selector = f'QPushButton[{ROLE_PROPERTY}="{role}"]'
+                assert selector in root_qss
+                for state in ("hover", "pressed", "disabled", "focus"):
+                    assert f"{selector}:{state}" in root_qss
+                for token in tokens:
+                    assert LIGHT_TOKENS[token] in root_qss
 
-            m = re.search(r"QPushButton\s*\{([^}]*)\}", ss)
-            assert m is not None, f"{btn_name}: QPushButton rule must exist"
-            block = m.group(1)
-            assert f"font-size: {expected_fs}px" in block, (
-                f"{btn_name}: font-size: {expected_fs}px must be in "
-                f"QPushButton block, got: {block!r}"
+            assert LIGHT_TOKENS["disabled_surface"] in root_qss
+            assert LIGHT_TOKENS["disabled_text"] in root_qss
+            assert LIGHT_TOKENS["focus"] in root_qss
+        finally:
+            w.close()
+
+    def test_semantic_button_roles_are_not_text_discriminated(self):
+        """Actual chrome controls retain their semantic role when relabeled."""
+        _qt_app()
+        from PyQt6.QtWidgets import QLabel
+
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import ROLE_PROPERTY
+
+        w = BarskyApp()
+        try:
+            w.settings = dict(w.settings)
+            w.settings.update(font_family="Arial", font_size=14)
+            w.apply_font_settings()
+
+            roles = {
+                "new_db_btn": "primary",
+                "start_btn": "primary",
+                "db_btn": "secondary",
+                "add_entry_btn": "secondary",
+                "browse_btn": "secondary",
+                "settings_btn": "secondary",
+                "restart_review_btn": "secondary",
+                "previous_review_btn": "secondary",
+                "edit_review_btn": "secondary",
+                "delete_entry_btn": "danger",
+                "close_review_btn": "icon",
+            }
+            for index, (attribute, role) in enumerate(roles.items()):
+                control = getattr(w, attribute)
+                assert control.property(ROLE_PROPERTY) == role
+                renamed = f"Renamed control {index}"
+                control.setText(renamed)
+                assert control.property(ROLE_PROPERTY) == role
+                assert renamed not in w.styleSheet()
+
+            status_label = w.findChild(QLabel, "reviewStatusLabel")
+            assert status_label is not None
+            assert status_label.property(ROLE_PROPERTY) == "quiet"
+            assert f'QPushButton[{ROLE_PROPERTY}="primary"]' in w.styleSheet()
+            assert f'QPushButton[{ROLE_PROPERTY}="secondary"]' in w.styleSheet()
+        finally:
+            w.close()
+
+    def test_apply_font_settings_propagates_validated_ui_font_at_root(self):
+        """The active UI font and safe generated QSS share one root boundary."""
+        _qt_app()
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import font_css, stylesheet
+
+        w = BarskyApp()
+        try:
+            w.settings = dict(w.settings)
+            w.settings.update(font_family="Courier New", font_size=19)
+            w.apply_font_settings()
+
+            assert w.font().family() == "Courier New"
+            assert w.font().pointSize() == 19
+            assert w.random_checkbox.font().family() == "Courier New"
+            assert (
+                w.random_checkbox.font().pointSize() == 19
+                or w.random_checkbox.font().pixelSize() == 19
             )
-            assert f"padding: {expected_pad}px" in block, (
-                f"{btn_name}: padding: {expected_pad}px must be in "
-                f"QPushButton block, got: {block!r}"
-            )
+            assert w.styleSheet() == stylesheet("Courier New", 19)
+            assert font_css("Courier New", 19) in w.styleSheet()
 
-        w.close()
+            hostile_family = "Bad'; QPushButton { color: red; }"
+            w.settings["font_family"] = hostile_family
+            w.apply_font_settings()
+
+            assert w.styleSheet() == stylesheet("Arial", 19)
+            assert font_css("Arial", 19) in w.styleSheet()
+            assert hostile_family not in w.styleSheet()
+            assert "color: red" not in w.styleSheet()
+        finally:
+            w.close()
 
     def test_changing_font_size_changes_button_font_metrics(self):
         """Changing Settings font_size must change actual button font
@@ -404,6 +453,7 @@ class TestReviewControls:
         from kgb_srs.main_window import BarskyApp
 
         w = BarskyApp()
+        w._save_settings = lambda: None
 
         w.settings["font_size"] = 14
         w.apply_font_settings()
@@ -469,6 +519,7 @@ class TestReviewControls:
         from kgb_srs.main_window import BarskyApp
 
         w = BarskyApp()
+        w._save_settings = lambda: None
         w.settings["font_family"] = "Arial"
         w.settings["font_size"] = 21
         w.apply_font_settings()
@@ -498,42 +549,101 @@ class TestReviewControls:
 
         def fake_exec(self):
             captured["font_size"] = self.font().pointSize()
+            captured["font_pixel_size"] = self.font().pixelSize()
             captured["font_family"] = self.font().family()
             return QDialog.DialogCode.Rejected
 
         monkeypatch.setattr(QDialog, "exec", fake_exec)
         w.browse_cards()
 
-        assert captured.get("font_size") == 21, (
-            f"Browse dialog must inherit UI font size 21, got {captured}"
-        )
-        assert captured.get("font_family"), "Browse dialog must have a font family"
+        assert (
+            captured.get("font_size") == 21 or captured.get("font_pixel_size") == 21
+        ), f"Browse dialog must inherit UI font size 21, got {captured}"
+        assert captured.get("font_family") == "Arial"
         w.close()
 
-    def test_apply_font_settings_styles_toolbar_chrome(self):
-        """Toolbar buttons get UI font in stylesheets from apply_font_settings."""
+    def test_toolbar_controls_inherit_root_font_and_have_no_child_qss(self):
+        """Toolbar chrome inherits the root UI font without local stylesheets."""
         _qt_app()
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import ROLE_PROPERTY, stylesheet
+
+        w = BarskyApp()
+        try:
+            w.settings = dict(w.settings)
+            w.settings.update(font_family="Arial", font_size=17)
+            w.apply_font_settings()
+
+            expected_roles = {
+                "db_btn": "secondary",
+                "new_db_btn": "primary",
+                "add_entry_btn": "secondary",
+            }
+            for attribute, role in expected_roles.items():
+                button = getattr(w, attribute)
+                assert button.property(ROLE_PROPERTY) == role
+                assert button.font().family() == "Arial"
+                assert (
+                    button.font().pointSize() == 17 or button.font().pixelSize() == 17
+                )
+                assert button.styleSheet() == ""
+
+            assert (
+                w.random_checkbox.font().pointSize() == 17
+                or w.random_checkbox.font().pixelSize() == 17
+            )
+            assert w.styleSheet() == stylesheet("Arial", 17)
+        finally:
+            w.close()
+
+    def test_review_context_label_formats_without_mutating_controls(self):
+        """Showing or hiding quiet context only changes the dedicated label."""
+        _qt_app()
+        from PyQt6.QtWidgets import QApplication, QLabel
+
         from kgb_srs.main_window import BarskyApp
 
         w = BarskyApp()
-        w.settings["font_family"] = "Arial"
-        w.settings["font_size"] = 17
-        w.apply_font_settings()
-
-        for btn_name in ("db_btn", "new_db_btn", "add_entry_btn"):
-            btn = getattr(w, btn_name)
-            ss = btn.styleSheet()
-            assert ss, f"{btn_name} must have a stylesheet"
-            assert "font-size: 17px" in ss or f"font-size:{17}px" in ss, (
-                f"{btn_name} stylesheet must include UI font-size, got: {ss!r}"
-            )
-            assert "Arial" in ss, (
-                f"{btn_name} stylesheet must include UI font-family, got: {ss!r}"
+        try:
+            w.show()
+            QApplication.processEvents()
+            status_label = w.findChild(QLabel, "reviewStatusLabel")
+            assert status_label is not None
+            before = (
+                w.start_btn.text(),
+                w.start_btn.isEnabled(),
+                w.close_review_btn.isEnabled(),
             )
 
-        # Shuffle checkbox and Database label inherit window font
-        assert w.random_checkbox.font().pointSize() == 17
-        w.close()
+            w._set_review_context(3, 7, True)
+            assert status_label.text() == "Reviewed 3 · Remaining 7"
+            assert status_label.isVisible()
+            assert (
+                w.start_btn.text(),
+                w.start_btn.isEnabled(),
+                w.close_review_btn.isEnabled(),
+            ) == before
+
+            w._set_review_context(3, 7, False)
+            assert status_label.text() == "Reviewed 3 · Remaining 7"
+            assert not status_label.isVisible()
+            assert (
+                w.start_btn.text(),
+                w.start_btn.isEnabled(),
+                w.close_review_btn.isEnabled(),
+            ) == before
+
+            w._set_review_context(3, 7, True)
+            w._update_button_visibility()
+            assert not status_label.isVisible()
+
+            class ControllerOnlyFake:
+                pass
+
+            ControllerOnlyFake._update_review_context = BarskyApp._update_review_context
+            ControllerOnlyFake()._update_review_context()
+        finally:
+            w.close()
 
     # -- finding #1: button visibility after DB load ----------------------
 
@@ -618,20 +728,91 @@ class TestReviewControls:
 
     def test_start_selected_card_review_opens_one_card_session(self):
         """Browse → Review Selected starts a one-card daily session."""
+        from PyQt6.QtWidgets import QApplication, QLabel
+
         conn = self._db(1, 2, 3)
         w = self._win(conn=conn)
-        w._start_selected_card_review(2)
+        try:
+            w.show()
+            QApplication.processEvents()
+            w._start_selected_card_review(2)
 
-        assert w.review_mode == "daily"
-        assert w.current_card is not None
-        assert w.current_card[0] == 2
-        assert w.current_card[1] == "c2"
-        # Queue was the selected card only; show_next_card consumed it.
-        assert w.cards_due == []
-        assert [c[0] for c in w._daily_queue_snapshot] == [2]
-        assert w.close_review_btn.isEnabled()
-        conn.close()
-        w.close()
+            assert w.review_mode == "daily"
+            assert w.current_card is not None
+            assert w.current_card[0] == 2
+            assert w.current_card[1] == "c2"
+            # Queue was the selected card only; show_next_card consumed it.
+            assert w.cards_due == []
+            assert [c[0] for c in w._daily_queue_snapshot] == [2]
+            assert w.close_review_btn.isEnabled()
+            status_label = w.findChild(QLabel, "reviewStatusLabel")
+            assert status_label is not None
+            assert status_label.isVisible()
+            assert status_label.text() == "Reviewed 0 · Remaining 1"
+        finally:
+            conn.close()
+            w.close()
+
+    def test_daily_review_context_uses_display_only_formula_across_transitions(self):
+        """Daily context tracks grade/queue state without changing review state."""
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QApplication, QLabel
+
+        conn = self._db(1, 2)
+        w = self._win(conn=conn)
+        try:
+            w.show()
+            QApplication.processEvents()
+            status_label = w.findChild(QLabel, "reviewStatusLabel")
+            assert status_label is not None
+
+            def assert_context(reviewed, remaining, visible):
+                before = (
+                    list(w.cards_due),
+                    list(w._daily_review_history),
+                    w.current_card,
+                    w.review_mode,
+                )
+                assert w._review_context_counts() == (reviewed, remaining)
+                w._update_review_context()
+                assert status_label.text() == (
+                    f"Reviewed {reviewed} · Remaining {remaining}"
+                )
+                assert status_label.isVisible() is visible
+                assert (
+                    list(w.cards_due),
+                    list(w._daily_review_history),
+                    w.current_card,
+                    w.review_mode,
+                ) == before
+
+            w.start_review()
+            assert_context(0, 2, True)
+
+            w._advance_daily_queue()
+            assert_context(0, 2, True)
+
+            w.flip_card()
+            w.process_answer(True)
+            assert_context(1, 1, True)
+
+            w._previous_daily_card()
+            assert_context(1, 1, True)
+
+            w._advance_daily_queue()
+            assert_context(1, 1, True)
+
+            w.flip_card()
+            with patch("kgb_srs.review_controller.QMessageBox.information"):
+                w.process_answer(True)
+            assert_context(2, 0, True)
+
+            w.close_review()
+            assert_context(0, 0, False)
+        finally:
+            conn.close()
+            w.close()
 
     def test_start_selected_card_review_missing_card(self):
         """Missing card id does not start a review."""
@@ -1033,6 +1214,70 @@ class TestReviewControls:
         assert read_database_type(w.conn) == DatabaseType.LANGUAGE_SENTENCE
         assert warning_calls == []
         w.close()
+
+    def test_temporary_settings_root_scopes_startup_without_default_database(
+        self, tmp_path, monkeypatch
+    ):
+        """An explicit temporary settings file scopes all startup root work."""
+        _qt_app()
+        import json
+
+        import kgb_srs.main_window as main_window
+
+        settings_path = tmp_path / "settings.json"
+        database_root = tmp_path / "isolated-databases"
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "database_root": str(database_root),
+                    "default_database": "",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        original_load_settings = main_window.load_settings
+        loaded_paths = []
+
+        def tracked_load_settings(path=None):
+            loaded_paths.append(path)
+            return original_load_settings(path)
+
+        original_ensure_root = main_window.ensure_database_root_structure
+        created_roots = []
+
+        def tracked_ensure_root(root):
+            created_roots.append(root)
+            return original_ensure_root(root)
+
+        projection_roots = []
+        default_database_searches = []
+        monkeypatch.setattr(main_window, "load_settings", tracked_load_settings)
+        monkeypatch.setattr(
+            main_window, "ensure_database_root_structure", tracked_ensure_root
+        )
+        monkeypatch.setattr(
+            "kgb_srs.senses.ensure_all_sentence_databases_linked",
+            lambda root: projection_roots.append(root),
+        )
+        monkeypatch.setattr(
+            main_window,
+            "find_databases",
+            lambda root: default_database_searches.append(root) or [],
+        )
+
+        w = main_window.BarskyApp(settings_file=settings_path)
+        try:
+            expected_root = str(database_root.resolve())
+            assert loaded_paths == [str(settings_path.resolve())]
+            assert created_roots == [expected_root]
+            assert projection_roots == [expected_root]
+            assert default_database_searches == []
+            assert database_root.is_dir()
+            assert w.current_db_path is None
+            assert w.conn is None
+        finally:
+            w.close()
 
     # -- delete behavior --------------------------------------------------
 

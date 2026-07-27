@@ -2,8 +2,24 @@
 
 import os
 
+import pytest
 
 from .qt_helpers import qt_app as _qt_app
+
+
+@pytest.fixture(autouse=True)
+def _dispose_top_level_widgets():
+    """Keep root-local QSS from one Qt test out of the next test."""
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.topLevelWidgets():
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class TestNoSyncHTTPInMainWindow:
@@ -57,111 +73,138 @@ class TestMenuSubmenuSpacing:
     """Database-selection QMenu items must have right padding so text
     never overlaps the submenu arrow indicator (">")."""
 
-    def test_db_menu_stylesheet_constant_exists(self):
-        """_DB_MENU_STYLESHEET must be defined with padding-right."""
-        from kgb_srs.main_window import _DB_MENU_STYLESHEET
+    def test_menu_stylesheet_has_readable_item_padding(self):
+        """Generated menu CSS keeps menu items readable around submenu arrows."""
+        from kgb_srs.ui_theme import menu_stylesheet
 
-        assert isinstance(_DB_MENU_STYLESHEET, str)
-        assert "padding-right" in _DB_MENU_STYLESHEET
-        assert "QMenu::item" in _DB_MENU_STYLESHEET
+        css = menu_stylesheet("Arial", 14)
 
-    def test_db_menu_stylesheet_has_vertical_padding(self):
-        """_DB_MENU_STYLESHEET must include padding-top >=6px and
-        padding-bottom >=6px for readable row height."""
+        assert "QMenu::item" in css
+        assert "padding: 6px 24px 6px 24px;" in css
+
+    def test_menu_stylesheet_has_readable_vertical_item_padding(self):
+        """Generated menu CSS gives QMenu items at least 6 px vertically."""
         import re
-        from kgb_srs.main_window import _DB_MENU_STYLESHEET
 
-        m_top = re.search(r"padding-top\s*:\s*(\d+)px", _DB_MENU_STYLESHEET)
-        m_bottom = re.search(r"padding-bottom\s*:\s*(\d+)px", _DB_MENU_STYLESHEET)
+        from kgb_srs.ui_theme import menu_stylesheet
 
-        assert m_top is not None, "stylesheetsheet missing padding-top"
-        assert m_bottom is not None, "stylesheetsheet missing padding-bottom"
+        css = menu_stylesheet("Arial", 14)
+        item_rule = re.search(r"QMenu::item\s*\{(?P<body>.*?)\}", css, re.DOTALL)
+        assert item_rule is not None
+        padding = re.search(
+            r"padding:\s*(\d+)px\s+(\d+)px\s+(\d+)px\s+(\d+)px",
+            item_rule.group("body"),
+        )
+        assert padding is not None
+        assert int(padding.group(1)) >= 6
+        assert int(padding.group(3)) >= 6
 
-        top_px = int(m_top.group(1))
-        bottom_px = int(m_bottom.group(1))
-
-        assert top_px >= 6, f"padding-top is {top_px}px, expected >= 6px"
-        assert bottom_px >= 6, f"padding-bottom is {bottom_px}px, expected >= 6px"
-
-    def test_root_menu_has_stylesheet(self, tmp_path, monkeypatch):
-        """The root QMenu returned by build_db_menu carries the stylesheet."""
+    def test_root_menu_uses_default_generated_stylesheet_without_settings_attribute(
+        self, tmp_path, monkeypatch
+    ):
+        """A generic owner gets default generated CSS without a settings mapping."""
         _qt_app()
 
-        from kgb_srs.main_window import BarskyApp, _DB_MENU_STYLESHEET
-        from kgb_srs.catalog import DatabaseType
         from PyQt6.QtWidgets import QMenu
 
-        # Build canonical path: Language-based/Sentence-based/Test
-        db_dir = tmp_path / "db" / "Language-based" / "Sentence-based"
-        db_dir.mkdir(parents=True)
-        dummy = db_dir / "Test_barsky.db"
-        dummy.write_text("")
-
-        monkeypatch.setattr(
-            "kgb_srs.main_window.find_databases", lambda *a, **k: [("Test", str(dummy))]
-        )
-        monkeypatch.setattr(
-            "kgb_srs.main_window._open_and_infer_type",
-            lambda p: DatabaseType.LANGUAGE_SENTENCE,
-        )
-
-        class FakeApp:
-            current_db_path = None
-
-        app = FakeApp()
-        menu = QMenu()
-        BarskyApp.build_db_menu(app, menu)
-
-        stylesheet = menu.styleSheet()
-        assert stylesheet == _DB_MENU_STYLESHEET
-        assert "padding-right" in stylesheet
-
-    def test_submenus_inherit_stylesheet(self, tmp_path, monkeypatch):
-        """Every recursive submenu must carry the same right-padding stylesheet."""
-        _qt_app()
-
-        from kgb_srs.main_window import BarskyApp, _DB_MENU_STYLESHEET
         from kgb_srs.catalog import DatabaseType
-        from PyQt6.QtWidgets import QMenu
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import menu_stylesheet
 
-        # Build a deeper hierarchy: Language-based > Sentence-based > French
         db_dir = tmp_path / "db" / "Language-based" / "Sentence-based"
         db_dir.mkdir(parents=True)
-        dummy = db_dir / "French_barsky.db"
-        dummy.write_text("")
+        alpha = db_dir / "Alpha_barsky.db"
+        zulu = db_dir / "Zulu_barsky.db"
+        alpha.write_text("")
+        zulu.write_text("")
 
         monkeypatch.setattr(
             "kgb_srs.main_window.find_databases",
-            lambda *a, **k: [("French", str(dummy))],
+            lambda *args, **kwargs: [("Zulu", str(zulu)), ("Alpha", str(alpha))],
         )
         monkeypatch.setattr(
             "kgb_srs.main_window._open_and_infer_type",
-            lambda p: DatabaseType.LANGUAGE_SENTENCE,
+            lambda path: DatabaseType.LANGUAGE_SENTENCE,
         )
 
         class FakeApp:
-            current_db_path = None
+            current_db_path = str(zulu)
 
-        app = FakeApp()
         menu = QMenu()
-        BarskyApp.build_db_menu(app, menu)
+        BarskyApp.build_db_menu(FakeApp(), menu)
 
-        def collect_menus(m):
-            result = [m]
-            for action in m.actions():
+        def leaf_actions(current_menu):
+            leaves = []
+            for action in current_menu.actions():
                 if action.menu():
-                    result.extend(collect_menus(action.menu()))
-            return result
+                    leaves.extend(leaf_actions(action.menu()))
+                elif action.data():
+                    leaves.append(action)
+            return leaves
 
-        all_menus = collect_menus(menu)
-        # We expect at least 3: root, Language-based, Sentence-based
-        assert len(all_menus) >= 3
+        assert menu.styleSheet() == menu_stylesheet("Arial", 14)
+        assert [(action.text(), action.data()) for action in leaf_actions(menu)] == [
+            ("Alpha", str(alpha)),
+            ("● Zulu", str(zulu)),
+        ]
 
-        for m in all_menus:
-            assert m.styleSheet() == _DB_MENU_STYLESHEET, (
-                f"Menu '{m.title()}' missing stylesheet"
-            )
-            assert "padding-right" in m.styleSheet()
+    def test_settingsless_submenus_use_default_generated_stylesheet(
+        self, tmp_path, monkeypatch
+    ):
+        """Every recursive menu keeps generated CSS for a settingsless owner."""
+        _qt_app()
+
+        from PyQt6.QtWidgets import QMenu
+
+        from kgb_srs.catalog import DatabaseType
+        from kgb_srs.main_window import BarskyApp
+        from kgb_srs.ui_theme import menu_stylesheet
+
+        db_dir = tmp_path / "db" / "Language-based" / "Sentence-based"
+        db_dir.mkdir(parents=True)
+        french = db_dir / "French_barsky.db"
+        german = db_dir / "German_barsky.db"
+        french.write_text("")
+        german.write_text("")
+
+        monkeypatch.setattr(
+            "kgb_srs.main_window.find_databases",
+            lambda *args, **kwargs: [("German", str(german)), ("French", str(french))],
+        )
+        monkeypatch.setattr(
+            "kgb_srs.main_window._open_and_infer_type",
+            lambda path: DatabaseType.LANGUAGE_SENTENCE,
+        )
+
+        class FakeApp:
+            current_db_path = str(french)
+
+        menu = QMenu()
+        BarskyApp.build_db_menu(FakeApp(), menu)
+
+        def collect_menus(current_menu):
+            menus = [current_menu]
+            for action in current_menu.actions():
+                if action.menu():
+                    menus.extend(collect_menus(action.menu()))
+            return menus
+
+        def leaf_actions(current_menu):
+            leaves = []
+            for action in current_menu.actions():
+                if action.menu():
+                    leaves.extend(leaf_actions(action.menu()))
+                elif action.data():
+                    leaves.append(action)
+            return leaves
+
+        menus = collect_menus(menu)
+        assert len(menus) >= 3
+        assert all(item.styleSheet() == menu_stylesheet("Arial", 14) for item in menus)
+        assert [(action.text(), action.data()) for action in leaf_actions(menu)] == [
+            ("● French", str(french)),
+            ("German", str(german)),
+        ]
 
     def test_leaf_action_has_no_submenu(self, tmp_path, monkeypatch):
         """Leaf (database) actions are plain actions, not submenus."""

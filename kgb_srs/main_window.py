@@ -80,7 +80,6 @@ from .browse_dialog import (
     _fetch_expressions_for_card,
 )
 from .database_menu import (
-    _DB_MENU_STYLESHEET,
     _compute_display_path,
     _expand_to_path,
     _menu_contains,
@@ -88,6 +87,7 @@ from .database_menu import (
     build_db_menu,
 )
 from .review_controller import ReviewControllerMixin
+from .ui_theme import apply_semantic_role, install_design_system
 from .validation import (
     format_sentence_meaning_lines as _format_sentence_meaning_lines,
     highlight_unfamiliar_in_sentence as _highlight_sentence_for_items,
@@ -396,133 +396,69 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # ------------------------------------------------------------------
     # Font / Styling
     # ------------------------------------------------------------------
-    @staticmethod
-    def _button_style(bg, hover=None, extra=""):
-        hover = hover or bg
-        return (
-            f"QPushButton {{"
-            f"  background-color: {bg}; color: white; border: none; "
-            f"  border-radius: 6px; padding: 8px 16px; font-weight: bold; "
-            f"  {extra}"
-            f"}}"
-            f"QPushButton:hover {{ background-color: {hover}; }}"
-            f"QPushButton:pressed {{ background-color: {bg}; }}"
-            f"QPushButton:disabled {{"
-            f"  background-color: #CFD8DC; color: #78909C; "
-            f"}}"
-        )
-
     def apply_font_settings(self):
+        """Apply the selected UI font and root-only semantic design system."""
         font_family = self.settings.get("font_family", "Arial")
         font_size = self.settings.get("font_size", 14)
 
+        # Remove the prior generated root stylesheet before setting the
+        # logical QFont; otherwise Qt can retain its pixel-size declaration.
         font = QFont(font_family, font_size)
+        self.setStyleSheet("")
         self.setFont(font)
-
-        dyn_pad = max(10, int(font_size * 0.8))
-        fs = font_size + 2
-
-        self.start_btn.setStyleSheet(
-            self._button_style(
-                "#43A047",
-                "#66BB6A",
-                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
-            )
+        chrome_widgets = (
+            self.centralWidget(),
+            getattr(self, "db_label", None),
+            getattr(self, "db_btn", None),
+            getattr(self, "new_db_btn", None),
+            getattr(self, "random_checkbox", None),
+            getattr(self, "all_cards_checkbox", None),
+            getattr(self, "add_entry_btn", None),
+            getattr(self, "delete_entry_btn", None),
+            getattr(self, "browse_btn", None),
+            getattr(self, "settings_btn", None),
+            getattr(self, "review_status_label", None),
+            getattr(self, "view", None),
+            getattr(self, "start_btn", None),
+            getattr(self, "restart_review_btn", None),
+            getattr(self, "previous_review_btn", None),
+            getattr(self, "edit_review_btn", None),
+            getattr(self, "close_review_btn", None),
         )
-        self.restart_review_btn.setStyleSheet(
-            self._button_style(
-                "#1E88E5",
-                "#42A5F5",
-                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
-            )
-        )
-        self.previous_review_btn.setStyleSheet(
-            self._button_style(
-                "#E53935",
-                "#EF5350",
-                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
-            )
-        )
-        edit_review_btn = getattr(self, "edit_review_btn", None)
-        if edit_review_btn is not None:
-            edit_review_btn.setStyleSheet(
-                self._button_style(
-                    "#FB8C00",
-                    "#FFA726",
-                    extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
-                )
-            )
-
-        self.delete_entry_btn.setStyleSheet(
-            self._button_style(
-                "#D32F2F",
-                "#F44336",
-                extra=f"padding: {dyn_pad}px; font-size: {fs}px;",
-            )
-        )
-
-        # Toolbar chrome: re-apply stylesheets with explicit UI font so
-        # size/family stay in sync when stylesheets would otherwise freeze
-        # appearance independent of the window font.
-        self._apply_toolbar_font_styles(font_family, font_size)
-
-    def _toolbar_button_style(self, kind, font_family, font_size):
-        """Build a toolbar button stylesheet that includes UI font."""
-        font_bits = (
-            f"font-family: '{font_family}'; "
-            f"font-size: {font_size}px; "
-            f"font-weight: bold;"
-        )
-        if kind == "db":
-            return (
-                "QPushButton {"
-                f"  text-align: left; padding: 6px 14px; {font_bits}"
-                "  background-color: #FFFFFF; border: 1px solid #CFD8DC;"
-                "  border-radius: 6px;"
-                "}"
-                "QPushButton:hover { background-color: #F5F5F5; }"
-            )
-        if kind == "new_db":
-            return (
-                "QPushButton {"
-                "  background-color: #43A047; color: white; padding: 6px 14px;"
-                f"  {font_bits} border: none; border-radius: 6px;"
-                "}"
-                "QPushButton:hover { background-color: #66BB6A; }"
-            )
-        # generic action button (Add Entry, Browse, Settings, etc.)
-        return (
-            "QPushButton {"
-            "  background-color: transparent; border: 1px solid #B0BEC5;"
-            f"  border-radius: 6px; padding: 6px 12px; {font_bits}"
-            "}"
-            "QPushButton:hover { background-color: #ECEFF1; }"
-        )
-
-    def _apply_toolbar_font_styles(self, font_family, font_size):
-        """Re-apply toolbar button stylesheets with current UI font."""
-        if hasattr(self, "db_btn"):
-            self.db_btn.setStyleSheet(
-                self._toolbar_button_style("db", font_family, font_size)
-            )
-        if hasattr(self, "new_db_btn"):
-            self.new_db_btn.setStyleSheet(
-                self._toolbar_button_style("new_db", font_family, font_size)
-            )
-        for attr in ("add_entry_btn", "browse_btn", "settings_btn"):
-            btn = getattr(self, attr, None)
-            if btn is not None:
-                btn.setStyleSheet(
-                    self._toolbar_button_style("action", font_family, font_size)
-                )
-        # Parent stylesheets (top bar) can break font inheritance; set
-        # explicitly on non-styled chrome widgets.
-        font = QFont(font_family, font_size)
-        for attr in ("db_label", "random_checkbox", "all_cards_checkbox"):
-            widget = getattr(self, attr, None)
+        for widget in chrome_widgets:
             if widget is not None:
                 widget.setFont(font)
-        # delete_entry_btn already styled as review-control red button above.
+        install_design_system(self, font_family, font_size)
+
+        for attribute, role in (
+            ("new_db_btn", "primary"),
+            ("start_btn", "primary"),
+            ("db_btn", "secondary"),
+            ("add_entry_btn", "secondary"),
+            ("browse_btn", "secondary"),
+            ("settings_btn", "secondary"),
+            ("restart_review_btn", "secondary"),
+            ("previous_review_btn", "secondary"),
+            ("edit_review_btn", "secondary"),
+            ("delete_entry_btn", "danger"),
+            ("close_review_btn", "icon"),
+            ("review_status_label", "quiet"),
+        ):
+            widget = getattr(self, attribute, None)
+            if widget is not None:
+                apply_semantic_role(widget, role)
+
+        # Qt defers inherited stylesheet font resolution for hidden widgets.
+        # Polish only chrome so selected UI fonts update without touching
+        # review-document content widgets.
+        for widget in chrome_widgets:
+            if widget is not None:
+                widget.ensurePolished()
+
+    def _set_review_context(self, reviewed: int, remaining: int, visible: bool) -> None:
+        """Show the display-only progress context for a daily review session."""
+        self.review_status_label.setText(f"Reviewed {reviewed} · Remaining {remaining}")
+        self.review_status_label.setVisible(visible)
 
     # ------------------------------------------------------------------
     # Database menu bridge
@@ -543,8 +479,8 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
     # UI Setup
     # ------------------------------------------------------------------
     def setup_ui(self):
+        self.setObjectName("appRoot")
         central_widget = QWidget()
-        central_widget.setStyleSheet("QWidget { background-color: #FAFAFA; }")
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setSpacing(10)
@@ -552,9 +488,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         # --- Top bar ---
         top_frame = QWidget()
-        top_frame.setStyleSheet(
-            "QWidget { background-color: #ECEFF1; border-radius: 8px; }"
-        )
+        top_frame.setObjectName("appToolbar")
         top_layout = QHBoxLayout(top_frame)
         top_layout.setContentsMargins(10, 6, 10, 6)
         top_layout.setSpacing(8)
@@ -564,26 +498,11 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
 
         self.db_btn = QPushButton("📂 Select Database")
         self.db_btn.setIcon(self._icon("drive-harddisk"))
-        self.db_btn.setStyleSheet(
-            "QPushButton {"
-            "  text-align: left; padding: 6px 14px; font-weight: bold;"
-            "  background-color: #FFFFFF; border: 1px solid #CFD8DC;"
-            "  border-radius: 6px;"
-            "}"
-            "QPushButton:hover { background-color: #F5F5F5; }"
-        )
         self.db_btn.clicked.connect(self.show_db_menu)
         top_layout.addWidget(self.db_btn)
 
         self.new_db_btn = QPushButton(" New")
         self.new_db_btn.setIcon(self._icon("folder-new"))
-        self.new_db_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: #43A047; color: white; padding: 6px 14px;"
-            "  font-weight: bold; border: none; border-radius: 6px;"
-            "}"
-            "QPushButton:hover { background-color: #66BB6A; }"
-        )
         self.new_db_btn.clicked.connect(self.create_new_database)
         top_layout.addWidget(self.new_db_btn)
 
@@ -610,13 +529,6 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         def action_btn(text, icon_name, handler):
             btn = QPushButton(text)
             btn.setIcon(self._icon(icon_name))
-            btn.setStyleSheet(
-                "QPushButton {"
-                "  background-color: transparent; border: 1px solid #B0BEC5;"
-                "  border-radius: 6px; padding: 6px 12px; font-weight: bold;"
-                "}"
-                "QPushButton:hover { background-color: #ECEFF1; }"
-            )
             btn.clicked.connect(handler)
             return btn
 
@@ -641,14 +553,15 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         top_layout.addWidget(self.settings_btn)
         main_layout.addWidget(top_frame)
 
+        self.review_status_label = QLabel()
+        self.review_status_label.setObjectName("reviewStatusLabel")
+        self.review_status_label.setWordWrap(True)
+        self.review_status_label.setVisible(False)
+        main_layout.addWidget(self.review_status_label)
+
         # --- Canvas ---
         self.view = QGraphicsView()
-        self.view.setStyleSheet(
-            "QGraphicsView {"
-            "  background-color: #FAFAFA; border: 2px solid #E0E0E0;"
-            "  border-radius: 10px;"
-            "}"
-        )
+        self.view.setObjectName("reviewCanvas")
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -708,28 +621,6 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         self.close_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_review_btn.setEnabled(False)
         self.close_review_btn.setFixedSize(28, 28)
-        self.close_review_btn.setStyleSheet(
-            "QPushButton {"
-            "  background-color: rgba(250, 250, 250, 200);"
-            "  color: #757575;"
-            "  border: 1px solid #E0E0E0;"
-            "  border-radius: 4px;"
-            "  font-size: 16px;"
-            "  font-weight: bold;"
-            "}"
-            "QPushButton:hover {"
-            "  background-color: #E0E0E0;"
-            "  color: #424242;"
-            "}"
-            "QPushButton:pressed {"
-            "  background-color: #BDBDBD;"
-            "}"
-            "QPushButton:disabled {"
-            "  background-color: transparent;"
-            "  color: #BDBDBD;"
-            "  border: 1px solid transparent;"
-            "}"
-        )
         self.close_review_btn.clicked.connect(self.close_review)
 
         main_layout.addLayout(review_controls_layout)
