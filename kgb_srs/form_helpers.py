@@ -40,7 +40,11 @@ def apply_ui_font(widget, settings: dict | None, parent=None) -> None:
     """Apply the UI font while honoring an explicit legacy facade override."""
     helper = _legacy_form_helper_override("_apply_ui_font", _apply_ui_font)
     helper(widget, settings, parent)
-    install_design_system(widget, widget.font().family(), widget.font().pointSize())
+    font = widget.font()
+    font_size = font.pointSize()
+    if font_size <= 0:
+        font_size = font.pixelSize()
+    install_design_system(widget, font.family(), font_size)
 
 
 # Canonical AI worker class, sourced from :mod:`ai_provider`.

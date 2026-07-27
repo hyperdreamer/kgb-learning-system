@@ -3,6 +3,7 @@
 import sqlite3
 import warnings
 
+import pytest
 
 from kgb_srs.ai_parser import MAX_WORD_PHRASE_MEANINGS
 from kgb_srs.schema import init_db, insert_sentence_card
@@ -278,6 +279,70 @@ class TestFinalFormRegressions:
         assert w_dialog.font().pointSize() == 19
         w_dialog.close()
 
+    @pytest.mark.parametrize(
+        "settings",
+        (None, {}, {"font_family": "Arial"}, {"font_size": 23}),
+        ids=("none", "empty", "family-only", "size-only"),
+    )
+    def test_card_dialogs_inherit_parent_pixel_qss_font_without_complete_settings(
+        self, settings
+    ):
+        """Incomplete settings must preserve the inherited 23px root-QSS font."""
+        _qt_app()
+        from PyQt6.QtCore import QCoreApplication, QEvent
+        from PyQt6.QtWidgets import QWidget
+
+        from kgb_srs.sentence_card_dialog import SentenceCardDialog
+        from kgb_srs.ui_theme import font_css, install_design_system
+        from kgb_srs.word_phrase_dialog import WordPhraseCardDialog
+
+        parent = QWidget()
+        dialogs = []
+        try:
+            install_design_system(parent, "Arial", 23)
+            parent.resize(640, 480)
+            parent.show()
+            _qt_app().processEvents()
+
+            actual_parent_family = parent.font().family()
+            assert parent.font().pointSize() <= 0
+            assert parent.font().pixelSize() == 23
+            expected_font = font_css(actual_parent_family, 23)
+
+            for dialog_type, arguments in (
+                (
+                    SentenceCardDialog,
+                    {
+                        "sentence": "Hello world",
+                        "items": [("Hello", "greeting")],
+                    },
+                ),
+                (WordPhraseCardDialog, {"front": "bank"}),
+            ):
+                dialog = dialog_type(parent=parent, settings=settings, **arguments)
+                dialogs.append(dialog)
+                dialog.show()
+                _qt_app().processEvents()
+
+            observed = {
+                type(dialog).__name__: {
+                    "actual_parent_font": expected_font in dialog.styleSheet(),
+                    "fallback_14px": "font-size: 14px;" in dialog.styleSheet(),
+                }
+                for dialog in dialogs
+            }
+            assert all(
+                state["actual_parent_font"] and not state["fallback_14px"]
+                for state in observed.values()
+            ), f"incomplete settings replaced the inherited root-QSS font: {observed}"
+        finally:
+            for dialog in dialogs:
+                dialog.close()
+                dialog.deleteLater()
+            parent.close()
+            parent.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
     def test_dialogs_use_semantic_roles_tones_and_shared_root_qss(self):
         """Every Task 5 dialog uses root QSS rather than local color styles."""
         _qt_app()
@@ -365,6 +430,49 @@ class TestFinalFormRegressions:
                 dialog.deleteLater()
             parent.close()
             parent.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_sentence_meaning_card_has_central_token_surface(self):
+        """The real meaning card must render a central surface, not the canvas."""
+        _qt_app()
+        from PyQt6.QtCore import QCoreApplication, QEvent, Qt
+        from PyQt6.QtGui import QColor
+        from PyQt6.QtWidgets import QWidget
+
+        from kgb_srs.sentence_card_dialog import SentenceCardDialog
+        from kgb_srs.ui_theme import LIGHT_TOKENS
+
+        dialog = SentenceCardDialog(
+            sentence="Hello world", items=[("Hello", "greeting")]
+        )
+        try:
+            dialog.resize(560, 520)
+            dialog.show()
+            _qt_app().processEvents()
+
+            card = dialog.findChild(QWidget, "sentenceMeaningCard")
+            assert card is not None
+            assert card.objectName() == "sentenceMeaningCard"
+            assert card.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+            assert card.styleSheet() == ""
+
+            card_rule = (
+                "QWidget#sentenceMeaningCard {\n"
+                f"  background-color: {LIGHT_TOKENS['surface']};\n"
+                f"  border: 1px solid {LIGHT_TOKENS['border']};\n"
+                "  border-radius: 8px;\n"
+                "}"
+            )
+            assert card_rule in dialog.styleSheet()
+
+            image = card.grab().toImage()
+            assert image.width() > 10 and image.height() > 10
+            interior = image.pixelColor(image.width() - 5, image.height() // 2)
+            assert interior == QColor(LIGHT_TOKENS["surface"])
+            assert interior != QColor(LIGHT_TOKENS["canvas"])
+        finally:
+            dialog.close()
+            dialog.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_dialog_design_system_keeps_ui_and_content_fonts_separate_at_bounds(self):
@@ -516,6 +624,66 @@ class TestFinalFormRegressions:
         assert dialog._add_meaning_btn.isEnabled()
         assert bar.tabButton(0, bar.ButtonPosition.RightSide) is None
         dialog.close()
+
+    def test_word_dialog_tab_close_renders_owned_pixmap_in_16px_slot(self):
+        """The fixed owned close slot must visibly contain its pixmap icon."""
+        _qt_app()
+        from PyQt6.QtCore import QCoreApplication, QEvent, QSize, Qt
+        from PyQt6.QtGui import QIcon, QImage
+        from PyQt6.QtWidgets import QToolButton
+
+        from kgb_srs.ui_theme import ROLE_PROPERTY
+        from kgb_srs.word_phrase_dialog import WordPhraseCardDialog
+
+        dialog = WordPhraseCardDialog(front="bank")
+        try:
+            dialog._add_meaning_row()
+            dialog.resize(560, 520)
+            dialog.show()
+            _qt_app().processEvents()
+
+            tab_bar = dialog._meanings_tabs.tabBar()
+            close_button = tab_bar.tabButton(1, tab_bar.ButtonPosition.RightSide)
+            assert isinstance(close_button, QToolButton)
+            assert close_button.objectName() == "meaningTabClose"
+            assert close_button.size() == QSize(16, 16)
+            assert close_button.iconSize() == QSize(10, 10)
+            assert close_button.property(ROLE_PROPERTY) == "icon"
+            assert close_button.focusPolicy() == Qt.FocusPolicy.NoFocus
+            assert close_button.styleSheet() == ""
+
+            before = (
+                close_button.grab()
+                .toImage()
+                .convertToFormat(QImage.Format.Format_RGBA8888)
+            )
+            original_icon = QIcon(close_button.icon())
+            try:
+                close_button.setIcon(QIcon())
+                _qt_app().processEvents()
+                after = (
+                    close_button.grab()
+                    .toImage()
+                    .convertToFormat(QImage.Format.Format_RGBA8888)
+                )
+            finally:
+                close_button.setIcon(original_icon)
+                _qt_app().processEvents()
+
+            assert before != after, (
+                "clearing the owned pixmap left the rendered slot unchanged"
+            )
+
+            close_button.click()
+            _qt_app().processEvents()
+            assert dialog._meanings_tabs.count() == 1
+            assert dialog._meanings_tabs.tabText(0) == "Meaning 1"
+            assert not dialog._meanings_tabs.tabsClosable()
+            assert tab_bar.tabButton(0, tab_bar.ButtonPosition.RightSide) is None
+        finally:
+            dialog.close()
+            dialog.deleteLater()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
     def test_word_dialog_allows_up_to_max_meaning_tabs(self):
         """Users can add up to MAX_WORD_PHRASE_MEANINGS meaning tabs."""

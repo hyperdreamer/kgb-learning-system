@@ -182,6 +182,79 @@ def test_root_qss_has_semantic_role_states_and_scoped_companions():
     assert "\nQPushButton {" not in card_qss
 
 
+def test_root_qss_has_narrow_task5_presentation_selectors():
+    """Task 5 presentation fixes must remain root-scoped and narrowly owned."""
+    root_qss = stylesheet("Inter", 16)
+    card_qss = review_card_stylesheet("Inter", 16)
+    popup_qss = menu_stylesheet("Inter", 16)
+
+    gender_ids = ("ttsGenderAll", "ttsGenderMale", "ttsGenderFemale")
+    checked_selectors = tuple(
+        f"QPushButton#{object_name}:enabled:checked" for object_name in gender_ids
+    )
+    assert set(
+        re.findall(r"QPushButton#([A-Za-z0-9_]+):enabled:checked", root_qss)
+    ) == set(gender_ids)
+
+    for suffix, background in (
+        ("", "primary"),
+        (":hover", "primary_hover"),
+        (":pressed", "primary_pressed"),
+    ):
+        selector_group = ",\n".join(
+            f"{selector}{suffix}" for selector in checked_selectors
+        )
+        rule = (
+            f"{selector_group} {{\n"
+            f"  background-color: {LIGHT_TOKENS[background]};\n"
+            f"  color: {LIGHT_TOKENS['surface']};\n"
+            f"  border: 1px solid {LIGHT_TOKENS[background]};\n"
+            "}"
+        )
+        assert rule in root_qss
+
+    disabled_rule = (
+        f'QPushButton[{ROLE_PROPERTY}="secondary"]:disabled,\n'
+        f'QToolButton[{ROLE_PROPERTY}="secondary"]:disabled {{\n'
+        f"  background-color: {LIGHT_TOKENS['disabled_surface']};\n"
+        f"  color: {LIGHT_TOKENS['disabled_text']};\n"
+        f"  border-color: {LIGHT_TOKENS['border']};\n"
+        "}"
+    )
+    assert disabled_rule in root_qss
+
+    close_rule = "QToolButton#meaningTabClose {\n  padding: 0;\n  margin: 0;\n}"
+    assert close_rule in root_qss
+
+    card_rule = (
+        "QWidget#sentenceMeaningCard {\n"
+        f"  background-color: {LIGHT_TOKENS['surface']};\n"
+        f"  border: 1px solid {LIGHT_TOKENS['border']};\n"
+        "  border-radius: 8px;\n"
+        "}"
+    )
+    assert card_rule in root_qss
+
+    assert f'QPushButton[{ROLE_PROPERTY}="secondary"]:checked' not in root_qss
+    assert (
+        re.search(
+            rf'QToolButton\[{ROLE_PROPERTY}="icon"\][^{{]*\{{[^}}]*'
+            r"(?:padding|margin): 0;",
+            root_qss,
+            re.DOTALL,
+        )
+        is None
+    )
+
+    for selector in (
+        *checked_selectors,
+        "QToolButton#meaningTabClose",
+        "QWidget#sentenceMeaningCard",
+    ):
+        assert selector not in card_qss
+        assert selector not in popup_qss
+
+
 def test_root_qss_quiet_label_role_uses_muted_token():
     """The quiet label role must resolve at the root without widening card QSS."""
     root_qss = stylesheet("Inter", 16)

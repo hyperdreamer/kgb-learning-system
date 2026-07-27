@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QImage
 from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
@@ -1514,6 +1514,40 @@ def test_ai_models_refresh_failure_updates_status_and_reenables(monkeypatch, set
 # ---------------------------------------------------------------------------
 # Voice picker: filters, selection, preview, empty/error states
 # ---------------------------------------------------------------------------
+
+
+def test_gender_filters_render_a_checked_state_from_root_qss(monkeypatch, settings):
+    """Selecting a real gender filter must visibly change its enabled button."""
+    dialog, _ = _dialog(monkeypatch, settings)
+    from kgb_srs.ui_theme import ROLE_PROPERTY
+
+    try:
+        dialog.category_list.setCurrentRow(2)
+        dialog.resize(900, 700)
+        dialog.show()
+        _app().processEvents()
+
+        for button in (
+            dialog.tts_gender_all,
+            dialog.tts_gender_male,
+            dialog.tts_gender_female,
+        ):
+            assert button.isCheckable()
+            assert button.property(ROLE_PROPERTY) == "secondary"
+            assert button.styleSheet() == ""
+
+        male = dialog.tts_gender_male
+        assert male.isEnabled()
+        before = male.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+
+        male.setChecked(True)
+        _app().processEvents()
+        after = male.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+
+        assert dialog.tts_gender_group.checkedButton() is male
+        assert before != after
+    finally:
+        dialog.reject()
 
 
 def test_gender_filter_narrows_voice_list(monkeypatch, settings):

@@ -344,6 +344,41 @@ QToolButton:focus {{
 
 {role_styles}
 
+QPushButton#ttsGenderAll:enabled:checked,
+QPushButton#ttsGenderMale:enabled:checked,
+QPushButton#ttsGenderFemale:enabled:checked {{
+  background-color: {tokens["primary"]};
+  color: {tokens["surface"]};
+  border: 1px solid {tokens["primary"]};
+}}
+
+QPushButton#ttsGenderAll:enabled:checked:hover,
+QPushButton#ttsGenderMale:enabled:checked:hover,
+QPushButton#ttsGenderFemale:enabled:checked:hover {{
+  background-color: {tokens["primary_hover"]};
+  color: {tokens["surface"]};
+  border: 1px solid {tokens["primary_hover"]};
+}}
+
+QPushButton#ttsGenderAll:enabled:checked:pressed,
+QPushButton#ttsGenderMale:enabled:checked:pressed,
+QPushButton#ttsGenderFemale:enabled:checked:pressed {{
+  background-color: {tokens["primary_pressed"]};
+  color: {tokens["surface"]};
+  border: 1px solid {tokens["primary_pressed"]};
+}}
+
+QToolButton#meaningTabClose {{
+  padding: 0;
+  margin: 0;
+}}
+
+QWidget#sentenceMeaningCard {{
+  background-color: {tokens["surface"]};
+  border: 1px solid {tokens["border"]};
+  border-radius: 8px;
+}}
+
 QLineEdit,
 QTextEdit,
 QPlainTextEdit,
