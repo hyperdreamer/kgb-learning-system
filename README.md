@@ -1,6 +1,6 @@
 # KGB 5-Box SRS System
 
-**Version 3.0.0**
+**Version 3.1.0**
 
 A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
@@ -246,7 +246,7 @@ All shortcuts use **Alt** so they never steal plain typing.
 - **Start Daily Review** — begins a review of all cards due today. During an active review, this primary button becomes **Next** and skips the current card to the end of the same daily queue. Shortcut: **Alt+S**.
 - **Shuffle / All cards** — these review options are remembered separately for each database.
 - **Reveal Answer** — flips the card (shortcut: **Alt+R**).
-- **Incorrect / Correct** — grade after flip: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card onto the drop zones).
+- **Incorrect / Correct** — grade after flip with the two on-card buttons: **Alt+← / Alt+1** = Incorrect, **Alt+→ / Alt+2** = Correct (or drag the card to the left/right half of the canvas). The session shows a **Reviewed · Remaining** progress line.
 - **Listen** — speak the card (shortcut: **Alt+L**).
 - **Previous** — returns to the last graded card in this session (shortcut: **Alt+P**).
 - **Restart** — rebuilds the current daily queue from current eligibility and the current **All cards** / Shuffle settings, then clears session history. It is disabled while no review is active. Shortcut: **Alt+T**.
@@ -308,7 +308,7 @@ file picker uses Qt's non-native dialog so navigation cannot leave the root
 ## File Structure
 
 ```
-kgb_srs/                    # Python package (__version__ = 3.0.0)
+kgb_srs/                    # Python package (__version__ = 3.1.0)
 ├── __init__.py
 ├── config.py               # Settings, constants, database root helpers
 ├── catalog.py              # Database type enum, metadata inference

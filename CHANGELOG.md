@@ -2,6 +2,26 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [3.1.0] — 2026-07-27
+
+### UI Design System
+
+- Introduced a centralized semantic light-theme design system
+  (`kgb_srs/ui_theme.py`): color tokens, role-based buttons
+  (primary/secondary/success/danger/quiet/icon), status tones, and a single
+  validated stylesheet generator for windows, review cards, and menus.
+- Replaced hardcoded per-widget colors across the main window, review canvas,
+  and all dialogs (Browse, Settings, sentence-card, word/phrase, database
+  creation, database menu) with the shared token system.
+- Focused the review canvas: explicit **Incorrect** / **Correct** grade
+  buttons shown on the flipped card, alongside the retained drag-to-grade
+  gesture and all existing Alt+ keyboard shortcuts.
+- Added a live review progress line (Reviewed · Remaining) during daily
+  review sessions.
+- Consistent indigo-primary color system with green/red semantic grading;
+  font settings (family/size) continue to flow through the generated style-
+  sheets, including the review-card subtree.
+
 ## [3.0.0] — 2026-07-26
 
 ### Added

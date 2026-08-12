@@ -5,7 +5,6 @@ import logging
 import os
 import secrets
 import sqlite3
-import sys
 
 from PyQt6.QtWidgets import (
     QApplication,
