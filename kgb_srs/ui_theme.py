@@ -373,6 +373,12 @@ QToolButton#meaningTabClose {{
   margin: 0;
 }}
 
+QPushButton#reviewCloseButton {{
+  padding: 0;
+  font-size: 16px;
+  font-weight: bold;
+}}
+
 QWidget#sentenceMeaningCard {{
   background-color: {tokens["surface"]};
   border: 1px solid {tokens["border"]};

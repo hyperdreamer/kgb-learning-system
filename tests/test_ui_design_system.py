@@ -1128,6 +1128,39 @@ def test_font_endpoints_keep_ui_chrome_and_review_content_separate(
         _dispose_window(window)
 
 
+@pytest.mark.parametrize("ui_font_size", [8, 36])
+def test_close_button_glyph_stays_fixed_small_at_any_ui_font(tmp_path, qapp, ui_font_size):
+    """The floating close button is a fixed 28px square; its glyph must not
+    inherit the UI font size or it clips to an unreadable mark."""
+    window, database_root, _settings_file = _new_window(
+        tmp_path,
+        ui_font_size=ui_font_size,
+    )
+    try:
+        sentence_path = _create_database(
+            database_root,
+            DatabaseType.LANGUAGE_SENTENCE,
+            "close-glyph",
+        )
+        _load_database(window, sentence_path, DatabaseType.LANGUAGE_SENTENCE)
+        _show_window(window, qapp)
+        window.start_review()
+        qapp.processEvents()
+
+        close_btn = window.close_review_btn
+        assert close_btn.isEnabled()
+        assert close_btn.width() <= 40 and close_btn.height() <= 40
+        # Glyph size must stay small and independent of the UI font size,
+        # otherwise the × clips inside the fixed-size square.
+        glyph_size = _font_size(close_btn)
+        assert glyph_size <= 20, (
+            f"Close button glyph rendered at {glyph_size}px inside a "
+            f"{close_btn.width()}x{close_btn.height()} button — the × will clip"
+        )
+    finally:
+        _dispose_window(window)
+
+
 def test_settings_has_no_dark_or_classic_surface_or_staged_key(tmp_path_factory, qapp):
     """The light-only release must not stage a hidden alternate appearance."""
     tmp_path = tmp_path_factory.mktemp("settings-surface")

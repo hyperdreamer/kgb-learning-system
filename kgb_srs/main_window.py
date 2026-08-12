@@ -615,6 +615,7 @@ class BarskyApp(ReviewControllerMixin, QMainWindow):
         review_controls_layout.addWidget(self.edit_review_btn)
 
         self.close_review_btn = QPushButton("×", self.view)
+        self.close_review_btn.setObjectName("reviewCloseButton")
         self.close_review_btn.setToolTip("Close review (Alt+X)")
         self.close_review_btn.setAccessibleName("Close review")
         self.close_review_btn.setCursor(Qt.CursorShape.PointingHandCursor)
