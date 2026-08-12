@@ -2,6 +2,13 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [3.1.1] — 2026-07-27
+
+### Fixed
+
+- Resolved UI close glyph rendering on review canvas across non-standard font sizes.
+- Polished settings sidebar layout and review close button sizing.
+
 ## [3.1.0] — 2026-07-27
 
 ### UI Design System
