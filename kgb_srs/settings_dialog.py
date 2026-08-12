@@ -162,13 +162,23 @@ class SettingsDialog(QDialog):
         self.category_list.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding
         )
-        # Size from font metrics rather than the pre-polish column hint, which
-        # can grow after the native style initializes and elide larger fonts.
+        # Size the sidebar from the exact font the design system will apply
+        # (QSS font-size is declared in px).  Measuring the widget's own
+        # fontMetrics()/sizeHint pre-polish would read the default font and
+        # elide labels once the themed font resolves.
+        from PyQt6.QtGui import QFont as _QFont, QFontMetrics as _QFontMetrics
+
+        measure_font = _QFont(font.family())
+        measure_font.setPixelSize(font_size)
         longest_category = max(
-            self.category_list.fontMetrics().horizontalAdvance(label)
+            _QFontMetrics(measure_font).horizontalAdvance(label)
             for label in self.CATEGORIES
         )
-        category_width = longest_category + 112
+        category_width = (
+            longest_category
+            + self.category_list.verticalScrollBar().sizeHint().width()
+            + 14  # borders + item padding + breathing room
+        )
         self.category_list.setMinimumWidth(category_width)
         self.category_list.setMaximumWidth(category_width)
         content_layout.addWidget(self.category_list)

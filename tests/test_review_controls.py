@@ -194,6 +194,17 @@ class TestIdleStateButtons:
             "Close must be disabled in idle state"
         )
 
+    def test_close_button_hidden_in_idle(self, app_with_db):
+        """The floating close button must not show as a faint artifact."""
+        app, _, _ = app_with_db
+        assert app.review_mode == ""
+        assert not app.close_review_btn.isVisibleTo(app.view), (
+            "Close button must be hidden in idle state"
+        )
+        app.close_review_btn.show()  # defensive: ensure state is driven, not luck
+        app._update_button_visibility()
+        assert not app.close_review_btn.isVisibleTo(app.view)
+
     def test_start_enabled_in_idle(self, app_with_db):
         app, _, _ = app_with_db
         assert app.start_btn.isEnabled(), (
@@ -248,6 +259,20 @@ class TestActiveStateButtons:
         assert app.review_mode == "daily"
         assert app.close_review_btn.isEnabled(), (
             "Close must be enabled during active daily review"
+        )
+
+    def test_close_button_visible_in_active(self, app_with_db):
+        """The floating close button is visible exactly while review is active."""
+        app, _, _ = app_with_db
+        app.start_review()
+        assert app.review_mode == "daily"
+        assert app.close_review_btn.isVisibleTo(app.view), (
+            "Close button must be visible during active daily review"
+        )
+        app.close_review()
+        assert app.review_mode == ""
+        assert not app.close_review_btn.isVisibleTo(app.view), (
+            "Close button must hide again when the review is closed"
         )
 
 

@@ -204,6 +204,7 @@ class ReviewControllerMixin:
             self.restart_review_btn.setEnabled(False)
             self.previous_review_btn.setEnabled(False)
             self.close_review_btn.setEnabled(False)
+            self.close_review_btn.setVisible(False)
             self._update_review_context()
             return
 
@@ -215,6 +216,7 @@ class ReviewControllerMixin:
             # Reverse of Next: enable only when there is a prior step.
             self.previous_review_btn.setEnabled(has_history)
             self.close_review_btn.setEnabled(True)
+            self.close_review_btn.setVisible(True)
         else:
             # ── IDLE state ──
             if has_paused:
@@ -226,6 +228,7 @@ class ReviewControllerMixin:
             self.restart_review_btn.setEnabled(False)
             self.previous_review_btn.setEnabled(False)
             self.close_review_btn.setEnabled(False)
+            self.close_review_btn.setVisible(False)
 
         self._update_review_context()
 

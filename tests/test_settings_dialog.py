@@ -879,6 +879,41 @@ def test_large_app_font_keeps_category_labels_visible(monkeypatch, settings):
         parent.close()
 
 
+def test_category_labels_fit_when_parent_has_stylesheet(monkeypatch, settings):
+    """Sidebar width is measured with the themed font, not the pre-polish one.
+
+    The main window installs a stylesheet on its central widget, which breaks
+    QSS font inheritance for child dialogs; the category-list width must be
+    derived from the same font the design system applies, so labels never
+    elide even at the dialog's minimum size with a large configured font.
+    """
+    _app()
+    parent = QMainWindow()
+    parent.setFont(QFont("Arial", 36))  # large UI font, like the real app
+    # Reproduce the real app: a styled parent whose QSS font does not inherit.
+    parent.setStyleSheet("QWidget { background-color: #FAFAFA; }")
+    dialog = None
+    try:
+        import kgb_srs.settings_dialog as module
+
+        worker = FakeVoiceWorker()
+        monkeypatch.setattr(module, "VoiceListWorker", lambda: worker)
+        dialog = module.SettingsDialog(settings, parent=parent)
+        dialog.show()
+        _app().processEvents()
+        longest_label_width = dialog.category_list.sizeHintForColumn(0)
+
+        assert dialog.category_list.viewport().width() >= longest_label_width, (
+            "Category labels must not be elided: viewport "
+            f"{dialog.category_list.viewport().width()}px < longest label "
+            f"{longest_label_width}px"
+        )
+    finally:
+        if dialog is not None:
+            dialog.reject()
+        parent.close()
+
+
 def test_main_window_opens_extracted_dialog_and_applies_only_when_accepted(monkeypatch):
     _app()
     import kgb_srs.main_window as module
