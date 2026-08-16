@@ -40,6 +40,32 @@ def flashcard():
     app.processEvents()
 
 
+def test_reveal_button_defers_flip_until_clicked_dispatch_finishes():
+    """Reveal must not destroy its proxy while Qt is dispatching the click."""
+    from kgb_srs.graphics import FlashCardItem
+
+    class FlipRecordingApp(_MockApp):
+        def __init__(self):
+            self.events = []
+
+        def flip_card(self):
+            self.events.append("flip")
+
+    app = QApplication.instance() or QApplication([])
+    mock = FlipRecordingApp()
+    item = FlashCardItem(mock, 200, 150, 350, 200)
+    item.flip_btn.clicked.connect(lambda: mock.events.append("clicked"))
+
+    item.flip_btn.click()
+
+    assert mock.events == ["clicked"]
+    app.processEvents()
+    assert mock.events == ["clicked", "flip"]
+
+    del item
+    app.processEvents()
+
+
 def test_review_card_actions_use_semantic_roles_and_container_state_qss(flashcard):
     """The real card owns the canonical semantic QSS boundary."""
     from kgb_srs.ui_theme import ROLE_PROPERTY, review_card_stylesheet

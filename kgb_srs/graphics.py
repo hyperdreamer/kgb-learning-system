@@ -251,7 +251,10 @@ class FlashCardItem(QGraphicsRectItem):
         self.flip_btn.setAccessibleName("Reveal answer")
         self.flip_btn.setAccessibleDescription("Reveal this card's answer (Alt+R).")
         self.flip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.flip_btn.clicked.connect(self.app_ref.flip_card)
+        self.flip_btn.clicked.connect(
+            self.app_ref.flip_card,
+            Qt.ConnectionType.QueuedConnection,
+        )
 
         self.incorrect_btn = QPushButton("Incorrect")
         self.incorrect_btn.setObjectName("incorrectBtn")
