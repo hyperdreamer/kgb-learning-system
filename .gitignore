@@ -19,6 +19,7 @@ __pycache__/
 # IDE / editor
 .vscode/
 .idea/
+.pi-webui/
 *.swp
 *~
 
