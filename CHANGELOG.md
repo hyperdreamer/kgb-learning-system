@@ -2,6 +2,12 @@
 
 All notable changes to the KGB 5-Box SRS System are documented here.
 
+## [3.1.2] — 2026-08-16
+
+### Fixed
+
+- Resolved fatal crash when clicking **Reveal Answer** on the review canvas by deferring scene redraw to Qt's queued event loop turn, ensuring `QGraphicsProxyWidget` is not destroyed during mouse release event dispatch.
+
 ## [3.1.1] — 2026-07-27
 
 ### Fixed

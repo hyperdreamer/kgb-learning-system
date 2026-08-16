@@ -1,6 +1,6 @@
 # KGB 5-Box SRS System
 
-**Version 3.1.1**
+**Version 3.1.2**
 
 A spaced-repetition flashcard application with **Markdown**, safe offline **LaTeX source fallback**, **AI-generated meanings**, and **Text-to-Speech** (Edge TTS) — built on PyQt6 + SQLite.
 
